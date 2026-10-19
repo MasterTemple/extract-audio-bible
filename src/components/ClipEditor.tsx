@@ -2,6 +2,7 @@ import { Loader2, Play, RotateCcw, Scissors, Square, Trash2, Volume2, Rewind } f
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { api, type Selection } from "@/lib/api";
 import { useApp } from "@/lib/store";
@@ -146,11 +147,49 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
         </div>
       </div>
 
+      <div className="space-y-1">
+        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+          <span>Volume</span>
+          <span className="flex items-center gap-1">
+            <span className="font-medium text-foreground tabular-nums">
+              {selection.gainDb > 0 ? "+" : ""}
+              {selection.gainDb.toFixed(1)} dB
+            </span>
+            {selection.gainDb !== 0 && (
+              <Button size="icon-xs" variant="ghost" title="Reset volume" onClick={() => set({ gainDb: 0 })}>
+                <RotateCcw />
+              </Button>
+            )}
+          </span>
+        </div>
+        <Slider min={-12} max={12} step={0.5} value={[selection.gainDb]} onValueChange={([v]) => set({ gainDb: v })} />
+        <p className="text-[11px] text-muted-foreground">
+          {project.settings.leveling === "each"
+            ? "Applied after the reading is leveled to the target."
+            : project.settings.leveling === "export"
+              ? "Kept relative to the other readings when the whole export is leveled."
+              : "Leveling is off, so this is the only volume change."}
+        </p>
+      </div>
+
       <div className="flex flex-wrap items-center gap-1.5">
         <Button
           size="sm"
           variant="outline"
-          onClick={() => play(rawId, () => api.renderClip({ audioPath: source.audioPath, start: clipStart, end: clipEnd }), clipStart)}
+          onClick={() =>
+            play(
+              rawId,
+              () =>
+                api.renderClip({
+                  audioPath: source.audioPath,
+                  start: clipStart,
+                  end: clipEnd,
+                  processed: selection.gainDb !== 0,
+                  gainDb: selection.gainDb,
+                }),
+              clipStart,
+            )
+          }
         >
           {icon(rawId, Play)} Clip
         </Button>
@@ -168,7 +207,7 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
         <Button
           size="sm"
           variant="ghost"
-          title="Leveled, faded, and with its silence, as the export will be"
+          title="With its volume, leveling, fades, and silence, as the export will be (leveling of the whole export is applied when exporting)"
           onClick={() =>
             play(
               exportId,
@@ -180,7 +219,8 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
                   padBefore: selection.padBefore,
                   padAfter: selection.padAfter,
                   processed: true,
-                  targetDb: project.settings.normalize ? project.settings.targetDb : null,
+                  targetDb: project.settings.leveling === "each" ? project.settings.targetDb : null,
+                  gainDb: selection.gainDb + project.settings.outputGainDb,
                 }),
               clipStart,
               selection.padBefore,

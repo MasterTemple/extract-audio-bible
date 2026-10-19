@@ -84,14 +84,11 @@ pub struct Run {
 pub struct MatchOptions {
     /// Readings scoring below this are dropped (0–1)
     pub min_score: f32,
-    /// Only these books, when given
-    #[serde(default)]
-    pub books: Option<Vec<u8>>,
 }
 
 impl Default for MatchOptions {
     fn default() -> Self {
-        Self { min_score: 0.45, books: None }
+        Self { min_score: 0.45 }
     }
 }
 

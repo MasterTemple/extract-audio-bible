@@ -10,13 +10,36 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { api, errorMessage, type ExportedFile, type Metadata, type Progress as ProgressEvent, type Settings } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { bookName, fileName, formatTime, verseKey, versesNeeded } from "@/lib/refs";
 
-const PLACEHOLDERS = "{book} {osis} {bookNumber} {bookNumber2} {chapter} {chapter2} {chapter3} {chapters} {translation} {abbreviation}";
+const PLACEHOLDERS =
+  "{book} {osis} {bookNumber} {bookNumber2} {chapter} {chapter2} {chapter3} {chapters} {verse} {verse2} {verse3} {verses} {translation} {abbreviation}";
+
+/** A template filled in for John 3:16, to show what it makes */
+function sample(template: string, translation: string, abbreviation: string) {
+  const values: Record<string, string> = {
+    book: "John",
+    osis: "John",
+    bookNumber: "43",
+    bookNumber2: "43",
+    chapter: "3",
+    chapter2: "03",
+    chapter3: "003",
+    chapters: "21",
+    verse: "16",
+    verse2: "16",
+    verse3: "016",
+    verses: "36",
+    translation,
+    abbreviation,
+  };
+  return template.replace(/\{(\w+)\}/g, (all, key: string) => values[key] ?? all);
+}
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -41,7 +64,7 @@ export function ExportPanel() {
   const chapters = useMemo(() => {
     if (!project) return [];
     const out: { book: number; chapter: number; chosen: number; total: number }[] = [];
-    for (const b of outline) {
+    for (const b of outline.filter((x) => project.book === null || x.id === project.book)) {
       for (let c = 1; c <= b.chapters.length; c++) {
         const needed = versesNeeded(b, c);
         const chosen = needed.filter((v) => project.selections[verseKey(b.id, c, v)]).length;
@@ -104,17 +127,10 @@ export function ExportPanel() {
     }
   };
 
-  const example = `${meta.filenameTemplate
-    .replace("{bookNumber2}", "43")
-    .replace("{bookNumber}", "43")
-    .replace("{osis}", "John")
-    .replace("{book}", "John")
-    .replace("{chapter3}", "003")
-    .replace("{chapter2}", "03")
-    .replace("{chapter}", "3")
-    .replace("{chapters}", "21")
-    .replace("{translation}", bible?.name ?? "")
-    .replace("{abbreviation}", bible?.abbreviation ?? "")}.mp3`;
+  const example = (t: string) => `${sample(t, bible?.name ?? "", bible?.abbreviation ?? "")}.mp3`;
+  const chapterFiles = meta.exportMode !== "verse";
+  const verseFiles = meta.exportMode !== "chapter";
+  const verseCount = chapters.reduce((n, c) => n + c.chosen, 0);
 
   return (
     <div className="h-full overflow-auto">
@@ -188,19 +204,49 @@ export function ExportPanel() {
               {seconds("gapBetweenVerses", "Gap between every verse", "Verses read straight through stay joined when this is 0")}
               {seconds("chapterLeadIn", "Silence at the start")}
               {seconds("chapterTail", "Silence at the end")}
-              <Field label="Level every reading">
-                <div className="flex h-8 items-center gap-2">
-                  <Switch checked={settings.normalize} onCheckedChange={(v) => setSettings({ normalize: v })} />
-                  <Input
-                    type="number"
-                    step={1}
-                    className="w-20"
-                    disabled={!settings.normalize}
-                    value={settings.targetDb}
-                    onChange={(e) => setSettings({ targetDb: Math.min(-6, Number(e.target.value) || -20) })}
-                  />
-                  <span className="text-xs text-muted-foreground">dBFS</span>
-                </div>
+              <div className="sm:col-span-2">
+                <Field
+                  label="Leveling"
+                  hint={
+                    settings.leveling === "each"
+                      ? "Every reading is brought to the target, so sermons recorded louder or softer sound alike."
+                      : settings.leveling === "export"
+                        ? "One change for everything exported, so it reaches the target overall while readings keep their levels relative to each other (and the volume you set for each verse)."
+                        : "Only the volume you set for each verse, and the overall volume, are applied."
+                  }
+                >
+                  <div className="flex items-center gap-2">
+                    <Select value={settings.leveling} onValueChange={(v) => setSettings({ leveling: v as Settings["leveling"] })}>
+                      <SelectTrigger className="w-64">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="each">Level each reading</SelectItem>
+                        <SelectItem value="export">Normalize the whole export</SelectItem>
+                        <SelectItem value="none">Off (manual volume only)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="number"
+                      step={1}
+                      className="w-20"
+                      disabled={settings.leveling === "none"}
+                      value={settings.targetDb}
+                      onChange={(e) => setSettings({ targetDb: Math.min(-6, Number(e.target.value) || -20) })}
+                    />
+                    <span className="text-xs text-muted-foreground">dBFS target</span>
+                  </div>
+                </Field>
+              </div>
+              <Field label={`Overall volume: ${settings.outputGainDb > 0 ? "+" : ""}${settings.outputGainDb.toFixed(1)} dB`}>
+                <Slider
+                  className="mt-3"
+                  min={-12}
+                  max={12}
+                  step={0.5}
+                  value={[settings.outputGainDb]}
+                  onValueChange={([v]) => setSettings({ outputGainDb: v })}
+                />
               </Field>
               <Field label="Fade at cuts">
                 <div className="flex items-center gap-1.5">
@@ -221,7 +267,7 @@ export function ExportPanel() {
           <Card>
             <CardHeader>
               <CardTitle>Files</CardTitle>
-              <CardDescription>One MP3 per chapter (mono).</CardDescription>
+              <CardDescription>Mono MP3s: one per chapter, one per verse, or both.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
@@ -236,7 +282,36 @@ export function ExportPanel() {
                   </div>
                 </Field>
               </div>
-              {text("filenameTemplate", "File name", "{bookNumber2}_{osis}_{chapter3}", `e.g. ${example}`)}
+              <div className="sm:col-span-2">
+                <Field
+                  label="Files to write"
+                  hint={verseFiles ? "Verse files go in a folder per chapter (John 3), each with only its own silence before and after." : undefined}
+                >
+                  <Select value={meta.exportMode} onValueChange={(v) => setMeta({ exportMode: v as Metadata["exportMode"] })}>
+                    <SelectTrigger className="w-64">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="chapter">A file per chapter</SelectItem>
+                      <SelectItem value="verse">A file per verse</SelectItem>
+                      <SelectItem value="both">Both</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+              {chapterFiles &&
+                text("filenameTemplate", "Chapter file name", "{bookNumber2}_{osis}_{chapter3}", `e.g. ${example(meta.filenameTemplate)}`)}
+              {verseFiles && (
+                <>
+                  {text(
+                    "verseFilenameTemplate",
+                    "Verse file name",
+                    "{bookNumber2}_{osis}_{chapter3}_{verse3}",
+                    `e.g. ${example(meta.verseFilenameTemplate)}`,
+                  )}
+                  {text("verseTitleTemplate", "Verse title", "{book} {chapter}:{verse}", "Verse files are numbered by verse, with the chapter as the disc")}
+                </>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Bitrate">
                   <Select value={String(meta.bitrate)} onValueChange={(v) => setMeta({ bitrate: Number(v) })}>
@@ -288,7 +363,9 @@ export function ExportPanel() {
             <CardHeader>
               <CardTitle>Export</CardTitle>
               <CardDescription>
-                {chapters.length} chapter{chapters.length === 1 ? "" : "s"}
+                {chapterFiles && `${chapters.length} chapter file${chapters.length === 1 ? "" : "s"}`}
+                {chapterFiles && verseFiles && " and "}
+                {verseFiles && `${verseCount} verse file${verseCount === 1 ? "" : "s"}`}
                 {!meta.onlyComplete && chapters.some((c) => c.chosen < c.total) && " (verses not chosen are left out)"}
               </CardDescription>
             </CardHeader>

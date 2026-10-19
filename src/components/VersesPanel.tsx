@@ -68,7 +68,9 @@ function Navigator() {
     return map;
   }, [project, outline, matchesByVerse]);
 
+  const focus = project?.book ?? null;
   const books = outline.filter((b) => {
+    if (focus !== null) return b.id === focus;
     const s = statuses.get(b.id)?.total;
     if (onlyMatched && s && s.withMatches === 0 && s.selected === 0) return false;
     return !filter || b.name.toLowerCase().includes(filter.toLowerCase());
@@ -84,7 +86,7 @@ function Navigator() {
 
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r">
-      <div className="space-y-2 border-b p-2">
+      <div className={cn("space-y-2 border-b p-2", focus !== null && "hidden")}>
         <div className="relative">
           <Search className="absolute top-2 left-2 size-4 text-muted-foreground" />
           <Input className="pl-8" placeholder="Find a book" value={filter} onChange={(e) => setFilter(e.target.value)} />
@@ -105,18 +107,20 @@ function Navigator() {
           )}
           {books.map((b) => {
             const s = statuses.get(b.id)!;
-            const open = expanded.has(b.id) || !!filter;
+            const open = expanded.has(b.id) || !!filter || focus !== null;
             const pct = s.total.total ? (s.total.selected / s.total.total) * 100 : 0;
             return (
               <div key={b.id}>
                 <button
-                  onClick={() => toggle(b.id)}
+                  onClick={() => focus === null && toggle(b.id)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted",
                     book === b.id && "font-medium",
                   )}
                 >
-                  <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition", open && "rotate-90")} />
+                  {focus === null && (
+                    <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition", open && "rotate-90")} />
+                  )}
                   <span className="min-w-0 flex-1 truncate">{b.name}</span>
                   <span className="text-[11px] text-muted-foreground tabular-nums">
                     {s.total.selected}/{s.total.total}

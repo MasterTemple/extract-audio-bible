@@ -70,6 +70,7 @@ export function ChapterView() {
       if (!target) return;
       c = 1;
     }
+    if (project.book !== null && target.id !== project.book) return;
     go(target.id, c);
   };
 
@@ -196,6 +197,12 @@ export function ChapterView() {
                     <span className="flex flex-col items-end gap-1 pt-0.5">
                       {sel ? (
                         <span className="flex items-center gap-1">
+                          {sel.gainDb !== 0 && (
+                            <span className="text-[10px] text-muted-foreground tabular-nums">
+                              {sel.gainDb > 0 ? "+" : ""}
+                              {sel.gainDb} dB
+                            </span>
+                          )}
                           {sel.needsTrim && (
                             <Tooltip>
                               <TooltipTrigger asChild>

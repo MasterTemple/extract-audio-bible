@@ -115,14 +115,20 @@ fn list_projects(state: State<AppState>) -> Result<Vec<ProjectSummary>> {
 }
 
 #[tauri::command]
-fn create_project(state: State<AppState>, name: String, bible_id: String) -> Result<Project> {
+fn create_project(state: State<AppState>, name: String, bible_id: String, book: Option<u8>) -> Result<Project> {
     let bible = state.store.bible(&bible_id)?;
+    let book_name = book.and_then(|b| bible.book(b)).map(|b| b.name.clone());
     let mut metadata = project::Metadata::default();
     metadata.language = bible.language.clone().unwrap_or_default();
     let project = Project {
         id: new_id(),
-        name: if name.trim().is_empty() { format!("{} audio Bible", bible.name) } else { name.trim().into() },
+        name: match (name.trim(), book_name) {
+            ("", Some(book)) => format!("{book} ({})", if bible.abbreviation.is_empty() { &bible.name } else { &bible.abbreviation }),
+            ("", None) => format!("{} audio Bible", bible.name),
+            (name, _) => name.into(),
+        },
         bible_id,
+        book,
         created_at: now(),
         updated_at: now(),
         sources: vec![],
@@ -268,9 +274,12 @@ async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project: Pro
         };
         emit(0, "Reading the Bible text".into());
         let bible = store.bible(&project.bible_id)?;
-        let index = VerseIndex::new(&bible, None);
+        // Only the book being built: faster, and a phrase shared with another book can't be
+        // mistaken for one of its verses
+        let only = project.book.map(|b| vec![b]);
+        let index = VerseIndex::new(&bible, only.as_deref());
         emit(0, format!("Indexed {} verses", index.len()));
-        let options = MatchOptions { min_score: project.settings.min_score, books: None };
+        let options = MatchOptions { min_score: project.settings.min_score };
         let counter = std::sync::atomic::AtomicUsize::new(0);
         let results: Vec<_> = (project.sources.par_iter().zip(transcripts.into_par_iter()))
             .map(|(source, transcript)| {
@@ -383,8 +392,11 @@ struct ClipRequest {
     /// Level and fade it as the export will
     #[serde(default)]
     processed: bool,
+    /// Bring it to this level first, as "level each reading" does
     #[serde(default)]
     target_db: Option<f64>,
+    #[serde(default)]
+    gain_db: f64,
 }
 
 /// A stretch of a sermon as WAV, for listening
@@ -392,11 +404,17 @@ struct ClipRequest {
 async fn render_clip(request: ClipRequest) -> Result<Response> {
     blocking(move || {
         let r = request;
-        let pcm = if r.processed {
-            export::render_clip(&r.audio_path, r.start, r.end, 44_100, r.target_db, 8.0)?
-        } else {
-            audio::decode_range(Path::new(&r.audio_path), r.start, r.end)?
-        };
+        let mut pcm = audio::decode_range(Path::new(&r.audio_path), r.start, r.end)?;
+        if r.processed {
+            pcm = audio::resample(&pcm, 44_100);
+            let mut gain = audio::db_to_gain(r.gain_db);
+            if let Some(db) = r.target_db {
+                gain *= audio::leveling_gain(&pcm.samples, pcm.rate, db);
+            }
+            audio::apply_gain(&mut pcm.samples, gain);
+            audio::fade(&mut pcm.samples, pcm.rate, 8.0);
+            audio::limit(&mut pcm.samples);
+        }
         let rate = pcm.rate as f64;
         let mut samples = vec![0.0; (r.pad_before.max(0.0) * rate) as usize];
         samples.extend(pcm.samples);

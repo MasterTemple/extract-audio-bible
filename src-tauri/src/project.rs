@@ -20,6 +20,9 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub bible_id: String,
+    /// The book being built (most sermons preach through one book); none for the whole Bible
+    #[serde(default)]
+    pub book: Option<u8>,
     pub created_at: u64,
     pub updated_at: u64,
     #[serde(default)]
@@ -68,6 +71,9 @@ pub struct Selection {
     #[serde(default)]
     pub pad_after: f64,
     /// Chosen, but still to be trimmed
+    /// Volume change for this verse, in dB
+    #[serde(default)]
+    pub gain_db: f64,
     #[serde(default)]
     pub needs_trim: bool,
     #[serde(default)]
@@ -90,9 +96,11 @@ pub struct Settings {
     /// Silence at the start and end of each chapter's file
     pub chapter_lead_in: f64,
     pub chapter_tail: f64,
-    pub normalize: bool,
-    /// Speech level, dBFS RMS
+    pub leveling: Leveling,
+    /// Speech level leveled to, dBFS RMS
     pub target_db: f64,
+    /// Volume change for everything exported, in dB
+    pub output_gain_db: f64,
     pub fade_ms: f64,
 }
 
@@ -103,11 +111,36 @@ impl Default for Settings {
             gap_between_verses: 0.0,
             chapter_lead_in: 0.5,
             chapter_tail: 1.0,
-            normalize: true,
+            leveling: Leveling::Each,
             target_db: -20.0,
+            output_gain_db: 0.0,
             fade_ms: 8.0,
         }
     }
+}
+
+/// How loudness is evened out
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Leveling {
+    /// Only the volume changes you make
+    None,
+    /// Every reading brought to the target level, so sermons recorded louder or softer match
+    Each,
+    /// One change for the whole export, so it reaches the target level overall while the readings
+    /// keep their levels relative to each other
+    Export,
+}
+
+/// What files are written
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportMode {
+    /// One file per chapter
+    Chapter,
+    /// One file per verse
+    Verse,
+    Both,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -116,6 +149,9 @@ pub struct Metadata {
     pub title_template: String,
     pub album_template: String,
     pub filename_template: String,
+    pub verse_title_template: String,
+    pub verse_filename_template: String,
+    pub export_mode: ExportMode,
     pub artist: String,
     pub album_artist: String,
     pub narrator: String,
@@ -143,6 +179,9 @@ impl Default for Metadata {
             title_template: "{book} {chapter}".into(),
             album_template: "{translation} – {book}".into(),
             filename_template: "{bookNumber2}_{osis}_{chapter3}".into(),
+            verse_title_template: "{book} {chapter}:{verse}".into(),
+            verse_filename_template: "{bookNumber2}_{osis}_{chapter3}_{verse3}".into(),
+            export_mode: ExportMode::Chapter,
             artist: String::new(),
             album_artist: String::new(),
             narrator: String::new(),
@@ -169,6 +208,7 @@ pub struct ProjectSummary {
     pub id: String,
     pub name: String,
     pub bible_id: String,
+    pub book: Option<u8>,
     pub updated_at: u64,
     pub source_count: usize,
     pub selection_count: usize,
@@ -285,6 +325,7 @@ impl Store {
                     id: p.id,
                     name: p.name,
                     bible_id: p.bible_id,
+                    book: p.book,
                     updated_at: p.updated_at,
                     source_count: p.sources.len(),
                     selection_count: p.selections.len(),

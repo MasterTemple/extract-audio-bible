@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage, type Progress as ProgressEvent } from "@/lib/api";
@@ -14,7 +15,8 @@ import { useApp } from "@/lib/store";
 import { fileName, formatTime, sourceColor } from "@/lib/refs";
 
 export function SourcesPanel() {
-  const { project, update, setProject, setMatches, matchSet, flush, setTab } = useApp();
+  const { project, update, setProject, setMatches, matchSet, flush, setTab, outline, go } = useApp();
+  const [bookChanged, setBookChanged] = useState(false);
   const [unpaired, setUnpaired] = useState<string[]>([]);
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
 
@@ -53,6 +55,7 @@ export function SourcesPanel() {
       setProject(result.project);
       setMatches(result.matches);
       for (const e of result.errors) toast.error(e);
+      setBookChanged(false);
       toast.success(`Found ${result.matches.matches.length.toLocaleString()} readings`, {
         action: { label: "View verses", onClick: () => setTab("verses") },
       });
@@ -184,11 +187,37 @@ export function SourcesPanel() {
           <CardHeader>
             <CardTitle>Find readings</CardTitle>
             <CardDescription>
-              Searches every sermon for every verse: exact readings, close ones (a word changed, added, or skipped), and
+              Searches every sermon for every verse of the book: exact readings, close ones (a word changed, added, or skipped), and
               partial ones. Your chosen verses are kept when you search again.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="flex items-center gap-4">
+              <div className="w-40 shrink-0 text-sm">Book</div>
+              <Select
+                value={project.book === null ? "all" : String(project.book)}
+                onValueChange={(v) => {
+                  const book = v === "all" ? null : Number(v);
+                  update((p) => ({ ...p, book }));
+                  setBookChanged(true);
+                  if (book !== null) go(book, 1);
+                  setTab("sources");
+                }}
+              >
+                <SelectTrigger className="w-64">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {outline.map((b) => (
+                    <SelectItem key={b.id} value={String(b.id)}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="all">The whole Bible</SelectItem>
+                </SelectContent>
+              </Select>
+              {bookChanged && <span className="text-sm text-amber-600">Search again to find readings in this book.</span>}
+            </div>
             <div className="flex items-center gap-4">
               <div className="w-40 shrink-0 text-sm">
                 Minimum match <span className="font-medium tabular-nums">{Math.round(project.settings.minScore * 100)}%</span>

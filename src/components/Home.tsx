@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BookOpen, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { api, errorMessage } from "@/lib/api";
+import { api, errorMessage, type BookOutline } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { BibleList } from "./BiblesPanel";
 
@@ -15,10 +15,17 @@ export function Home() {
   const [name, setName] = useState("");
   const [bibleId, setBibleId] = useState<string>("");
   const chosenBible = bibleId || bibles[0]?.id || "";
+  const [books, setBooks] = useState<BookOutline[]>([]);
+  const [book, setBook] = useState<string>("");
+
+  useEffect(() => {
+    if (!chosenBible) return;
+    api.bibleOutline(chosenBible).then(setBooks).catch(() => setBooks([]));
+  }, [chosenBible]);
 
   const create = async () => {
     try {
-      const project = await api.createProject(name, chosenBible);
+      const project = await api.createProject(name, chosenBible, book && book !== "all" ? Number(book) : null);
       await openProject(project.id);
     } catch (e) {
       toast.error(errorMessage(e));
@@ -39,7 +46,7 @@ export function Home() {
             <BookOpen className="size-5" />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Create Audio Bible</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Extract Audio Bible</h1>
             <p className="text-sm text-muted-foreground">
               Build a chapter-by-chapter audio Bible from the Scripture readings in your sermons.
             </p>
@@ -59,7 +66,7 @@ export function Home() {
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{p.name}</div>
                     <div className="text-xs text-muted-foreground">
-                      {bibles.find((b) => b.id === p.bibleId)?.name ?? "Missing translation"} · {p.sourceCount}{" "}
+                      {bibles.find((b) => b.id === p.bibleId)?.abbreviation || bibles.find((b) => b.id === p.bibleId)?.name || "Missing translation"} · {p.sourceCount}{" "}
                       sermons · {p.selectionCount} verses chosen
                     </div>
                   </div>
@@ -77,12 +84,12 @@ export function Home() {
           <Card>
             <CardHeader>
               <CardTitle>New project</CardTitle>
-              <CardDescription>Choose the translation your sermons read from.</CardDescription>
+              <CardDescription>Choose the translation your sermons read from, and the book they preach through.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="pname">Name</Label>
-                <Input id="pname" placeholder="KJV Audio Bible" value={name} onChange={(e) => setName(e.target.value)} />
+                <Input id="pname" placeholder="Named after the book, if left empty" value={name} onChange={(e) => setName(e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <Label>Translation</Label>
@@ -103,7 +110,26 @@ export function Home() {
                   </Select>
                 )}
               </div>
-              <Button disabled={!chosenBible} onClick={create}>
+              <div className="space-y-1.5">
+                <Label>Book</Label>
+                <Select value={book} onValueChange={setBook} disabled={books.length === 0}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Choose a book" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {books.map((b) => (
+                      <SelectItem key={b.id} value={String(b.id)}>
+                        {b.name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="all">The whole Bible</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Only this book is searched for in the sermons. You can change it later.
+                </p>
+              </div>
+              <Button disabled={!chosenBible || !book} onClick={create}>
                 <Plus /> Create project
               </Button>
             </CardContent>

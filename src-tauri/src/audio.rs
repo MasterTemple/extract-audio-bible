@@ -236,27 +236,54 @@ pub fn fade(samples: &mut [f32], rate: u32, ms: f64) {
     }
 }
 
-/// Bring speech to about `target_db` dBFS RMS (measured over its louder parts, so pauses
-/// don't count), without letting peaks pass -1 dBFS
-pub fn normalize(samples: &mut [f32], rate: u32, target_db: f64) {
+/// The RMS of each 1/20 s of audible sound
+pub fn levels(samples: &[f32], rate: u32) -> Vec<f64> {
     let window = (rate / 20).max(1) as usize;
-    let mut levels: Vec<f64> = samples
+    samples
         .chunks(window)
         .map(|c| (c.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / c.len() as f64).sqrt())
         .filter(|r| *r > 1e-4)
-        .collect();
+        .collect()
+}
+
+/// How loud speech is in these levels: the RMS of their louder half, so pauses don't count
+pub fn speech_rms(mut levels: Vec<f64>) -> Option<f64> {
     if levels.is_empty() {
-        return;
+        return None;
     }
     levels.sort_by(f64::total_cmp);
-    // The louder half is speech
     let speech = &levels[levels.len() / 2..];
-    let rms = (speech.iter().map(|r| r * r).sum::<f64>() / speech.len() as f64).sqrt();
+    Some((speech.iter().map(|r| r * r).sum::<f64>() / speech.len() as f64).sqrt())
+}
+
+pub fn db_to_gain(db: f64) -> f64 {
+    10f64.powf(db / 20.0)
+}
+
+/// The gain that brings speech to about `target_db` dBFS RMS (within 0.25–6×, and without
+/// pushing peaks past -1 dBFS)
+pub fn leveling_gain(samples: &[f32], rate: u32, target_db: f64) -> f64 {
+    let Some(rms) = speech_rms(levels(samples, rate)) else { return 1.0 };
     let peak = samples.iter().fold(0f32, |m, s| m.max(s.abs())) as f64;
-    let mut gain = 10f64.powf(target_db / 20.0) / rms;
-    gain = gain.clamp(0.25, 6.0).min(0.89 / peak.max(1e-6));
+    (db_to_gain(target_db) / rms).clamp(0.25, 6.0).min(0.89 / peak.max(1e-6))
+}
+
+pub fn apply_gain(samples: &mut [f32], gain: f64) {
+    if (gain - 1.0).abs() > 1e-9 {
+        for s in samples {
+            *s = (*s as f64 * gain) as f32;
+        }
+    }
+}
+
+/// Peaks over -1 dBFS rounded off smoothly, so turning a reading up never clips
+pub fn limit(samples: &mut [f32]) {
+    const KNEE: f32 = 0.89;
     for s in samples {
-        *s = (*s as f64 * gain) as f32;
+        let a = s.abs();
+        if a > KNEE {
+            *s = s.signum() * (KNEE + (1.0 - KNEE) * ((a - KNEE) / (1.0 - KNEE)).tanh());
+        }
     }
 }
 

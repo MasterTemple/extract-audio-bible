@@ -88,6 +88,7 @@ fn export_e2e() {
         id: "p".into(),
         name: "Test".into(),
         bible_id: "kjv".into(),
+        book: Some(43),
         created_at: 0,
         updated_at: 0,
         sources: vec![Source {
@@ -115,6 +116,7 @@ fn export_e2e() {
                 trim_end: 0.0,
                 pad_before: if m.verse == 16 { 1.0 } else { 0.0 },
                 pad_after: 0.0,
+                gain_db: 0.0,
                 needs_trim: false,
                 note: String::new(),
             },
@@ -138,4 +140,26 @@ fn export_e2e() {
     // Lead-in 0.5, tail 1.0, and 1.0 before verse 16
     assert!((files[0].duration - (spoken + 2.5)).abs() < 0.1, "{} vs {}", files[0].duration, spoken + 2.5);
     assert_eq!(files[0].missing.len(), 31);
+
+    // Verse files too, the whole export leveled as one, and verse 16 turned up 6 dB
+    use crate::project::{ExportMode, Leveling};
+    project.metadata.export_mode = ExportMode::Both;
+    project.settings.leveling = Leveling::Export;
+    project.selections.get_mut("43.3.16").unwrap().gain_db = 6.0;
+    let files = export::export(&project, &bible, &chapters, |_| {}).unwrap();
+    assert_eq!(files.len(), 6);
+    let v16 = files.iter().find(|f| f.verse == Some(16)).unwrap();
+    assert!(v16.path.ends_with("43 John/John 3/43_John_003_016.mp3"), "{}", v16.path);
+    let tag = id3::Tag::read_from_path(&v16.path).unwrap();
+    assert_eq!(tag.title(), Some("John 3:16"));
+    assert_eq!((tag.track(), tag.total_tracks(), tag.disc()), (Some(16), Some(36), Some(3)));
+    let loudness = |path: &str| {
+        let pcm = crate::audio::decode_range(std::path::Path::new(path), 0.0, 1e4).unwrap();
+        20.0 * crate::audio::speech_rms(crate::audio::levels(&pcm.samples, pcm.rate)).unwrap().log10()
+    };
+    let v15 = files.iter().find(|f| f.verse == Some(15)).unwrap();
+    let (l15, l16) = (loudness(&v15.path), loudness(&v16.path));
+    println!("verse 15 {l15:.1} dB, verse 16 {l16:.1} dB");
+    assert!((l16 - l15 - 6.0).abs() < 1.5, "{l15} {l16}");
+    assert!((l15 + 20.0).abs() < 3.0, "{l15}");
 }

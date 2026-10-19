@@ -39,6 +39,8 @@ export interface Selection {
   trimEnd: number;
   padBefore: number;
   padAfter: number;
+  /** Volume change for this verse, in dB */
+  gainDb: number;
   needsTrim: boolean;
   note: string;
 }
@@ -48,15 +50,23 @@ export interface Settings {
   gapBetweenVerses: number;
   chapterLeadIn: number;
   chapterTail: number;
-  normalize: boolean;
+  /** none: only manual volume; each: every reading to the target; export: one change for the whole export */
+  leveling: Leveling;
   targetDb: number;
+  outputGainDb: number;
   fadeMs: number;
 }
+
+export type Leveling = "none" | "each" | "export";
+export type ExportMode = "chapter" | "verse" | "both";
 
 export interface Metadata {
   titleTemplate: string;
   albumTemplate: string;
   filenameTemplate: string;
+  verseTitleTemplate: string;
+  verseFilenameTemplate: string;
+  exportMode: ExportMode;
   artist: string;
   albumArtist: string;
   narrator: string;
@@ -79,6 +89,8 @@ export interface Project {
   id: string;
   name: string;
   bibleId: string;
+  /** The book being built; null for the whole Bible */
+  book: number | null;
   createdAt: number;
   updatedAt: number;
   sources: Source[];
@@ -91,6 +103,7 @@ export interface ProjectSummary {
   id: string;
   name: string;
   bibleId: string;
+  book: number | null;
   updatedAt: number;
   sourceCount: number;
   selectionCount: number;
@@ -153,6 +166,7 @@ export interface ChapterRef {
 export interface ExportedFile {
   book: number;
   chapter: number;
+  verse: number | null;
   path: string;
   duration: number;
   missing: number[];
@@ -174,7 +188,8 @@ export const api = {
   bookText: (bibleId: string, book: number) => invoke<string[][]>("book_text", { bibleId, book }),
 
   listProjects: () => invoke<ProjectSummary[]>("list_projects"),
-  createProject: (name: string, bibleId: string) => invoke<Project>("create_project", { name, bibleId }),
+  createProject: (name: string, bibleId: string, book: number | null) =>
+    invoke<Project>("create_project", { name, bibleId, book }),
   getProject: (id: string) => invoke<Project>("get_project", { id }),
   saveProject: (project: Project) => invoke<number>("save_project", { project }),
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),
@@ -199,6 +214,7 @@ export const api = {
     padAfter?: number;
     processed?: boolean;
     targetDb?: number | null;
+    gainDb?: number;
   }) => invoke<ArrayBuffer>("render_clip", { request }),
   renderChapter: (project: Project, book: number, chapter: number) =>
     invoke<ArrayBuffer>("render_chapter", { project, book, chapter }),

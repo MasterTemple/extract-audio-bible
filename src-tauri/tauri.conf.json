@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Create Audio Bible",
+  "productName": "Extract Audio Bible",
   "version": "0.1.0",
   "identifier": "extract-audio-bible",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Create Audio Bible",
+        "title": "Extract Audio Bible",
         "width": 1400,
         "height": 900
       }

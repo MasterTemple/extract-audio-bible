@@ -15,8 +15,12 @@ export function Shell() {
   const progress = useMemo(() => {
     if (!project) return { done: 0, total: 0 };
     let total = 0;
-    for (const b of outline) for (let c = 1; c <= b.chapters.length; c++) total += versesNeeded(b, c).length;
-    return { done: Object.keys(project.selections).length, total };
+    const books = outline.filter((b) => project.book === null || b.id === project.book);
+    for (const b of books) for (let c = 1; c <= b.chapters.length; c++) total += versesNeeded(b, c).length;
+    const done = Object.keys(project.selections).filter(
+      (k) => project.book === null || k.startsWith(`${project.book}.`),
+    ).length;
+    return { done, total };
   }, [project, outline]);
 
   if (!project) return null;
@@ -33,7 +37,8 @@ export function Shell() {
         <div className="min-w-0">
           <div className="truncate text-sm leading-tight font-semibold">{project.name}</div>
           <div className="truncate text-xs leading-tight text-muted-foreground">
-            {bible?.name ?? "Translation"} · {progress.done.toLocaleString()} of {progress.total.toLocaleString()} verses
+            {project.book !== null ? `${outline.find((b) => b.id === project.book)?.name ?? "Book"} · ` : ""}
+            {bible?.abbreviation || bible?.name || "Translation"} · {progress.done.toLocaleString()} of {progress.total.toLocaleString()} verses
             chosen
           </div>
         </div>

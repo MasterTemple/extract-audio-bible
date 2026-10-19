@@ -78,6 +78,7 @@ export function selectionFor(m: Match, previous?: Selection): Selection {
     trimEnd: 0,
     padBefore: previous?.padBefore ?? 0,
     padAfter: previous?.padAfter ?? 0,
+    gainDb: previous?.gainDb ?? 0,
     needsTrim: false,
     note: previous?.note ?? "",
   };
@@ -131,7 +132,10 @@ export const useApp = create<AppState>((set, get) => {
       } catch {
         // Remembering the last project is only a convenience
       }
-      const first = outline.find((b) => matchSet.matches.some((m) => m.book === b.id)) ?? outline[0];
+      const first =
+        outline.find((b) => b.id === project.book) ??
+        outline.find((b) => matchSet.matches.some((m) => m.book === b.id)) ??
+        outline[0];
       set({
         project,
         outline,
