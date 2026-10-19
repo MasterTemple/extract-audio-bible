@@ -114,7 +114,10 @@ export function MatchCard({ match, verseText, selected }: { match: Match; verseT
         <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
           {formatTime(match.start)}–{formatTime(match.end)}
         </span>
-        <span className={cn("ml-auto shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium", kindClass[match.kind])}>
+        <span
+          className={cn("ml-auto shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium", kindClass[match.kind])}
+          title={match.accuracy > 0 ? `${Math.round(match.accuracy * 100)}% accurate` : undefined}
+        >
           {kindLabel[match.kind]} · {Math.round(match.score * 100)}%
         </span>
       </div>

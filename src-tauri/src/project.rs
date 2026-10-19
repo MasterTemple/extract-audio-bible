@@ -90,7 +90,8 @@ impl Selection {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
-    pub min_score: f32,
+    /// How faithfully a verse's words must be read for a reading to count (0–1)
+    pub min_accuracy: f32,
     /// Silence between every two verses
     pub gap_between_verses: f64,
     /// Silence at the start and end of each chapter's file
@@ -107,7 +108,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            min_score: 0.45,
+            min_accuracy: 0.85,
             gap_between_verses: 0.0,
             chapter_lead_in: 0.5,
             chapter_tail: 1.0,

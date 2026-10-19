@@ -46,7 +46,8 @@ export interface Selection {
 }
 
 export interface Settings {
-  minScore: number;
+  /** How faithfully a verse's words must be read for a reading to count (0–1) */
+  minAccuracy: number;
   gapBetweenVerses: number;
   chapterLeadIn: number;
   chapterTail: number;
@@ -122,6 +123,8 @@ export interface Match {
   start: number;
   end: number;
   score: number;
+  /** How faithfully the verse's words were said, from the first read to the last (0 from searches before it was kept) */
+  accuracy: number;
   coverage: number;
   precision: number;
   kind: MatchKind;

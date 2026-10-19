@@ -4,7 +4,6 @@ mod error;
 mod export;
 mod matcher;
 mod project;
-mod text;
 mod transcript;
 #[cfg(test)]
 mod e2e_test;
@@ -23,14 +22,18 @@ use crate::{
     bible::{Bible, BibleSummary, BookOutline},
     error::{AppError, Result},
     export::{ChapterRef, ExportedFile},
-    matcher::{MatchOptions, VerseIndex},
+
     project::{MatchSet, Project, ProjectSummary, Source, Store, now},
     transcript::{Transcript, Word},
 };
 
+/// The Bible last searched for, ready to search again, by its id
+type CachedEngine = Arc<Mutex<Option<(String, Arc<scripture_quotes::Engine>)>>>;
+
 struct AppState {
     store: Store,
     transcripts: Mutex<HashMap<String, Arc<Transcript>>>,
+    engine: CachedEngine,
 }
 
 impl AppState {
@@ -266,6 +269,7 @@ async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project: Pro
     let store = state.store.clone();
     let transcripts: Vec<Result<Arc<Transcript>>> =
         project.sources.iter().map(|s| state.transcript(&s.transcript_path)).collect();
+    let cached = state.engine.clone();
     blocking(move || {
         let mut project = project;
         let total = project.sources.len();
@@ -273,18 +277,29 @@ async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project: Pro
             let _ = app.emit("analyze-progress", AnalyzeProgress { done, total, message });
         };
         emit(0, "Reading the Bible text".into());
-        let bible = store.bible(&project.bible_id)?;
-        // Only the book being built: faster, and a phrase shared with another book can't be
-        // mistaken for one of its verses
-        let only = project.book.map(|b| vec![b]);
-        let index = VerseIndex::new(&bible, only.as_deref());
-        emit(0, format!("Indexed {} verses", index.len()));
-        let options = MatchOptions { min_score: project.settings.min_score };
+        let engine = match &*cached.lock().unwrap() {
+            Some((id, engine)) if *id == project.bible_id => Some(engine.clone()),
+            _ => None,
+        };
+        let engine = match engine {
+            Some(engine) => engine,
+            None => {
+                let engine = Arc::new(matcher::engine(&store.bible(&project.bible_id)?));
+                *cached.lock().unwrap() = Some((project.bible_id.clone(), engine.clone()));
+                engine
+            }
+        };
+        // Only the book being built: a phrase shared with another book can't be mistaken for one
+        // of its verses
+        let searcher = matcher::searcher(&engine, project.book).map_err(|e| AppError::msg(e.to_string()))?;
+        emit(0, format!("Indexed {} verses", searcher.verse_count()));
+        let options =
+            scripture_quotes::Options { min_accuracy: project.settings.min_accuracy, ..Default::default() };
         let counter = std::sync::atomic::AtomicUsize::new(0);
         let results: Vec<_> = (project.sources.par_iter().zip(transcripts.into_par_iter()))
             .map(|(source, transcript)| {
                 let out = transcript.map(|t| {
-                    let (matches, runs) = matcher::find_matches(&index, &t, &source.id, &options);
+                    let (matches, runs) = matcher::find_matches(&searcher, &t, &source.id, &options);
                     (t.words.len(), t.duration(), matches, runs)
                 });
                 let done = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -472,7 +487,11 @@ pub fn run() {
         .setup(|app| {
             let root = app.path().app_data_dir()?;
             std::fs::create_dir_all(&root)?;
-            app.manage(AppState { store: Store::new(root), transcripts: Mutex::new(HashMap::new()) });
+            app.manage(AppState {
+                store: Store::new(root),
+                transcripts: Mutex::new(HashMap::new()),
+                engine: Arc::default(),
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

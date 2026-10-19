@@ -4,7 +4,7 @@ use std::{path::PathBuf, time::Instant};
 
 use crate::{
     bible::{self, Bible},
-    matcher::{MatchOptions, VerseIndex, find_matches},
+    matcher::{self, find_matches},
     transcript::Transcript,
 };
 
@@ -17,8 +17,9 @@ fn e2e() {
     let bible = Bible { id: "kjv".into(), name: "KJV".into(), abbreviation: "KJV".into(), language: None, format, books };
     println!("imported {} verses in {:?}", bible.summary().verse_count, t.elapsed());
     let t = Instant::now();
-    let index = VerseIndex::new(&bible, None);
-    println!("indexed in {:?}", t.elapsed());
+    let engine = matcher::engine(&bible);
+    let searcher = engine.searcher();
+    println!("indexed {} verses in {:?}", searcher.verse_count(), t.elapsed());
 
     let john = bible.books.iter().find(|b| b.id == 43).unwrap();
     let ps = bible.books.iter().find(|b| b.id == 19).unwrap();
@@ -47,7 +48,7 @@ fn e2e() {
     std::fs::write(&path, json).unwrap();
     let transcript = Transcript::open(&path).unwrap();
     let t = Instant::now();
-    let (matches, runs) = find_matches(&index, &transcript, "s", &MatchOptions::default());
+    let (matches, runs) = find_matches(&searcher, &transcript, "s", &Default::default());
     println!("{} words matched in {:?}", transcript.words.len(), t.elapsed());
     for m in &matches {
         println!("{} {}:{} {:?} score {:.2} cov {:.2} prec {:.2} run {:?}", m.book, m.chapter, m.verse, m.kind, m.score, m.coverage, m.precision, m.run_id.is_some());
@@ -75,9 +76,9 @@ fn export_e2e() {
     let sermon = std::env::var("SERMON").expect("SERMON");
     let (books, format) = bible::import(&[dir]).unwrap();
     let bible = Bible { id: "kjv".into(), name: "King James Version".into(), abbreviation: "KJV".into(), language: None, format, books };
-    let index = VerseIndex::new(&bible, None);
+    let engine = matcher::engine(&bible);
     let transcript = Transcript::open(std::path::Path::new(&format!("{sermon}.json"))).unwrap();
-    let (matches, runs) = find_matches(&index, &transcript, "s1", &MatchOptions::default());
+    let (matches, runs) = find_matches(&engine.searcher(), &transcript, "s1", &Default::default());
     for m in &matches {
         println!("{}:{} {:?} {:.2} {:.2}–{:.2}", m.chapter, m.verse, m.kind, m.score, m.start, m.end);
     }
@@ -163,3 +164,4 @@ fn export_e2e() {
     assert!((l16 - l15 - 6.0).abs() < 1.5, "{l15} {l16}");
     assert!((l15 + 20.0).abs() < 3.0, "{l15}");
 }
+

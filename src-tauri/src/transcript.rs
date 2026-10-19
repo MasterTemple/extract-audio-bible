@@ -1,17 +1,17 @@
-//! WhisperX output: its words and when each was said.
+//! WhisperX output (or a Let's Church transcript): its words and when each was said. Segments
+//! without word times have their words spread evenly over the segment.
 
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::{AppError, Result},
-    text::tokenize,
-};
+use crate::error::{AppError, Result};
 
 #[derive(Deserialize)]
 struct RawTranscript {
-    #[serde(default)]
+    /// WhisperX's segments, or the paragraphs of a Let's Church transcript (with or without
+    /// word times)
+    #[serde(default, alias = "paragraphs")]
     segments: Vec<RawSegment>,
     #[serde(default)]
     word_segments: Vec<RawWord>,
@@ -55,9 +55,8 @@ pub struct Word {
 #[derive(Clone, Debug)]
 pub struct Transcript {
     pub words: Vec<Word>,
-    /// Normalized tokens, each with the word it came from
-    pub tokens: Vec<String>,
-    pub token_word: Vec<u32>,
+    /// The words, ready to be searched for quotations
+    pub quotes: scripture_quotes::Transcript,
 }
 
 impl Transcript {
@@ -121,15 +120,8 @@ impl Transcript {
         }
         fill_times(&mut words);
 
-        let mut tokens = vec![];
-        let mut token_word = vec![];
-        for (i, w) in words.iter().enumerate() {
-            for t in tokenize(&w.text) {
-                tokens.push(t);
-                token_word.push(i as u32);
-            }
-        }
-        Transcript { words, tokens, token_word }
+        let quotes = scripture_quotes::Transcript::from_words(words.iter().map(|w| &w.text));
+        Transcript { words, quotes }
     }
 
     pub fn duration(&self) -> f64 {
@@ -181,8 +173,22 @@ mod tests {
         ]}], "language": "en"}"#;
         let t = Transcript::from_raw(serde_json::from_str(json).unwrap());
         assert_eq!(t.words.len(), 5);
-        assert_eq!(t.tokens, ["for", "god", "so", "loved", "seventy"]);
+        assert_eq!(t.quotes.word_count(), 5);
         assert!(t.words[4].start >= 1.6 && t.words[4].end <= 3.0);
         assert!(!t.words[4].timed);
+    }
+
+    #[test]
+    fn paragraphs_without_word_times() {
+        let json = r#"{"mediaId": "x", "duration": 20, "paragraphs": [
+            {"start": 0.0, "end": 2.0, "speaker": null, "text": "Jesus wept."},
+            {"start": 3.0, "end": 6.0, "speaker": null, "text": "Then said the Jews,", "words": [
+                {"word": "Then", "start": 3.0, "end": 3.5}, {"word": "said", "start": 3.6, "end": 4.0},
+                {"word": "the", "start": 4.1, "end": 4.3}, {"word": "Jews,", "start": 4.4, "end": 5.0}]}
+        ]}"#;
+        let t = Transcript::from_raw(serde_json::from_str(json).unwrap());
+        assert_eq!(t.words.len(), 6);
+        assert_eq!((t.words[1].start, t.words[1].end), (1.0, 2.0));
+        assert_eq!(t.words[2].start, 3.0);
     }
 }

@@ -220,17 +220,17 @@ export function SourcesPanel() {
             </div>
             <div className="flex items-center gap-4">
               <div className="w-40 shrink-0 text-sm">
-                Minimum match <span className="font-medium tabular-nums">{Math.round(project.settings.minScore * 100)}%</span>
+                Minimum accuracy <span className="font-medium tabular-nums">{Math.round(project.settings.minAccuracy * 100)}%</span>
               </div>
               <Slider
                 className="max-w-sm"
-                min={0.25}
-                max={0.95}
+                min={0.5}
+                max={1}
                 step={0.05}
-                value={[project.settings.minScore]}
-                onValueChange={([v]) => update((p) => ({ ...p, settings: { ...p.settings, minScore: v } }))}
+                value={[project.settings.minAccuracy]}
+                onValueChange={([v]) => update((p) => ({ ...p, settings: { ...p.settings, minAccuracy: v } }))}
               />
-              <span className="text-xs text-muted-foreground">Lower finds more partial readings.</span>
+              <span className="text-xs text-muted-foreground">Lower finds readings with more words changed, skipped, or misheard.</span>
             </div>
             <div className="flex items-center gap-3">
               <Button disabled={project.sources.length === 0 || progress !== null} onClick={analyze}>
