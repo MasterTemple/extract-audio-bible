@@ -118,7 +118,11 @@ pub struct Source {
 impl Source {
     /// The sermon's id ([`Source::file_id`](field@Source::file_id)), or its file's name
     pub fn file_id(&self) -> String {
-        if self.file_id.is_empty() { base_name(&self.transcript_path) } else { self.file_id.clone() }
+        if self.file_id.is_empty() {
+            base_name(&self.transcript_path)
+        } else {
+            self.file_id.clone()
+        }
     }
 }
 
@@ -197,7 +201,9 @@ impl Selection {
 
     /// Every reading of the verse, in the order they're played
     pub fn parts(&self) -> Vec<Part> {
-        std::iter::once(self.first()).chain(self.joined.iter().cloned()).collect()
+        std::iter::once(self.first())
+            .chain(self.joined.iter().cloned())
+            .collect()
     }
 
     /// Plays these readings, in this order (the first becomes the selection's own); none leaves it
@@ -380,8 +386,15 @@ impl Project {
     */
     pub fn new(id: impl Into<String>, name: &str, bible: &Bible, book: Option<u8>) -> Self {
         let book_name = book.and_then(|b| bible.book(b)).map(|b| b.name.clone());
-        let metadata = Metadata { language: bible.language.clone().unwrap_or_default(), ..Default::default() };
-        let translation = if bible.abbreviation.is_empty() { &bible.name } else { &bible.abbreviation };
+        let metadata = Metadata {
+            language: bible.language.clone().unwrap_or_default(),
+            ..Default::default()
+        };
+        let translation = if bible.abbreviation.is_empty() {
+            &bible.name
+        } else {
+            &bible.abbreviation
+        };
         Project {
             id: id.into(),
             name: match (name.trim(), book_name) {
@@ -410,9 +423,19 @@ impl Project {
     Bibles, it's an error
     */
     pub fn readings(id: impl Into<String>, name: &str, bibles: &[&Bible], scope: BookScope) -> Result<Self> {
-        let first = bibles.first().ok_or_else(|| crate::Error::invalid("choose at least one translation"))?;
-        let abbreviations: Vec<&str> =
-            bibles.iter().map(|b| if b.abbreviation.is_empty() { b.name.as_str() } else { b.abbreviation.as_str() }).collect();
+        let first = bibles
+            .first()
+            .ok_or_else(|| crate::Error::invalid("choose at least one translation"))?;
+        let abbreviations: Vec<&str> = bibles
+            .iter()
+            .map(|b| {
+                if b.abbreviation.is_empty() {
+                    b.name.as_str()
+                } else {
+                    b.abbreviation.as_str()
+                }
+            })
+            .collect();
         let mut project = Project::new(id, name, first, None);
         if name.trim().is_empty() {
             project.name = format!("Verses read ({})", abbreviations.join(", "));
@@ -450,7 +473,11 @@ impl Project {
             return source.audio_path.clone();
         }
         let template = self.settings.audio_url.trim();
-        if template.is_empty() { String::new() } else { template.replace("{id}", &url_encode(&source.file_id())) }
+        if template.is_empty() {
+            String::new()
+        } else {
+            template.replace("{id}", &url_encode(&source.file_id()))
+        }
     }
 
     /// What's known about a sermon
@@ -484,7 +511,9 @@ impl Project {
     by its old id moves with it), and its title is the sermon's if none was given
     */
     pub fn identify(&mut self, source_id: &str, id: Option<&str>, title: Option<&str>) {
-        let Some(source) = self.sources.iter_mut().find(|s| s.id == source_id) else { return };
+        let Some(source) = self.sources.iter_mut().find(|s| s.id == source_id) else {
+            return;
+        };
         let old = source.file_id();
         if let Some(id) = id
             && id != old
@@ -543,8 +572,12 @@ impl Project {
     [`Added::skipped`]
     */
     pub fn add_sources_from(&mut self, files: &dyn crate::Files, paths: &[String]) -> Added {
-        let (kept, skipped): (Vec<String>, Vec<String>) = (paths.iter().cloned())
-            .partition(|p| ext(p) != "json" || files.read(p).is_ok_and(|bytes| crate::transcript::is_transcript(&bytes)));
+        let (kept, skipped): (Vec<String>, Vec<String>) = (paths.iter().cloned()).partition(|p| {
+            ext(p) != "json"
+                || files
+                    .read(p)
+                    .is_ok_and(|bytes| crate::transcript::is_transcript(&bytes))
+        });
         let mut added = self.add_sources(&kept);
         added.skipped = skipped;
         added
@@ -582,7 +615,13 @@ impl Project {
             });
             added.added += 1;
         }
-        added.unpaired.extend(transcripts.iter().zip(&used).filter(|(_, u)| !**u).map(|(t, _)| (*t).clone()));
+        added.unpaired.extend(
+            transcripts
+                .iter()
+                .zip(&used)
+                .filter(|(_, u)| !**u)
+                .map(|(t, _)| (*t).clone()),
+        );
         self.updated_at = now();
         added
     }
@@ -617,12 +656,20 @@ fn url_encode(text: &str) -> String {
 pub const AUDIO: [&str; 7] = ["mp3", "m4a", "wav", "flac", "ogg", "aac", "mp4"];
 
 fn ext(p: &str) -> String {
-    Path::new(p).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+    Path::new(p)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
 }
 
 /// A file's name without its extensions (`sermon.mp3.json` and `sermon.json` are `sermon`)
 fn base_name(p: &str) -> String {
-    let mut stem = Path::new(p).file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+    let mut stem = Path::new(p)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
     while let Some((s, ext)) = stem.rsplit_once('.') {
         if ext.eq_ignore_ascii_case("json") || AUDIO.contains(&ext.to_ascii_lowercase().as_str()) {
             stem = s.to_string();
@@ -648,16 +695,26 @@ mod tests {
             books: vec![],
         };
         let mut p = Project::new("p", "", &bible, None);
-        let paths: Vec<String> = ["a/one.mp3", "b/one.json", "a/one.json", "a/two.m4a", "a/three.json", "notes.txt"]
-            .map(String::from)
-            .into();
+        let paths: Vec<String> = [
+            "a/one.mp3",
+            "b/one.json",
+            "a/one.json",
+            "a/two.m4a",
+            "a/three.json",
+            "notes.txt",
+        ]
+        .map(String::from)
+        .into();
         let added = p.add_sources(&paths);
         // The pair, and the two transcripts without audio
         assert_eq!(added.added, 3);
         assert_eq!(p.sources[0].transcript_path, "a/one.json");
         assert_eq!(added.unpaired, ["a/two.m4a"]);
         assert_eq!(p.sources[0].id, stable_id("a/one.mp3"));
-        assert_eq!(p.sources.iter().map(|s| s.audio_path.as_str()).collect::<Vec<_>>(), ["a/one.mp3", "", ""]);
+        assert_eq!(
+            p.sources.iter().map(|s| s.audio_path.as_str()).collect::<Vec<_>>(),
+            ["a/one.mp3", "", ""]
+        );
         assert_eq!(p.add_sources(&paths).added, 0);
     }
 
@@ -673,13 +730,30 @@ mod tests {
         };
         let mut p = Project::new("p", "", &bible, None);
         let mut files = crate::Memory::new();
-        files.insert("whisperx.json", br#"{"segments": [{"start": 0, "end": 1, "text": "Jesus wept."}]}"#.to_vec());
-        files.insert("lets-church.json", br#"{"mediaId": "m", "paragraphs": [{"start": 0, "end": 1, "text": "Amen."}]}"#.to_vec());
-        files.insert("words.json", br#"{"word_segments": [{"word": "Amen", "start": 0, "end": 1}]}"#.to_vec());
+        files.insert(
+            "whisperx.json",
+            br#"{"segments": [{"start": 0, "end": 1, "text": "Jesus wept."}]}"#.to_vec(),
+        );
+        files.insert(
+            "lets-church.json",
+            br#"{"mediaId": "m", "paragraphs": [{"start": 0, "end": 1, "text": "Amen."}]}"#.to_vec(),
+        );
+        files.insert(
+            "words.json",
+            br#"{"word_segments": [{"word": "Amen", "start": 0, "end": 1}]}"#.to_vec(),
+        );
         files.insert("project.json", br#"{"id": "p", "sources": []}"#.to_vec());
         files.insert("broken.json", b"{".to_vec());
-        let paths: Vec<String> =
-            ["whisperx.json", "lets-church.json", "words.json", "project.json", "broken.json", "missing.json"].map(String::from).into();
+        let paths: Vec<String> = [
+            "whisperx.json",
+            "lets-church.json",
+            "words.json",
+            "project.json",
+            "broken.json",
+            "missing.json",
+        ]
+        .map(String::from)
+        .into();
         let added = p.add_sources_from(&files, &paths);
         assert_eq!(added.added, 3);
         assert_eq!(added.skipped, ["project.json", "broken.json", "missing.json"]);
@@ -738,7 +812,10 @@ mod tests {
         // Searching finds its transcript's id and title: what was given moves to the id
         p.identify(&source, Some("xyz"), Some("Jesus Wept"));
         assert_eq!(p.sources[0].file_id(), "xyz");
-        assert_eq!(p.file_metadata(&p.sources[0]), given(Some("Jesus Wept"), Some("John 11")));
+        assert_eq!(
+            p.file_metadata(&p.sources[0]),
+            given(Some("Jesus Wept"), Some("John 11"))
+        );
 
         // A title given wins over the transcript's, and a field left out is kept
         p.apply_file_metadata([("xyz".into(), given(Some("Lazarus"), None))].into());
@@ -750,7 +827,10 @@ mod tests {
         let json = r#"{"xyz": {"speaker": "Sam Renihan", "series": "John"}}"#;
         p.apply_file_metadata(serde_json::from_str(json).unwrap());
         let meta = p.file_metadata(&p.sources[0]);
-        assert_eq!((meta.speaker.as_deref(), meta.series.as_deref()), (Some("Sam Renihan"), Some("John")));
+        assert_eq!(
+            (meta.speaker.as_deref(), meta.series.as_deref()),
+            (Some("Sam Renihan"), Some("John"))
+        );
         assert_eq!(meta.title.as_deref(), Some("Lazarus"));
     }
 }

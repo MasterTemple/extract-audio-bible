@@ -69,7 +69,12 @@ pub struct BookOutline {
 
 impl Bible {
     /// A Bible from imported books ([`import`]), named and identified by the caller
-    pub fn new(id: impl Into<String>, name: impl Into<String>, abbreviation: impl Into<String>, imported: Imported) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        abbreviation: impl Into<String>,
+        imported: Imported,
+    ) -> Self {
         Bible {
             id: id.into(),
             name: name.into(),
@@ -171,7 +176,9 @@ impl Collected {
                     .map(|c| match chapters.get(&c) {
                         Some(verses) => {
                             let last = verses.keys().max().copied().unwrap_or(0);
-                            (1..=last).map(|v| verses.get(&v).cloned().unwrap_or_default()).collect()
+                            (1..=last)
+                                .map(|v| verses.get(&v).cloned().unwrap_or_default())
+                                .collect()
                         }
                         None => vec![],
                     })
@@ -188,7 +195,11 @@ impl Collected {
 }
 
 fn ext(name: &str) -> String {
-    Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+    Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
 }
 
 /// A Bible's books, read from its files
@@ -218,9 +229,12 @@ pub fn import(files: Vec<(String, Vec<u8>)>) -> Result<Imported> {
     if files.is_empty() {
         return Err(Error::invalid("No files found to import"));
     }
-    let (markup, other): (Vec<_>, Vec<_>) = files
-        .into_iter()
-        .partition(|(name, _)| matches!(ext(name).as_str(), "usx" | "usfm" | "sfm" | "xml" | "osis" | "thml" | "gbf"));
+    let (markup, other): (Vec<_>, Vec<_>) = files.into_iter().partition(|(name, _)| {
+        matches!(
+            ext(name).as_str(),
+            "usx" | "usfm" | "sfm" | "xml" | "osis" | "thml" | "gbf"
+        )
+    });
     let (books, format) = if !markup.is_empty() {
         import_markup(markup)?
     } else {
@@ -357,12 +371,18 @@ fn import_json(text: &str, out: &mut Collected) -> Result<()> {
     }
     fn chapters(book: BookId, value: &Value, out: &mut Collected) {
         let list: Vec<(u16, &Value)> = match value {
-            Value::Object(o) => o.iter().filter_map(|(k, v)| Some((k.trim().parse().ok()?, v))).collect(),
+            Value::Object(o) => o
+                .iter()
+                .filter_map(|(k, v)| Some((k.trim().parse().ok()?, v)))
+                .collect(),
             Value::Array(a) => a
                 .iter()
                 .enumerate()
                 .map(|(i, v)| {
-                    let n = v.as_object().and_then(|o| get(o, &["chapter", "number", "c"])).and_then(num);
+                    let n = v
+                        .as_object()
+                        .and_then(|o| get(o, &["chapter", "number", "c"]))
+                        .and_then(num);
                     (n.unwrap_or(i as u16 + 1), v)
                 })
                 .collect(),
@@ -374,12 +394,18 @@ fn import_json(text: &str, out: &mut Collected) -> Result<()> {
                 other => other,
             };
             let verses: Vec<(u16, &Value)> = match ch {
-                Value::Object(o) => o.iter().filter_map(|(k, v)| Some((k.trim().parse().ok()?, v))).collect(),
+                Value::Object(o) => o
+                    .iter()
+                    .filter_map(|(k, v)| Some((k.trim().parse().ok()?, v)))
+                    .collect(),
                 Value::Array(a) => a
                     .iter()
                     .enumerate()
                     .map(|(i, v)| {
-                        let n = v.as_object().and_then(|o| get(o, &["verse", "number", "v"])).and_then(num);
+                        let n = v
+                            .as_object()
+                            .and_then(|o| get(o, &["verse", "number", "v"]))
+                            .and_then(num);
                         (n.unwrap_or(i as u16 + 1), v)
                     })
                     .collect(),
@@ -404,7 +430,11 @@ fn import_json(text: &str, out: &mut Collected) -> Result<()> {
                 for b in list {
                     let Value::Object(bo) = b else { continue };
                     let book = get(bo, &["name", "book", "id", "abbreviation", "osis", "usfm"])
-                        .and_then(|n| n.as_str().map(str::to_string).or_else(|| n.as_u64().map(|n| n.to_string())))
+                        .and_then(|n| {
+                            n.as_str()
+                                .map(str::to_string)
+                                .or_else(|| n.as_u64().map(|n| n.to_string()))
+                        })
                         .and_then(|n| find_book(&n));
                     if let (Some(book), Some(chs)) = (book, get(bo, &["chapters"])) {
                         chapters(book, chs, out);
@@ -434,9 +464,11 @@ fn import_delimited(text: &str, delimiter: char, out: &mut Collected) {
             }
             continue;
         }
-        let (Some(book), Ok(c), Ok(v)) =
-            (find_book(&fields[0]), fields[1].trim().parse::<u16>(), fields[2].trim().parse::<u16>())
-        else {
+        let (Some(book), Ok(c), Ok(v)) = (
+            find_book(&fields[0]),
+            fields[1].trim().parse::<u16>(),
+            fields[2].trim().parse::<u16>(),
+        ) else {
             continue;
         };
         out.add(book, c, v, &fields[3..].join(&delimiter.to_string()));
@@ -468,7 +500,9 @@ fn import_lines(text: &str, out: &mut Collected) {
     for line in text.lines() {
         let line = line.trim();
         // The reference ends at the first `c:v` (or `c.v`) after the book name
-        let Some((book, c, v, rest)) = split_reference(line) else { continue };
+        let Some((book, c, v, rest)) = split_reference(line) else {
+            continue;
+        };
         if let Some(book) = find_book(book) {
             out.add(book, c, v, rest);
         }
@@ -500,7 +534,10 @@ mod tests {
     #[test]
     fn lines() {
         let mut c = Collected::default();
-        import_lines("John 3:16 For God so loved\n1 John 1:1 That which was\nGen 1.1\tIn the beginning", &mut c);
+        import_lines(
+            "John 3:16 For God so loved\n1 John 1:1 That which was\nGen 1.1\tIn the beginning",
+            &mut c,
+        );
         let books = c.into_books();
         assert_eq!(books.len(), 3);
         assert_eq!(books[0].name, "Genesis");

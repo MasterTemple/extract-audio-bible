@@ -18,7 +18,10 @@ pub struct Downloading<'f> {
 
 impl<'f> Downloading<'f> {
     pub fn new(files: &'f dyn Files, cache: impl Into<PathBuf>) -> Self {
-        Downloading { files, cache: cache.into() }
+        Downloading {
+            files,
+            cache: cache.into(),
+        }
     }
 
     /// Where a path is read from: itself, or a URL's download (fetched if it hasn't been)
@@ -63,7 +66,10 @@ fn cache_name(url: &str) -> String {
 
 /// Downloads `url` to `file`, whole or not at all
 fn download(url: &str, file: &Path) -> Result<()> {
-    let failed = |message: String| Error::Download { url: url.to_string(), message };
+    let failed = |message: String| Error::Download {
+        url: url.to_string(),
+        message,
+    };
     let mut response = ureq::get(url).call().map_err(|e| failed(e.to_string()))?;
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)?;
@@ -93,7 +99,10 @@ mod tests {
     fn names_downloads_by_url() {
         assert!(cache_name("https://example.com/a/b.MP3?x=1").ends_with(".mp3"));
         assert!(!cache_name("https://example.com/media/abc").contains('.'));
-        assert_ne!(cache_name("https://example.com/1.mp3"), cache_name("https://example.com/2.mp3"));
+        assert_ne!(
+            cache_name("https://example.com/1.mp3"),
+            cache_name("https://example.com/2.mp3")
+        );
         let d = Downloading::new(&crate::Disk, "/nowhere");
         assert_eq!(d.local("sermons/a.mp3").unwrap(), "sermons/a.mp3");
         assert!(matches!(

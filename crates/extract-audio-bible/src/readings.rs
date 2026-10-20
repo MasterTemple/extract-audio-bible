@@ -54,8 +54,16 @@ read has them empty
 */
 pub fn reading_rows(project: &Project, matches: &MatchSet, bibles: &[&Bible], files: &dyn Files) -> Vec<ReadingRow> {
     let abbreviation = |id: &str| {
-        (bibles.iter().find(|b| b.id == id))
-            .map_or_else(|| id.to_string(), |b| if b.abbreviation.is_empty() { b.name.clone() } else { b.abbreviation.clone() })
+        (bibles.iter().find(|b| b.id == id)).map_or_else(
+            || id.to_string(),
+            |b| {
+                if b.abbreviation.is_empty() {
+                    b.name.clone()
+                } else {
+                    b.abbreviation.clone()
+                }
+            },
+        )
     };
     let names = bibles.iter().find(|b| b.id == project.bible_id).or(bibles.first());
     let mut rows = vec![];
@@ -69,7 +77,9 @@ pub fn reading_rows(project: &Project, matches: &MatchSet, bibles: &[&Bible], fi
         let sermon = project.source_title(source);
         let meta = project.file_metadata(source);
         let name = |book: u8, chapter: u16, verse: u16| {
-            let book = names.and_then(|b| b.book(book)).map_or_else(|| book.to_string(), |b| b.name.clone());
+            let book = names
+                .and_then(|b| b.book(book))
+                .map_or_else(|| book.to_string(), |b| b.name.clone());
             format!("{book} {chapter}:{verse}")
         };
         for m in found {
@@ -112,7 +122,11 @@ pub fn reading_rows(project: &Project, matches: &MatchSet, bibles: &[&Bible], fi
 /// the project left out)
 pub fn to_csv(rows: &[ReadingRow]) -> String {
     let field = |s: &str| {
-        if s.contains([',', '"', '\n', '\r']) { format!("\"{}\"", s.replace('"', "\"\"")) } else { s.to_string() }
+        if s.contains([',', '"', '\n', '\r']) {
+            format!("\"{}\"", s.replace('"', "\"\""))
+        } else {
+            s.to_string()
+        }
     };
     let mut out = String::from(
         "sermon,sermon id,speaker,series,reference,book,chapter,verse,also at,translation,also in,start,end,kind,accuracy,coverage,said\n",

@@ -76,8 +76,7 @@ pub struct Transcript {
 impl Transcript {
     /// A transcript file (WhisperX JSON, or a Let's Church transcript)
     pub fn open(files: &dyn Files, path: &str) -> Result<Self> {
-        Self::parse(&String::from_utf8_lossy(&files.read(path)?))
-            .map_err(|e| Error::invalid(format!("{path}: {e}")))
+        Self::parse(&String::from_utf8_lossy(&files.read(path)?)).map_err(|e| Error::invalid(format!("{path}: {e}")))
     }
 
     /// A transcript's JSON
@@ -93,7 +92,13 @@ impl Transcript {
         fill_times(&mut words);
         let quotes = scripture_quotes::Transcript::from_words(words.iter().map(|w| &w.text));
         let paragraphs = at_pauses(&words);
-        Transcript { id: None, title: None, words, paragraphs, quotes }
+        Transcript {
+            id: None,
+            title: None,
+            words,
+            paragraphs,
+            quotes,
+        }
     }
 
     fn from_raw(raw: RawTranscript) -> Self {
@@ -174,7 +179,13 @@ impl Transcript {
             _ => None,
         });
         let nonempty = |s: Option<String>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-        Transcript { id: nonempty(id), title: nonempty(raw.title), words, paragraphs, quotes }
+        Transcript {
+            id: nonempty(id),
+            title: nonempty(raw.title),
+            words,
+            paragraphs,
+            quotes,
+        }
     }
 
     pub fn duration(&self) -> f64 {
@@ -187,7 +198,9 @@ fn at_pauses(words: &[Word]) -> Vec<usize> {
     if words.is_empty() {
         return vec![];
     }
-    std::iter::once(0).chain((1..words.len()).filter(|&i| words[i].start - words[i - 1].end >= 2.0)).collect()
+    std::iter::once(0)
+        .chain((1..words.len()).filter(|&i| words[i].start - words[i - 1].end >= 2.0))
+        .collect()
 }
 
 /// Whether JSON is a transcript: WhisperX's segments or words, or a Let's Church transcript's
@@ -216,7 +229,11 @@ fn fill_times(words: &mut [Word]) {
             i += 1;
         }
         let before = if gap_start > 0 { words[gap_start - 1].end } else { 0.0 };
-        let after = if i < n { words[i].start } else { before + 0.4 * (i - gap_start) as f64 };
+        let after = if i < n {
+            words[i].start
+        } else {
+            before + 0.4 * (i - gap_start) as f64
+        };
         let after = after.max(before);
         let step = (after - before) / (i - gap_start) as f64;
         for (k, w) in words[gap_start..i].iter_mut().enumerate() {

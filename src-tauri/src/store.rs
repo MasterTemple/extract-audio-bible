@@ -2,10 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use extract_audio_bible::{
-    Bible, MatchSet, Project,
-    bible::BibleSummary,
-};
+use extract_audio_bible::{Bible, MatchSet, Project, bible::BibleSummary};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result};
@@ -78,7 +75,10 @@ impl Store {
 
     pub fn save_bible(&self, bible: &Bible) -> Result<()> {
         write_json(&self.bible_path(&bible.id)?, bible)?;
-        write_json(&self.root.join("bibles").join(format!("{}.summary", bible.id)), &bible.summary())
+        write_json(
+            &self.root.join("bibles").join(format!("{}.summary", bible.id)),
+            &bible.summary(),
+        )
     }
 
     pub fn bible(&self, id: &str) -> Result<Bible> {
@@ -120,7 +120,11 @@ impl Store {
 
     pub fn projects(&self) -> Result<Vec<ProjectSummary>> {
         let mut out = vec![];
-        for entry in std::fs::read_dir(self.root.join("projects")).into_iter().flatten().flatten() {
+        for entry in std::fs::read_dir(self.root.join("projects"))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
             if let Ok(p) = read_json::<Project>(&entry.path().join("project.json")) {
                 out.push(ProjectSummary {
                     translations: p.bibles_searched(),

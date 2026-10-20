@@ -75,7 +75,13 @@ impl Project {
         }
         let mut parts = selection.parts();
         let at = (parts.iter())
-            .position(|p| matches.matches.iter().find(|x| x.id == p.match_id).is_some_and(|x| begins(x) > begins(m)))
+            .position(|p| {
+                matches
+                    .matches
+                    .iter()
+                    .find(|x| x.id == p.match_id)
+                    .is_some_and(|x| begins(x) > begins(m))
+            })
             .unwrap_or(parts.len());
         parts.insert(at, Part::of(m));
         selection.set_parts(parts);
@@ -88,7 +94,9 @@ impl Project {
     */
     pub fn unjoin(&mut self, m: &Match) -> bool {
         let key = verse_key(m.book, m.chapter, m.verse);
-        let Some(selection) = self.selections.get_mut(&key) else { return false };
+        let Some(selection) = self.selections.get_mut(&key) else {
+            return false;
+        };
         if !selection.uses(&m.id) {
             return false;
         }
@@ -109,8 +117,12 @@ impl Project {
     passed over. Returns the verses chosen
     */
     pub fn choose_best(&mut self, book: &BibleBook, chapter: u16, matches: &MatchSet, min_score: f32) -> Vec<u16> {
-        let audible: std::collections::HashSet<&str> =
-            self.sources.iter().filter(|s| !self.audio_path(s).is_empty()).map(|s| s.id.as_str()).collect();
+        let audible: std::collections::HashSet<&str> = self
+            .sources
+            .iter()
+            .filter(|s| !self.audio_path(s).is_empty())
+            .map(|s| s.id.as_str())
+            .collect();
         let mut by_verse: HashMap<u16, Vec<&Match>> = HashMap::new();
         for m in &matches.matches {
             if m.book == book.id && m.chapter == chapter && audible.contains(m.source_id.as_str()) {
@@ -121,9 +133,15 @@ impl Project {
         for list in by_verse.values_mut() {
             list.sort_by(|a, b| b.score.total_cmp(&a.score));
         }
-        let run_length: HashMap<&str, usize> = matches.runs.iter().map(|r| (r.id.as_str(), r.match_ids.len())).collect();
+        let run_length: HashMap<&str, usize> = matches
+            .runs
+            .iter()
+            .map(|r| (r.id.as_str(), r.match_ids.len()))
+            .collect();
         let by_id: HashMap<&str, &Match> = matches.matches.iter().map(|m| (m.id.as_str(), m)).collect();
-        let Some(texts) = book.chapters.get(chapter as usize - 1) else { return vec![] };
+        let Some(texts) = book.chapters.get(chapter as usize - 1) else {
+            return vec![];
+        };
 
         let mut chosen = vec![];
         let mut previous: Option<(Option<String>, String)> = None; // run, source
@@ -134,8 +152,9 @@ impl Project {
             let verse = i as u16 + 1;
             if let Some(existing) = self.selections.get(&verse_key(book.id, chapter, verse)) {
                 // What's heard last is what the next verse would carry on from
-                let last = (existing.joined.last())
-                    .map_or((&existing.match_id, &existing.source_id), |p| (&p.match_id, &p.source_id));
+                let last = (existing.joined.last()).map_or((&existing.match_id, &existing.source_id), |p| {
+                    (&p.match_id, &p.source_id)
+                });
                 let run = by_id.get(last.0.as_str()).and_then(|m| m.run_id.clone());
                 previous = Some((run, last.1.clone()));
                 continue;
@@ -143,7 +162,12 @@ impl Project {
             let best = (by_verse.get(&verse).into_iter().flatten())
                 .filter(|m| m.score >= min_score)
                 .map(|m| {
-                    let run = m.run_id.as_deref().and_then(|r| run_length.get(r)).copied().unwrap_or(0);
+                    let run = m
+                        .run_id
+                        .as_deref()
+                        .and_then(|r| run_length.get(r))
+                        .copied()
+                        .unwrap_or(0);
                     let mut s = m.score + run.min(10) as f32 * 0.01;
                     match &previous {
                         Some((Some(run), _)) if m.run_id.as_ref() == Some(run) => s += 0.15,
@@ -193,10 +217,14 @@ impl Project {
         for book in bible.books.iter().filter(|b| self.book.is_none_or(|only| only == b.id)) {
             for (c, texts) in book.chapters.iter().enumerate() {
                 let chapter = c as u16 + 1;
-                let verses: Vec<u16> =
-                    (texts.iter().enumerate()).filter(|(_, t)| !t.trim().is_empty()).map(|(i, _)| i as u16 + 1).collect();
+                let verses: Vec<u16> = (texts.iter().enumerate())
+                    .filter(|(_, t)| !t.trim().is_empty())
+                    .map(|(i, _)| i as u16 + 1)
+                    .collect();
                 let missing = crate::export::missing_verses(self, book, chapter);
-                let with_readings = found.get(&(book.id, chapter)).map_or(0, |f| verses.iter().filter(|v| f.contains(v)).count());
+                let with_readings = found
+                    .get(&(book.id, chapter))
+                    .map_or(0, |f| verses.iter().filter(|v| f.contains(v)).count());
                 if self.book.is_none() && with_readings == 0 && missing.len() == verses.len() {
                     continue;
                 }
@@ -255,7 +283,9 @@ mod tests {
             id: 43,
             name: "John".into(),
             osis: "John".into(),
-            chapters: (1..=11).map(|c| if c == 11 { vec!["a b c d".into(); 36] } else { vec![] }).collect(),
+            chapters: (1..=11)
+                .map(|c| if c == 11 { vec!["a b c d".into(); 36] } else { vec![] })
+                .collect(),
         };
         let bible = Bible {
             id: "b".into(),
@@ -280,15 +310,20 @@ mod tests {
         let second_half = reading("late", 35, 100.0, 102.0, [false, false, true, true]);
         let first_half = reading("early", 35, 10.0, 11.0, [true, true, false, false]);
         let next = reading("next", 36, 102.0, 105.0, [true; 4]);
-        let matches =
-            MatchSet { matches: vec![second_half.clone(), first_half.clone(), next.clone()], ..Default::default() };
+        let matches = MatchSet {
+            matches: vec![second_half.clone(), first_half.clone(), next.clone()],
+            ..Default::default()
+        };
 
         project.select(&second_half);
         // The first half goes first, though it was added second
         assert!(project.join(&first_half, &matches));
         assert!(!project.join(&first_half, &matches));
         let sel = &project.selections["43.11.35"];
-        assert_eq!(sel.parts().iter().map(|p| p.match_id.as_str()).collect::<Vec<_>>(), ["early", "late"]);
+        assert_eq!(
+            sel.parts().iter().map(|p| p.match_id.as_str()).collect::<Vec<_>>(),
+            ["early", "late"]
+        );
 
         // Heard one after the other, and verse 36 carries straight on from the second half
         project.select(&next);
@@ -297,7 +332,10 @@ mod tests {
         assert_eq!((times[0].start, times[0].end), (0.0, 3.0));
         assert_eq!((times[1].start, times[1].end), (3.0, 6.0));
         let (pieces, _) = crate::export::chapter_pieces(&project, book, 11);
-        let audio = pieces.iter().filter(|p| matches!(p, crate::export::Piece::Audio(_))).count();
+        let audio = pieces
+            .iter()
+            .filter(|p| matches!(p, crate::export::Piece::Audio(_)))
+            .count();
         assert_eq!(audio, 2);
 
         // Rearranged, then taken apart
@@ -318,7 +356,9 @@ mod tests {
             id: 43,
             name: "John".into(),
             osis: "John".into(),
-            chapters: (1..=11).map(|c| if c == 11 { vec!["a b c d".into(); 36] } else { vec![] }).collect(),
+            chapters: (1..=11)
+                .map(|c| if c == 11 { vec!["a b c d".into(); 36] } else { vec![] })
+                .collect(),
         };
         let bible = Bible {
             id: "b".into(),
@@ -332,9 +372,15 @@ mod tests {
         // A transcript alone
         project.add_sources(&["s.json".into()]);
         project.sources[0].id = "s".into();
-        let matches = MatchSet { matches: vec![reading("wept", 35, 1.0, 2.0, [true; 4])], ..Default::default() };
+        let matches = MatchSet {
+            matches: vec![reading("wept", 35, 1.0, 2.0, [true; 4])],
+            ..Default::default()
+        };
         let john = bible.book(43).unwrap();
-        assert!(project.choose_best(john, 11, &matches, 0.0).is_empty(), "it has no audio");
+        assert!(
+            project.choose_best(john, 11, &matches, 0.0).is_empty(),
+            "it has no audio"
+        );
         project.settings.audio_url = "https://example.com/{id}.mp3".into();
         assert_eq!(project.choose_best(john, 11, &matches, 0.0), [35]);
     }

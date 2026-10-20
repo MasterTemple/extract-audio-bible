@@ -106,7 +106,10 @@ pub fn searcher(engine: &Engine, book: Option<u8>) -> Result<Searcher<'_>, Scope
 }
 
 /// Looks for some books' verses, or (with none) the whole Bible's
-pub fn scoped<'e>(engine: &'e Engine, books: Option<&std::collections::BTreeSet<u8>>) -> Result<Searcher<'e>, ScopeError> {
+pub fn scoped<'e>(
+    engine: &'e Engine,
+    books: Option<&std::collections::BTreeSet<u8>>,
+) -> Result<Searcher<'e>, ScopeError> {
     match books {
         Some(books) => engine.scoped(&books.iter().fold(Scope::default(), |scope, &b| scope.book(BookId(b)))),
         None => Ok(engine.searcher()),
@@ -129,7 +132,11 @@ pub fn find_matches(
         .iter()
         .map(|q| {
             let (ws, we) = (q.words.start, q.words.end - 1);
-            let before = if ws > 0 { (words[ws].start - words[ws - 1].end).max(0.0) } else { 0.6 };
+            let before = if ws > 0 {
+                (words[ws].start - words[ws - 1].end).max(0.0)
+            } else {
+                0.6
+            };
             let after = match words.get(we + 1) {
                 Some(next) => (next.start - words[we].end).max(0.0),
                 None => 0.8,
@@ -189,7 +196,10 @@ pub fn find_matches(
         // Within a run, cuts between verses meet, so the reading plays back without a jump
         for pair in r.quotations.windows(2) {
             let (a, b) = (pair[0], pair[1]);
-            let (ea, sb) = (words[matches[a].word_end as usize].end, words[matches[b].word_start as usize].start);
+            let (ea, sb) = (
+                words[matches[a].word_end as usize].end,
+                words[matches[b].word_start as usize].start,
+            );
             if sb >= ea {
                 let mid = (ea + sb) / 2.0;
                 matches[a].end = mid;
@@ -240,9 +250,18 @@ mod tests {
         let words: Vec<String> = text
             .split_whitespace()
             .enumerate()
-            .map(|(i, w)| format!(r#"{{"word": "{w}", "start": {}, "end": {}}}"#, i as f64 * 0.4, i as f64 * 0.4 + 0.3))
+            .map(|(i, w)| {
+                format!(
+                    r#"{{"word": "{w}", "start": {}, "end": {}}}"#,
+                    i as f64 * 0.4,
+                    i as f64 * 0.4 + 0.3
+                )
+            })
             .collect();
-        let json = format!(r#"{{"segments": [{{"start": 0, "end": 1000, "text": "", "words": [{}]}}]}}"#, words.join(","));
+        let json = format!(
+            r#"{{"segments": [{{"start": 0, "end": 1000, "text": "", "words": [{}]}}]}}"#,
+            words.join(",")
+        );
         Transcript::parse(&json).unwrap()
     }
 
@@ -261,11 +280,20 @@ mod tests {
         let refs: Vec<_> = matches.iter().map(|m| (m.chapter, m.verse, m.kind)).collect();
         assert!(refs.contains(&(3, 1, MatchKind::Exact)), "{refs:?}");
         assert!(refs.contains(&(3, 2, MatchKind::Exact)), "{refs:?}");
-        assert!(refs.contains(&(11, 1, MatchKind::Exact)), "short verse by its neighbor: {refs:?}");
+        assert!(
+            refs.contains(&(11, 1, MatchKind::Exact)),
+            "short verse by its neighbor: {refs:?}"
+        );
         assert!(refs.contains(&(11, 2, MatchKind::Exact)), "{refs:?}");
-        assert!(refs.iter().any(|r| r.0 == 3 && r.1 == 1 && r.2 != MatchKind::Exact), "the partial re-reading: {refs:?}");
+        assert!(
+            refs.iter().any(|r| r.0 == 3 && r.1 == 1 && r.2 != MatchKind::Exact),
+            "the partial re-reading: {refs:?}"
+        );
         assert_eq!(runs.len(), 2, "{runs:?}");
-        let jn3 = matches.iter().find(|m| m.chapter == 3 && m.verse == 1 && m.kind == MatchKind::Exact).unwrap();
+        let jn3 = matches
+            .iter()
+            .find(|m| m.chapter == 3 && m.verse == 1 && m.kind == MatchKind::Exact)
+            .unwrap();
         assert_eq!(t.words[jn3.word_start as usize].text, "Jesus");
         assert_eq!(t.words[jn3.word_end as usize].text, "God.");
         // Cuts within a run meet

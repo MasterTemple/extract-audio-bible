@@ -69,7 +69,9 @@ impl Memory {
     }
 
     fn get(&self, path: &str) -> Result<&Arc<[u8]>> {
-        self.files.get(path).ok_or_else(|| Error::not_found(format!("{path}: not given")))
+        self.files
+            .get(path)
+            .ok_or_else(|| Error::not_found(format!("{path}: not given")))
     }
 }
 

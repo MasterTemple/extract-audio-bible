@@ -103,7 +103,10 @@ impl BookScope {
     /// Every genre topos knows, in its order
     pub fn genres() -> Vec<Genre> {
         (BibleData::default().genres().iter())
-            .map(|g| Genre { name: g.name().to_string(), books: g.books().iter().map(|b| b.0).collect() })
+            .map(|g| Genre {
+                name: g.name().to_string(),
+                books: g.books().iter().map(|b| b.0).collect(),
+            })
             .collect()
     }
 }
@@ -134,17 +137,32 @@ mod tests {
             s.genres = vec!["Pentateuch".into()];
             s.books = vec!["Rev".into()];
         });
-        assert_eq!(six.books().unwrap().unwrap().into_iter().collect::<Vec<_>>(), [1, 2, 3, 4, 5, 66]);
+        assert_eq!(
+            six.books().unwrap().unwrap().into_iter().collect::<Vec<_>>(),
+            [1, 2, 3, 4, 5, 66]
+        );
         let gospels_but_john = scope(|s| {
             s.genres = vec!["Gospels".into()];
             s.exclude_books = vec!["John".into()];
         });
-        assert_eq!(gospels_but_john.books().unwrap().unwrap().into_iter().collect::<Vec<_>>(), [40, 41, 42]);
+        assert_eq!(
+            gospels_but_john
+                .books()
+                .unwrap()
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            [40, 41, 42]
+        );
         let nothing = scope(|s| {
             s.testaments = vec![Testament::Old];
             s.genres = vec!["Pauline Epistles".into()];
         });
         assert!(nothing.books().is_err());
-        assert!(BookScope::genres().iter().any(|g| g.name == "Gospels" && g.books == [40, 41, 42, 43]));
+        assert!(
+            BookScope::genres()
+                .iter()
+                .any(|g| g.name == "Gospels" && g.books == [40, 41, 42, 43])
+        );
     }
 }

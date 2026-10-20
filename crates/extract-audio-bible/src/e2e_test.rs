@@ -40,18 +40,45 @@ fn e2e() {
     let words: Vec<String> = said
         .split_whitespace()
         .enumerate()
-        .map(|(i, w)| format!(r#"{{"word": {}, "start": {:.2}, "end": {:.2}, "score": 0.9}}"#, serde_json::to_string(w).unwrap(), i as f64 * 0.35, i as f64 * 0.35 + 0.28))
+        .map(|(i, w)| {
+            format!(
+                r#"{{"word": {}, "start": {:.2}, "end": {:.2}, "score": 0.9}}"#,
+                serde_json::to_string(w).unwrap(),
+                i as f64 * 0.35,
+                i as f64 * 0.35 + 0.28
+            )
+        })
         .collect();
-    let json = format!(r#"{{"segments": [{{"start": 0, "end": 99999, "text": "", "words": [{}]}}]}}"#, words.join(","));
+    let json = format!(
+        r#"{{"segments": [{{"start": 0, "end": 99999, "text": "", "words": [{}]}}]}}"#,
+        words.join(",")
+    );
     let transcript = Transcript::parse(&json).unwrap();
     let t = Instant::now();
     let (matches, runs) = find_matches(&searcher, &transcript, "s", &Default::default());
     println!("{} words matched in {:?}", transcript.words.len(), t.elapsed());
     for m in &matches {
-        println!("{} {}:{} {:?} score {:.2} cov {:.2} prec {:.2} run {:?}", m.book, m.chapter, m.verse, m.kind, m.score, m.coverage, m.precision, m.run_id.is_some());
+        println!(
+            "{} {}:{} {:?} score {:.2} cov {:.2} prec {:.2} run {:?}",
+            m.book,
+            m.chapter,
+            m.verse,
+            m.kind,
+            m.score,
+            m.coverage,
+            m.precision,
+            m.run_id.is_some()
+        );
     }
     for r in &runs {
-        println!("run {}:{}–{}:{} ({} verses)", r.start_chapter, r.start_verse, r.end_chapter, r.end_verse, r.match_ids.len());
+        println!(
+            "run {}:{}–{}:{} ({} verses)",
+            r.start_chapter,
+            r.start_verse,
+            r.end_chapter,
+            r.end_verse,
+            r.match_ids.len()
+        );
     }
     let has = |b: u8, c: u16, v: u16| matches.iter().any(|m| m.book == b && m.chapter == c && m.verse == v);
     for v in 14..=18 {
@@ -76,7 +103,10 @@ fn export_e2e() {
     let transcript = Transcript::open(&crate::Disk, &format!("{sermon}.json")).unwrap();
     let (matches, runs) = find_matches(&engine.searcher(), &transcript, "s1", &Default::default());
     for m in &matches {
-        println!("{}:{} {:?} {:.2} {:.2}–{:.2}", m.chapter, m.verse, m.kind, m.score, m.start, m.end);
+        println!(
+            "{}:{} {:?} {:.2} {:.2}–{:.2}",
+            m.chapter, m.verse, m.kind, m.score, m.start, m.end
+        );
     }
     assert_eq!(runs.len(), 1);
     let out = std::env::temp_dir().join("cab-export-e2e");
@@ -130,7 +160,15 @@ fn export_e2e() {
     let chapters = export::chapters_to_export(&project, &bible);
     assert_eq!(chapters.len(), 1);
     let t = Instant::now();
-    let files = export::export_to_dir(&project, &bible, &[ChapterRef { book: 43, chapter: 3 }], &crate::Disk, &out, |p| println!("{p:?}")).unwrap();
+    let files = export::export_to_dir(
+        &project,
+        &bible,
+        &[ChapterRef { book: 43, chapter: 3 }],
+        &crate::Disk,
+        &out,
+        |p| println!("{p:?}"),
+    )
+    .unwrap();
     println!("exported in {:?}: {:?}", t.elapsed(), files);
     let tag = id3::Tag::read_from_path(&files[0].path).unwrap();
     use id3::TagLike;
@@ -138,9 +176,18 @@ fn export_e2e() {
     assert_eq!(tag.album(), Some("King James Version – John"));
     assert_eq!(tag.artist(), Some("Test Church"));
     assert_eq!(tag.track(), Some(3));
-    let spoken: f64 = matches.iter().filter(|m| m.run_id.is_some()).map(|m| m.end - m.start).sum();
+    let spoken: f64 = matches
+        .iter()
+        .filter(|m| m.run_id.is_some())
+        .map(|m| m.end - m.start)
+        .sum();
     // Lead-in 0.5, tail 1.0, and 1.0 before verse 16
-    assert!((files[0].duration - (spoken + 2.5)).abs() < 0.1, "{} vs {}", files[0].duration, spoken + 2.5);
+    assert!(
+        (files[0].duration - (spoken + 2.5)).abs() < 0.1,
+        "{} vs {}",
+        files[0].duration,
+        spoken + 2.5
+    );
     assert_eq!(files[0].missing.len(), 31);
 
     // Verse files too, the whole export leveled as one, and verse 16 turned up 6 dB
@@ -154,10 +201,15 @@ fn export_e2e() {
     assert!(v16.path.ends_with("43 John/John 3/43_John_003_016.mp3"), "{}", v16.path);
     let tag = id3::Tag::read_from_path(&v16.path).unwrap();
     assert_eq!(tag.title(), Some("John 3:16"));
-    assert_eq!((tag.track(), tag.total_tracks(), tag.disc()), (Some(16), Some(36), Some(3)));
+    assert_eq!(
+        (tag.track(), tag.total_tracks(), tag.disc()),
+        (Some(16), Some(36), Some(3))
+    );
     let loudness = |path: &str| {
         let pcm = crate::audio::decode_range(&crate::Disk, path, 0.0, 1e4).unwrap();
-        20.0 * crate::audio::speech_rms(crate::audio::levels(&pcm.samples, pcm.rate)).unwrap().log10()
+        20.0 * crate::audio::speech_rms(crate::audio::levels(&pcm.samples, pcm.rate))
+            .unwrap()
+            .log10()
     };
     let v15 = files.iter().find(|f| f.verse == Some(15)).unwrap();
     let (l15, l16) = (loudness(&v15.path), loudness(&v16.path));
@@ -165,4 +217,3 @@ fn export_e2e() {
     assert!((l16 - l15 - 6.0).abs() < 1.5, "{l15} {l16}");
     assert!((l15 + 20.0).abs() < 3.0, "{l15}");
 }
-

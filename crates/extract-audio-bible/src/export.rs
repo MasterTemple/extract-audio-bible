@@ -39,7 +39,9 @@ pub(crate) enum Piece {
 
 /// The verses of a chapter that have text but no chosen reading
 pub fn missing_verses(project: &Project, book: &BibleBook, chapter: u16) -> Vec<u16> {
-    let Some(verses) = book.chapters.get(chapter as usize - 1) else { return vec![] };
+    let Some(verses) = book.chapters.get(chapter as usize - 1) else {
+        return vec![];
+    };
     (verses.iter().enumerate())
         .filter(|(_, t)| !t.trim().is_empty())
         .map(|(i, _)| i as u16 + 1)
@@ -66,7 +68,12 @@ fn clips(project: &Project, sel: &Selection) -> Vec<Clip> {
         .filter_map(|part| {
             let path = project.audio_path(project.sources.iter().find(|s| s.id == part.source_id)?);
             let (start, end) = part.clip();
-            Some(Clip { path, start, end, gain_db: sel.gain_db })
+            Some(Clip {
+                path,
+                start,
+                end,
+                gain_db: sel.gain_db,
+            })
         })
         .collect()
 }
@@ -110,7 +117,11 @@ pub(crate) fn chapter_pieces(project: &Project, book: &BibleBook, chapter: u16) 
             }
             out.push(Piece::Audio(clip.clone()));
         }
-        times.push(VerseTime { verse: *verse, start, end: at });
+        times.push(VerseTime {
+            verse: *verse,
+            start,
+            end: at,
+        });
     }
     if let Some((_, last, _)) = verses.last() {
         out.push(Piece::Silence(last.pad_after));
@@ -142,7 +153,13 @@ impl<'f> Leveler<'f> {
         if s.leveling == Leveling::Export {
             overall *= export_gain(files, clips, s.target_db)?;
         }
-        Ok(Self { files, leveling: s.leveling, target_db: s.target_db, fade_ms: s.fade_ms, overall })
+        Ok(Self {
+            files,
+            leveling: s.leveling,
+            target_db: s.target_db,
+            fade_ms: s.fade_ms,
+            overall,
+        })
     }
 
     /// One clip, ready to join others: resampled, its volume set, and faded at its ends
@@ -208,7 +225,10 @@ pub fn render_clip(files: &dyn Files, path: &str, start: f64, end: f64, options:
     let mut samples = vec![0.0; (options.pad_before.max(0.0) * rate) as usize];
     samples.extend(pcm.samples);
     samples.resize(samples.len() + (options.pad_after.max(0.0) * rate) as usize, 0.0);
-    Ok(Pcm { rate: pcm.rate, samples })
+    Ok(Pcm {
+        rate: pcm.rate,
+        samples,
+    })
 }
 
 /// The one gain that brings all of `clips` (each with its own volume change) to the target
@@ -228,7 +248,10 @@ fn export_gain(files: &dyn Files, clips: &[Clip], target_db: f64) -> Result<f64>
 /// A chapter as it will be exported, at `rate` (leveled as a whole on its own, when the export
 /// is leveled as a whole)
 pub fn render_chapter(project: &Project, book: &BibleBook, chapter: u16, rate: u32, files: &dyn Files) -> Result<Pcm> {
-    let clips: Vec<Clip> = chosen(project, book, chapter).into_iter().flat_map(|(_, _, c)| c).collect();
+    let clips: Vec<Clip> = chosen(project, book, chapter)
+        .into_iter()
+        .flat_map(|(_, _, c)| c)
+        .collect();
     Leveler::new(project, &clips, files)?.render_pieces(&chapter_pieces(project, book, chapter).0, rate)
 }
 
@@ -253,7 +276,9 @@ pub fn render_verse(project: &Project, key: &str, rate: u32, files: &dyn Files) 
     if clips.is_empty() {
         return Ok(None);
     }
-    Leveler::new(project, &clips, files)?.render_pieces(&verse_pieces(sel, &clips), rate).map(Some)
+    Leveler::new(project, &clips, files)?
+        .render_pieces(&verse_pieces(sel, &clips), rate)
+        .map(Some)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -289,12 +314,19 @@ pub struct ExportProgress {
 /// full ones, if asked)
 pub fn chapters_to_export(project: &Project, bible: &Bible) -> Vec<ChapterRef> {
     let mut out = vec![];
-    for book in bible.books.iter().filter(|b| project.book.is_none_or(|only| only == b.id)) {
+    for book in bible
+        .books
+        .iter()
+        .filter(|b| project.book.is_none_or(|only| only == b.id))
+    {
         for c in 1..=book.chapters.len() as u16 {
             let any = (1..=book.chapters[c as usize - 1].len() as u16)
                 .any(|v| project.selections.contains_key(&verse_key(book.id, c, v)));
             if any && (!project.metadata.only_complete || missing_verses(project, book, c).is_empty()) {
-                out.push(ChapterRef { book: book.id, chapter: c });
+                out.push(ChapterRef {
+                    book: book.id,
+                    chapter: c,
+                });
             }
         }
     }
@@ -324,7 +356,13 @@ fn fill(template: &str, bible: &Bible, book: &BibleBook, chapter: u16, verse: Op
 fn file_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() { '_' } else { c })
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     cleaned.trim().trim_matches('.').to_string()
 }
@@ -341,7 +379,11 @@ impl Tagger<'_> {
         let meta = &self.project.metadata;
         let fill = |t: &str| fill(t, self.bible, book, chapter, verse);
         let mut tag = Tag::new();
-        tag.set_title(fill(if verse.is_some() { &meta.verse_title_template } else { &meta.title_template }));
+        tag.set_title(fill(if verse.is_some() {
+            &meta.verse_title_template
+        } else {
+            &meta.title_template
+        }));
         tag.set_album(fill(&meta.album_template));
         for (id, value) in [
             ("TPE1", &meta.artist),
@@ -363,7 +405,11 @@ impl Tagger<'_> {
         tag.set_total_tracks(track.1);
         tag.set_disc(disc);
         if !meta.comment.trim().is_empty() {
-            tag.add_frame(Comment { lang: "eng".into(), description: String::new(), text: fill(&meta.comment) });
+            tag.add_frame(Comment {
+                lang: "eng".into(),
+                description: String::new(),
+                text: fill(&meta.comment),
+            });
         }
         if let Some((data, mime)) = &self.cover {
             tag.add_frame(Picture {
@@ -396,22 +442,40 @@ pub fn export(
     let meta = &project.metadata;
     let cover = match meta.cover_path.as_deref().filter(|p| !p.is_empty()) {
         Some(p) => {
-            let data = files.read(p).map_err(|e| Error::not_found(format!("Cover image {p}: {e}")))?;
-            let mime = if p.to_ascii_lowercase().ends_with(".png") { "image/png" } else { "image/jpeg" };
+            let data = files
+                .read(p)
+                .map_err(|e| Error::not_found(format!("Cover image {p}: {e}")))?;
+            let mime = if p.to_ascii_lowercase().ends_with(".png") {
+                "image/png"
+            } else {
+                "image/jpeg"
+            };
             Some((data, mime.to_string()))
         }
         None => None,
     };
     let tagger = Tagger { project, bible, cover };
     let books: Vec<&BibleBook> = (chapters.iter())
-        .map(|c| bible.book(c.book).ok_or_else(|| Error::not_found(format!("No book {}", c.book))))
+        .map(|c| {
+            bible
+                .book(c.book)
+                .ok_or_else(|| Error::not_found(format!("No book {}", c.book)))
+        })
         .collect::<Result<_>>()?;
 
     let clips: Vec<Clip> = (chapters.iter().zip(&books))
-        .flat_map(|(c, b)| chosen(project, b, c.chapter).into_iter().flat_map(|(_, _, clips)| clips))
+        .flat_map(|(c, b)| {
+            chosen(project, b, c.chapter)
+                .into_iter()
+                .flat_map(|(_, _, clips)| clips)
+        })
         .collect();
     if project.settings.leveling == Leveling::Export {
-        progress(ExportProgress { done: 0, total: chapters.len(), current: "Measuring loudness".into() });
+        progress(ExportProgress {
+            done: 0,
+            total: chapters.len(),
+            current: "Measuring loudness".into(),
+        });
     }
     let leveler = Leveler::new(project, &clips, files)?;
     let (chapter_files, verse_files) = match meta.export_mode {
@@ -423,12 +487,26 @@ pub fn export(
 
     let mut done = vec![];
     for (i, (ch, book)) in chapters.iter().zip(&books).enumerate() {
-        progress(ExportProgress { done: i, total: chapters.len(), current: format!("{} {}", book.name, ch.chapter) });
-        let book_dir = if meta.folder_per_book { file_name(&format!("{:02} {}", book.id, book.name)) } else { String::new() };
+        progress(ExportProgress {
+            done: i,
+            total: chapters.len(),
+            current: format!("{} {}", book.name, ch.chapter),
+        });
+        let book_dir = if meta.folder_per_book {
+            file_name(&format!("{:02} {}", book.id, book.name))
+        } else {
+            String::new()
+        };
         let missing = missing_verses(project, book, ch.chapter);
         if chapter_files {
             let pcm = leveler.render_pieces(&chapter_pieces(project, book, ch.chapter).0, meta.sample_rate)?;
-            let path = join(&book_dir, format!("{}.mp3", file_name(&fill(&meta.filename_template, bible, book, ch.chapter, None))));
+            let path = join(
+                &book_dir,
+                format!(
+                    "{}.mp3",
+                    file_name(&fill(&meta.filename_template, bible, book, ch.chapter, None))
+                ),
+            );
             let track = if meta.track_numbering == "sequence" {
                 (i as u32 + 1, chapters.len() as u32)
             } else {
@@ -452,7 +530,13 @@ pub fn export(
             let count = book.chapters[ch.chapter as usize - 1].len() as u32;
             for (v, sel, clips) in chosen(project, book, ch.chapter) {
                 let pcm = leveler.render_pieces(&verse_pieces(sel, &clips), meta.sample_rate)?;
-                let path = join(&dir, format!("{}.mp3", file_name(&fill(&meta.verse_filename_template, bible, book, ch.chapter, Some(v)))));
+                let path = join(
+                    &dir,
+                    format!(
+                        "{}.mp3",
+                        file_name(&fill(&meta.verse_filename_template, bible, book, ch.chapter, Some(v)))
+                    ),
+                );
                 let mut bytes = tagger.tag(book, ch.chapter, Some(v), (v as u32, count), ch.chapter as u32)?;
                 bytes.extend(audio::mp3(&pcm, meta.bitrate)?);
                 let file = ExportedFile {
@@ -468,7 +552,11 @@ pub fn export(
             }
         }
     }
-    progress(ExportProgress { done: chapters.len(), total: chapters.len(), current: String::new() });
+    progress(ExportProgress {
+        done: chapters.len(),
+        total: chapters.len(),
+        current: String::new(),
+    });
     Ok(done)
 }
 

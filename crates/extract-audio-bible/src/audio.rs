@@ -46,7 +46,10 @@ fn open(files: &dyn Files, path: &str) -> Result<Opened> {
     let probed = symphonia::default::get_probe().format(
         &hint,
         mss,
-        &FormatOptions { enable_gapless: true, ..Default::default() },
+        &FormatOptions {
+            enable_gapless: true,
+            ..Default::default()
+        },
         &MetadataOptions::default(),
     )?;
     let format = probed.format;
@@ -98,7 +101,11 @@ fn decode_from(opened: &mut Opened, mut each: impl FnMut(f64, &[f32]) -> bool) -
         };
         buf.copy_interleaved_ref(decoded);
         mono.clear();
-        mono.extend(buf.samples().chunks(channels).map(|f| f.iter().sum::<f32>() / channels as f32));
+        mono.extend(
+            buf.samples()
+                .chunks(channels)
+                .map(|f| f.iter().sum::<f32>() / channels as f32),
+        );
         if !each(time, &mono) {
             break;
         }
@@ -117,7 +124,13 @@ pub fn decode_range(files: &dyn Files, path: &str, start: f64, end: f64) -> Resu
         // A file that can't seek is read from the start
         if opened
             .format
-            .seek(SeekMode::Accurate, SeekTo::Time { time: Time::from(seek), track_id: Some(track_id) })
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Time {
+                    time: Time::from(seek),
+                    track_id: Some(track_id),
+                },
+            )
             .is_ok()
         {
             opened.decoder.reset();
@@ -173,7 +186,10 @@ pub fn peaks(files: &dyn Files, path: &str) -> Result<(Vec<f32>, f64)> {
 /// `samples` at another rate (windowed sinc, low-passed when lowering the rate)
 pub fn resample(pcm: &Pcm, rate: u32) -> Pcm {
     if pcm.rate == rate || pcm.samples.is_empty() {
-        return Pcm { rate, samples: pcm.samples.clone() };
+        return Pcm {
+            rate,
+            samples: pcm.samples.clone(),
+        };
     }
     const TAPS: isize = 16;
     let ratio = pcm.rate as f64 / rate as f64;
@@ -191,7 +207,11 @@ pub fn resample(pcm: &Pcm, rate: u32) -> Pcm {
     let phases = l.min(4096);
     let weight = |d: f64| {
         let arg = d * cutoff;
-        let sinc = if arg.abs() < 1e-9 { 1.0 } else { (std::f64::consts::PI * arg).sin() / (std::f64::consts::PI * arg) };
+        let sinc = if arg.abs() < 1e-9 {
+            1.0
+        } else {
+            (std::f64::consts::PI * arg).sin() / (std::f64::consts::PI * arg)
+        };
         // Hann window over the filter's reach
         sinc * 0.5 * (1.0 + (std::f64::consts::PI * d / reach as f64).cos())
     };
@@ -206,7 +226,11 @@ pub fn resample(pcm: &Pcm, rate: u32) -> Pcm {
     let mut out = Vec::with_capacity(out_len);
     for k in 0..out_len as u64 {
         let (mut center, rest) = ((k * m / l) as isize, k * m % l);
-        let mut phase = if phases == l { rest } else { (rest as f64 / l as f64 * phases as f64).round() as u64 };
+        let mut phase = if phases == l {
+            rest
+        } else {
+            (rest as f64 / l as f64 * phases as f64).round() as u64
+        };
         if phase == phases {
             (center, phase) = (center + 1, 0);
         }
@@ -274,9 +298,13 @@ pub fn db_to_gain(db: f64) -> f64 {
 /// The gain that brings speech to about `target_db` dBFS RMS (within 0.25–6×, and without
 /// pushing peaks past -1 dBFS)
 pub fn leveling_gain(samples: &[f32], rate: u32, target_db: f64) -> f64 {
-    let Some(rms) = speech_rms(levels(samples, rate)) else { return 1.0 };
+    let Some(rms) = speech_rms(levels(samples, rate)) else {
+        return 1.0;
+    };
     let peak = samples.iter().fold(0f32, |m, s| m.max(s.abs())) as f64;
-    (db_to_gain(target_db) / rms).clamp(0.25, 6.0).min(0.89 / peak.max(1e-6))
+    (db_to_gain(target_db) / rms)
+        .clamp(0.25, 6.0)
+        .min(0.89 / peak.max(1e-6))
 }
 
 pub fn apply_gain(samples: &mut [f32], gain: f64) {
@@ -324,7 +352,10 @@ pub fn wav(pcm: &Pcm) -> Vec<u8> {
 /// lets players skip the encoder's padding
 pub fn mp3(pcm: &Pcm, kbps: u16) -> Result<Vec<u8>> {
     use rusty_mp3::{Error as Mp3Error, Mp3Encoder, Mp3EncoderConfig};
-    let mut encoder = Mp3Encoder::new(Mp3EncoderConfig { bitrate_kbps: kbps as u32, vbr_quality: None });
+    let mut encoder = Mp3Encoder::new(Mp3EncoderConfig {
+        bitrate_kbps: kbps as u32,
+        vbr_quality: None,
+    });
     encoder
         .push_pcm_f32(&pcm.samples, 1, pcm.rate)
         .map_err(|e| Error::Audio(format!("MP3 encoder: {e}")))?;
@@ -347,7 +378,9 @@ mod tests {
     #[test]
     fn resamples_length_and_tone() {
         let rate = 48_000;
-        let samples: Vec<f32> = (0..rate).map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 0.5).collect();
+        let samples: Vec<f32> = (0..rate)
+            .map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 0.5)
+            .collect();
         let out = resample(&Pcm { rate, samples }, 44_100);
         assert_eq!(out.samples.len(), 44_100);
         let peak = out.samples[1000..43000].iter().fold(0f32, |m, s| m.max(s.abs()));
@@ -357,7 +390,9 @@ mod tests {
     #[test]
     fn encodes_and_decodes() {
         let rate = 44_100;
-        let samples: Vec<f32> = (0..rate * 2).map(|i| (i as f32 * 300.0 * std::f32::consts::TAU / rate as f32).sin() * 0.3).collect();
+        let samples: Vec<f32> = (0..rate * 2)
+            .map(|i| (i as f32 * 300.0 * std::f32::consts::TAU / rate as f32).sin() * 0.3)
+            .collect();
         let mut files = crate::files::Memory::new();
         files.insert("tone.mp3", mp3(&Pcm { rate, samples }, 64).unwrap());
         let back = decode_range(&files, "tone.mp3", 0.5, 1.5).unwrap();

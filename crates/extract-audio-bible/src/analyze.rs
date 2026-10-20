@@ -45,7 +45,10 @@ pub fn analyze_with(
 ) -> Result<Analysis> {
     let books = project.books_searched()?;
     let searcher = matcher::scoped(engine, books.as_ref()).map_err(|e| Error::invalid(e.to_string()))?;
-    let options = scripture_quotes::Options { min_accuracy: project.settings.min_accuracy, ..Default::default() };
+    let options = scripture_quotes::Options {
+        min_accuracy: project.settings.min_accuracy,
+        ..Default::default()
+    };
     let total = project.sources.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
     let search = |source: &crate::project::Source| {
@@ -65,7 +68,13 @@ pub fn analyze_with(
     #[cfg(target_arch = "wasm32")]
     let results: Vec<_> = project.sources.iter().map(search).collect();
 
-    let mut analysis = Analysis { matches: MatchSet { analyzed_at: now(), ..Default::default() }, errors: vec![] };
+    let mut analysis = Analysis {
+        matches: MatchSet {
+            analyzed_at: now(),
+            ..Default::default()
+        },
+        errors: vec![],
+    };
     let mut identities = vec![];
     for (source, result) in project.sources.iter_mut().zip(results) {
         match result {
@@ -115,7 +124,12 @@ mod tests {
     use crate::{BookScope, Memory, Testament, import};
 
     fn bible(id: &str, lines: &str) -> Bible {
-        Bible::new(id, id, id.to_uppercase(), import(vec![(format!("{id}.txt"), lines.as_bytes().to_vec())]).unwrap())
+        Bible::new(
+            id,
+            id,
+            id.to_uppercase(),
+            import(vec![(format!("{id}.txt"), lines.as_bytes().to_vec())]).unwrap(),
+        )
     }
 
     #[test]
@@ -133,7 +147,10 @@ mod tests {
             "s.json",
             br#"{"segments": [{"start": 0, "end": 30, "text": "In the beginning, God created the heavens and the earth. Then Jesus wept. The Jews therefore said, See how much affection he had for him!"}]}"#.to_vec(),
         );
-        let new_testament = BookScope { testaments: vec![Testament::New], ..Default::default() };
+        let new_testament = BookScope {
+            testaments: vec![Testament::New],
+            ..Default::default()
+        };
         let mut project = Project::readings("p", "", &[&kjv, &web], new_testament).unwrap();
         assert_eq!(project.name, "Verses read (KJV, WEB)");
         project.sources.push(crate::Source {
@@ -148,20 +165,36 @@ mod tests {
         });
         let engine = matcher::engine_of([&kjv, &web]);
         let found = analyze_with(&mut project, &engine, &files, &|_, _, _| {}).unwrap();
-        let read: Vec<(u16, &str, &[String])> =
-            found.matches.matches.iter().map(|m| (m.verse, m.translation.as_str(), m.also_in.as_slice())).collect();
+        let read: Vec<(u16, &str, &[String])> = found
+            .matches
+            .matches
+            .iter()
+            .map(|m| (m.verse, m.translation.as_str(), m.also_in.as_slice()))
+            .collect();
         // Genesis is outside the New Testament; "Jesus wept" is both translations'
         assert_eq!(read.len(), 2, "{read:?}");
         assert_eq!(read[0].0, 35);
-        assert!(read[0].1 == "kjv" && read[0].2 == ["web"] || read[0].1 == "web" && read[0].2 == ["kjv"], "{read:?}");
+        assert!(
+            read[0].1 == "kjv" && read[0].2 == ["web"] || read[0].1 == "web" && read[0].2 == ["kjv"],
+            "{read:?}"
+        );
         assert_eq!((read[1].0, read[1].1), (36, "web"));
 
         let rows = crate::reading_rows(&project, &found.matches, &[&kjv, &web], &files);
         assert_eq!(rows[1].reference, "John 11:36");
         assert_eq!(rows[1].translation, "WEB");
-        assert_eq!(rows[1].said, "The Jews therefore said, See how much affection he had for him!");
+        assert_eq!(
+            rows[1].said,
+            "The Jews therefore said, See how much affection he had for him!"
+        );
         let csv = crate::readings::to_csv(&rows);
-        assert!(csv.lines().nth(2).unwrap().starts_with("s,s,,,John 11:36,43,11,36,,WEB,,"), "{csv}");
+        assert!(
+            csv.lines()
+                .nth(2)
+                .unwrap()
+                .starts_with("s,s,,,John 11:36,43,11,36,,WEB,,"),
+            "{csv}"
+        );
         assert!(csv.contains(r#""The Jews therefore said, See how much affection he had for him!""#));
     }
 }
