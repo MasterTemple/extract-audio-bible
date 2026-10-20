@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use extract_audio_bible::{Bible, MatchSet, Project, bible::BibleSummary};
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AppError, Result};
+use crate::error::{AppError, Result, file_error};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,7 +40,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    let bytes = std::fs::read(path).map_err(|e| AppError::msg(format!("{}: {e}", path.display())))?;
+    let bytes = std::fs::read(path).map_err(|e| file_error(path.display(), e))?;
     Ok(serde_json::from_slice(&bytes)?)
 }
 

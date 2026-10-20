@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State, ipc::Response};
 
 use crate::{
-    error::{AppError, Result},
+    error::{AppError, Result, file_error},
     store::{ProjectSummary, Store},
 };
 
@@ -216,7 +216,7 @@ async fn reading_rows(
             } else {
                 extract_audio_bible::readings::to_csv(&rows)
             };
-            std::fs::write(&path, text).map_err(|e| AppError::msg(format!("{path}: {e}")))?;
+            std::fs::write(&path, text).map_err(|e| file_error(&path, e))?;
         }
         Ok(rows)
     })
@@ -566,7 +566,7 @@ async fn render_chapter(state: State<'_, AppState>, project: Project, book: u8, 
 /// Titles and passages by file id, from a JSON file (`{"<file id>": {"title": …, "passage": …}}`)
 #[tauri::command]
 fn read_file_metadata(path: String) -> Result<std::collections::BTreeMap<String, extract_audio_bible::FileMetadata>> {
-    let bytes = std::fs::read(&path).map_err(|e| AppError::msg(format!("{path}: {e}")))?;
+    let bytes = std::fs::read(&path).map_err(|e| file_error(&path, e))?;
     serde_json::from_slice(&bytes).map_err(|e| {
         AppError::msg(format!(
             "{path}: expected {{\"file id\": {{\"title\": …, \"passage\": …}}}}: {e}"

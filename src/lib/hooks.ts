@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Word } from "./api";
+import { api, errorMessage, type Word } from "./api";
 
 const wordCache = new Map<string, Promise<{ from: number; words: Word[] }>>();
 
@@ -37,7 +37,7 @@ export function usePeaks(audioPath: string | undefined, start: number, end: numb
     api
       .audioPeaks(audioPath, start, end)
       .then((d) => live && setData(d))
-      .catch((e) => live && setError(String(e)));
+      .catch((e) => live && setError(errorMessage(e)));
     return () => {
       live = false;
     };

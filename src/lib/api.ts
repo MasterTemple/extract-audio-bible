@@ -358,8 +358,19 @@ export const api = {
     invoke<ExportedFile[]>("export_chapters", { project, chapters }),
 };
 
+/** How a command fails: its message, shown as is, and what kind of failure it is */
+export interface AppError {
+  kind: "notFound" | "io" | "invalid" | "audio" | "network" | "app";
+  message: string;
+}
+
+export function isAppError(e: unknown): e is AppError {
+  return typeof e === "object" && e !== null && typeof (e as AppError).message === "string" && "kind" in e;
+}
+
 export function errorMessage(e: unknown): string {
   if (typeof e === "string") return e;
   if (e instanceof Error) return e.message;
+  if (isAppError(e)) return e.message;
   return JSON.stringify(e);
 }
