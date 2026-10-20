@@ -1,0 +1,21 @@
+[package]
+name = "scripture-quotes"
+version = "0.1.0"
+edition = "2024"
+description = "Find every quotation of Scripture in a transcript: any verse, any translation"
+license = "CC0-1.0"
+keywords = ["bible", "scripture", "quotation", "transcript", "sermon"]
+categories = ["text-processing"]
+
+[dependencies]
+topos-bible = "0.6"
+unicode-normalization = "0.1.26"
+rustc-hash = "2.1"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
