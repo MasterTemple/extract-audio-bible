@@ -1,0 +1,18 @@
+[package]
+name = "extract-audio-bible-cli"
+description = "Build an audio Bible from sermon readings, from the command line"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "extract-audio-bible"
+path = "src/main.rs"
+
+[dependencies]
+extract-audio-bible = { path = "../extract-audio-bible" }
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

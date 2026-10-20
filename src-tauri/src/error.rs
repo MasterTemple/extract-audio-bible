@@ -5,15 +5,11 @@ pub enum AppError {
     #[error("{0}")]
     Message(String),
     #[error(transparent)]
+    Core(#[from] extract_audio_bible::Error),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
-    #[error("Bible text: {0}")]
-    Text(#[from] logoxide_text::TextError),
-    #[error("Audio: {0}")]
-    Audio(#[from] symphonia::core::errors::Error),
-    #[error("Tags: {0}")]
-    Tag(#[from] id3::Error),
     #[error(transparent)]
     Tauri(#[from] tauri::Error),
 }

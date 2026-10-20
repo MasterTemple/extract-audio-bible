@@ -16,7 +16,7 @@ use logoxide_text::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AppError, Result};
+use crate::error::{Error, Result};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +68,18 @@ pub struct BookOutline {
 }
 
 impl Bible {
+    /// A Bible from imported books ([`import`]), named and identified by the caller
+    pub fn new(id: impl Into<String>, name: impl Into<String>, abbreviation: impl Into<String>, imported: Imported) -> Self {
+        Bible {
+            id: id.into(),
+            name: name.into(),
+            abbreviation: abbreviation.into(),
+            language: None,
+            format: imported.format,
+            books: imported.books,
+        }
+    }
+
     pub fn summary(&self) -> BibleSummary {
         BibleSummary {
             id: self.id.clone(),
@@ -175,45 +187,49 @@ impl Collected {
     }
 }
 
-/// Every file under the given files and folders
-fn gather(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
-    let mut out = vec![];
-    for path in paths {
-        if path.is_dir() {
-            let mut entries: Vec<_> = std::fs::read_dir(path)?.flatten().map(|e| e.path()).collect();
-            entries.sort();
-            out.extend(gather(&entries)?);
-        } else if path.is_file() {
-            out.push(path.clone());
-        }
-    }
-    Ok(out)
+fn ext(name: &str) -> String {
+    Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
 }
 
-fn ext(path: &Path) -> String {
-    path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+/// A Bible's books, read from its files
+#[derive(Clone, Debug)]
+pub struct Imported {
+    pub books: Vec<BibleBook>,
+    /// What it was read from ("usx", "json", ...)
+    pub format: String,
 }
 
-/// Read a Bible from files or folders. The format comes from the files' extensions (and, for
-/// `.xml`, what's in them)
-pub fn import(paths: &[PathBuf]) -> Result<(Vec<BibleBook>, String)> {
-    let files = gather(paths)?;
+/// Read a Bible from files and folders on disk (see [`import`])
+pub fn import_paths(paths: &[PathBuf]) -> Result<Imported> {
+    let files = crate::files::gather(paths)?;
+    let named = (files.iter())
+        .map(|p| Ok((p.to_string_lossy().into_owned(), std::fs::read(p)?)))
+        .collect::<Result<Vec<_>>>()?;
+    import(named)
+}
+
+/**
+Read a Bible from its files, given as (file name, contents). The format comes from the names'
+extensions (and, for `.xml`, what's in them): USX, USFM, OSIS, ThML, and GBF through
+logoxide-text; JSON, CSV, and TSV (`book, chapter, verse, text`); anything else as lines like
+`John 3:16 For God so loved…`
+*/
+pub fn import(files: Vec<(String, Vec<u8>)>) -> Result<Imported> {
     if files.is_empty() {
-        return Err(AppError::msg("No files found to import"));
+        return Err(Error::invalid("No files found to import"));
     }
-    let markup: Vec<&PathBuf> = files
-        .iter()
-        .filter(|p| matches!(ext(p).as_str(), "usx" | "usfm" | "sfm" | "xml" | "osis" | "thml" | "gbf"))
-        .collect();
+    let (markup, other): (Vec<_>, Vec<_>) = files
+        .into_iter()
+        .partition(|(name, _)| matches!(ext(name).as_str(), "usx" | "usfm" | "sfm" | "xml" | "osis" | "thml" | "gbf"));
     let (books, format) = if !markup.is_empty() {
-        import_markup(&markup)?
+        import_markup(markup)?
     } else {
         let mut collected = Collected::default();
         let mut format = String::new();
-        for path in &files {
-            let text = std::fs::read_to_string(path)?;
+        for (name, bytes) in &other {
+            let text = String::from_utf8_lossy(bytes);
             let text = text.trim_start_matches('\u{feff}');
-            format = match ext(path).as_str() {
+            format = match ext(name).as_str() {
                 "json" => {
                     import_json(text, &mut collected)?;
                     "json"
@@ -236,20 +252,19 @@ pub fn import(paths: &[PathBuf]) -> Result<(Vec<BibleBook>, String)> {
         (collected.into_books(), format)
     };
     if books.is_empty() {
-        return Err(AppError::msg(
+        return Err(Error::invalid(
             "No verses were found. Supported: USFM, USX, OSIS, ThML, GBF, JSON, CSV/TSV (book, chapter, verse, text), or lines like \"John 3:16 For God so loved…\"",
         ));
     }
-    Ok((books, format))
+    Ok(Imported { books, format })
 }
 
 /// USX, USFM, OSIS, ThML, or GBF, read by logoxide-text
-fn import_markup(paths: &[&PathBuf]) -> Result<(Vec<BibleBook>, String)> {
+fn import_markup(files: Vec<(String, Vec<u8>)>) -> Result<(Vec<BibleBook>, String)> {
     let mut by_format: BTreeMap<TextFormat, Vec<(String, Vec<u8>)>> = BTreeMap::new();
-    for (i, path) in paths.iter().enumerate() {
-        let bytes = std::fs::read(path)?;
+    for (i, (path, bytes)) in files.into_iter().enumerate() {
         let head = String::from_utf8_lossy(&bytes[..bytes.len().min(8192)]).to_ascii_lowercase();
-        let format = match ext(path).as_str() {
+        let format = match ext(&path).as_str() {
             "usx" => TextFormat::Usx,
             "usfm" | "sfm" => TextFormat::Usfm,
             "gbf" => TextFormat::Gbf,
@@ -259,7 +274,7 @@ fn import_markup(paths: &[&PathBuf]) -> Result<(Vec<BibleBook>, String)> {
             _ => TextFormat::Osis,
         };
         // Flat, so every file is in the one folder a source reads; the index keeps names apart
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+        let name = Path::new(&path).file_name().and_then(|n| n.to_str()).unwrap_or("file");
         let name = if by_format.values().flatten().any(|(n, _)| n == name) {
             format!("{i}-{name}")
         } else {
@@ -508,9 +523,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("JHN.usfm");
         std::fs::write(&path, "\\id JHN\n\\c 3\n\\p\n\\v 16 For God so loved the world.\n\\v 17-18 For God sent not.\n\\v 19 And this is.\n").unwrap();
-        let (books, format) = import(&[path]).unwrap();
-        assert_eq!(format, "usfm");
-        let ch = &books[0].chapters[2];
+        let imported = import_paths(&[path]).unwrap();
+        assert_eq!(imported.format, "usfm");
+        let ch = &imported.books[0].chapters[2];
         assert_eq!(ch[15], "For God so loved the world.");
         assert_eq!(ch[16], "For God sent not.");
         assert_eq!(ch[17], "");

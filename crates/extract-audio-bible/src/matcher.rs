@@ -213,9 +213,7 @@ mod tests {
             .map(|(i, w)| format!(r#"{{"word": "{w}", "start": {}, "end": {}}}"#, i as f64 * 0.4, i as f64 * 0.4 + 0.3))
             .collect();
         let json = format!(r#"{{"segments": [{{"start": 0, "end": 1000, "text": "", "words": [{}]}}]}}"#, words.join(","));
-        let path = std::env::temp_dir().join(format!("cab-t-{}-{}.json", std::process::id(), text.len()));
-        std::fs::write(&path, json).unwrap();
-        Transcript::open(&path).unwrap()
+        Transcript::parse(&json).unwrap()
     }
 
     #[test]

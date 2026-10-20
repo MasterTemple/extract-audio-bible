@@ -11,30 +11,61 @@ A desktop app (Tauri 2, Rust and React/TypeScript with shadcn/ui) that builds an
 
 Everything is saved as JSON in the app's data folder (`~/.local/share/extract-audio-bible` on Linux).
 
+## Without the app
+
+The app is one front end to a library that does the work, and there are two more, so you can
+build audio Bibles in your own workflows:
+
+- **Command line** ([`crates/extract-audio-bible-cli`](crates/extract-audio-bible-cli)): the
+  `extract-audio-bible` command, from `import` and `find` to `export`, or all at once with
+  `build`. Its projects are folders of the same JSON the app keeps.
+- **Python and TypeScript** ([`crates/extract-audio-bible-ffi`](crates/extract-audio-bible-ffi)):
+  bindings made with BoltFFI, published as `extract-audio-bible` on PyPI (native) and npm
+  (WebAssembly, for browsers, Node, and Bun). Swift and Kotlin are generated too.
+- **Rust** ([`crates/extract-audio-bible`](crates/extract-audio-bible)): the library itself.
+
+## Layout
+
+| Folder | What it is |
+|---|---|
+| `crates/extract-audio-bible` | The library: Bible import, transcripts, matching, projects, choosing, rendering, MP3 export |
+| `crates/extract-audio-bible-cli` | The command line |
+| `crates/extract-audio-bible-ffi` | The Python and TypeScript bindings (BoltFFI), their README, examples, and pack scripts |
+| `src-tauri` | The app's backend: its data folder, caches, and progress events, on top of the library |
+| `src` | The app's interface (React, TypeScript, shadcn/ui) |
+
 ## Development
 
 ```sh
 pnpm install
 pnpm tauri dev
+pnpm tauri build    # target/release/bundle (the AppImage bundles GStreamer, which needs patchelf)
+cargo build --release -p extract-audio-bible-cli   # target/release/extract-audio-bible
 ```
 
-Tests: `cd src-tauri && cargo test`. Two ignored end-to-end tests run against a full Bible and a real recording:
+Tests: `cargo test` (every crate). Two ignored end-to-end tests run against a full Bible and a real recording:
 
 ```sh
-KJV_USFM=/path/to/usfm cargo test --release e2e -- --ignored --nocapture
-KJV_USFM=/path/to/usfm SERMON=/path/to/sermon cargo test --release export_e2e -- --ignored --nocapture  # sermon.mp3 + sermon.json
+KJV_USFM=/path/to/usfm cargo test -p extract-audio-bible --release e2e -- --ignored --nocapture
+KJV_USFM=/path/to/usfm SERMON=/path/to/sermon cargo test -p extract-audio-bible --release export_e2e -- --ignored --nocapture  # sermon.mp3 + sermon.json
 ```
+
+The bindings are built and checked from their folder (see its README): `npm run pack:wasm`, `npm
+run pack:python`, and `python scripts/readme.py check`.
 
 ## How matching works
 
-Readings are found with [`scripture-quotes`](../../rust/scripture-quotes) (`src-tauri/src/matcher.rs`
-adapts it): a transcript's word trigrams vote for verses, each group of votes is aligned word by word
-so transcription slips still count, the verses around every reading are looked for directly (which
-catches very short verses like "Jesus wept"), and readings of verse after verse are joined into runs.
-A reading counts when its words are at least as accurate as the project's **minimum accuracy**
-(85% by default, 90% for part of a verse; a near miss like "saith"/"sayeth" counts most of a word, and a comment in the middle
-of a verse counts half a word). This app gives the readings their times: cut points fall halfway into
-the pause around a reading, and inside a run they meet so the reading plays back without a break.
+Readings are found with [`scripture-quotes`](../../rust/scripture-quotes) (a path dependency;
+`crates/extract-audio-bible/src/matcher.rs` adapts it): a transcript's word trigrams vote for
+verses, each group of votes is aligned word by word so transcription slips still count, the verses
+around every reading are looked for directly (which catches very short verses like "Jesus wept"),
+and readings of verse after verse are joined into runs. A reading counts when its words are at
+least as accurate as the project's **minimum accuracy** (85% by default, 90% for part of a verse; a
+near miss like "saith"/"sayeth" counts most of a word, and a comment in the middle of a verse
+counts half a word). Cut points fall halfway into the pause around a reading, and inside a run they
+meet so the reading plays back without a break.
 
 Transcripts are WhisperX JSON or Let's Church transcripts (`paragraphs`); segments or paragraphs
 without word times have their words spread evenly over their time.
+
+MP3s are encoded in pure Rust (`rusty_mp3`), so export works in WebAssembly too.

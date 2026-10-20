@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/extract-audio-bible",
+    "crates/extract-audio-bible-cli",
+    "crates/extract-audio-bible-ffi",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "CC0-1.0"
+authors = ["Blake Scampone"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
+
+# Decoding, resampling, and encoding audio is unusably slow unoptimized
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

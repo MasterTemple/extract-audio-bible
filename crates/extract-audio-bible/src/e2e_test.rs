@@ -13,8 +13,7 @@ use crate::{
 fn e2e() {
     let dir = PathBuf::from(std::env::var("KJV_USFM").expect("KJV_USFM"));
     let t = Instant::now();
-    let (books, format) = bible::import(&[dir]).unwrap();
-    let bible = Bible { id: "kjv".into(), name: "KJV".into(), abbreviation: "KJV".into(), language: None, format, books };
+    let bible = Bible::new("kjv", "KJV", "KJV", bible::import_paths(&[dir]).unwrap());
     println!("imported {} verses in {:?}", bible.summary().verse_count, t.elapsed());
     let t = Instant::now();
     let engine = matcher::engine(&bible);
@@ -44,9 +43,7 @@ fn e2e() {
         .map(|(i, w)| format!(r#"{{"word": {}, "start": {:.2}, "end": {:.2}, "score": 0.9}}"#, serde_json::to_string(w).unwrap(), i as f64 * 0.35, i as f64 * 0.35 + 0.28))
         .collect();
     let json = format!(r#"{{"segments": [{{"start": 0, "end": 99999, "text": "", "words": [{}]}}]}}"#, words.join(","));
-    let path = std::env::temp_dir().join("cab-e2e.json");
-    std::fs::write(&path, json).unwrap();
-    let transcript = Transcript::open(&path).unwrap();
+    let transcript = Transcript::parse(&json).unwrap();
     let t = Instant::now();
     let (matches, runs) = find_matches(&searcher, &transcript, "s", &Default::default());
     println!("{} words matched in {:?}", transcript.words.len(), t.elapsed());
@@ -74,10 +71,9 @@ fn export_e2e() {
     };
     let dir = PathBuf::from(std::env::var("KJV_USFM").expect("KJV_USFM"));
     let sermon = std::env::var("SERMON").expect("SERMON");
-    let (books, format) = bible::import(&[dir]).unwrap();
-    let bible = Bible { id: "kjv".into(), name: "King James Version".into(), abbreviation: "KJV".into(), language: None, format, books };
+    let bible = Bible::new("kjv", "King James Version", "KJV", bible::import_paths(&[dir]).unwrap());
     let engine = matcher::engine(&bible);
-    let transcript = Transcript::open(std::path::Path::new(&format!("{sermon}.json"))).unwrap();
+    let transcript = Transcript::open(&crate::Disk, &format!("{sermon}.json")).unwrap();
     let (matches, runs) = find_matches(&engine.searcher(), &transcript, "s1", &Default::default());
     for m in &matches {
         println!("{}:{} {:?} {:.2} {:.2}–{:.2}", m.chapter, m.verse, m.kind, m.score, m.start, m.end);
@@ -123,13 +119,12 @@ fn export_e2e() {
             },
         );
     }
-    project.metadata.output_dir = Some(out.to_string_lossy().into_owned());
     project.metadata.artist = "Test Church".into();
     project.metadata.year = "2026".into();
     let chapters = export::chapters_to_export(&project, &bible);
     assert_eq!(chapters.len(), 1);
     let t = Instant::now();
-    let files = export::export(&project, &bible, &[ChapterRef { book: 43, chapter: 3 }], |p| println!("{p:?}")).unwrap();
+    let files = export::export_to_dir(&project, &bible, &[ChapterRef { book: 43, chapter: 3 }], &crate::Disk, &out, |p| println!("{p:?}")).unwrap();
     println!("exported in {:?}: {:?}", t.elapsed(), files);
     let tag = id3::Tag::read_from_path(&files[0].path).unwrap();
     use id3::TagLike;
@@ -147,7 +142,7 @@ fn export_e2e() {
     project.metadata.export_mode = ExportMode::Both;
     project.settings.leveling = Leveling::Export;
     project.selections.get_mut("43.3.16").unwrap().gain_db = 6.0;
-    let files = export::export(&project, &bible, &chapters, |_| {}).unwrap();
+    let files = export::export_to_dir(&project, &bible, &chapters, &crate::Disk, &out, |_| {}).unwrap();
     assert_eq!(files.len(), 6);
     let v16 = files.iter().find(|f| f.verse == Some(16)).unwrap();
     assert!(v16.path.ends_with("43 John/John 3/43_John_003_016.mp3"), "{}", v16.path);
@@ -155,7 +150,7 @@ fn export_e2e() {
     assert_eq!(tag.title(), Some("John 3:16"));
     assert_eq!((tag.track(), tag.total_tracks(), tag.disc()), (Some(16), Some(36), Some(3)));
     let loudness = |path: &str| {
-        let pcm = crate::audio::decode_range(std::path::Path::new(path), 0.0, 1e4).unwrap();
+        let pcm = crate::audio::decode_range(&crate::Disk, path, 0.0, 1e4).unwrap();
         20.0 * crate::audio::speech_rms(crate::audio::levels(&pcm.samples, pcm.rate)).unwrap().log10()
     };
     let v15 = files.iter().find(|f| f.verse == Some(15)).unwrap();

@@ -1,0 +1,11 @@
+{
+  "name": "extract-audio-bible-node-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "readme": "node readme.ts"
+  },
+  "dependencies": {
+    "extract-audio-bible": "file:../../dist/wasm/pkg"
+  }
+}

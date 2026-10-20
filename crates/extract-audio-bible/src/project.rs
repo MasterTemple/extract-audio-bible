@@ -1,16 +1,17 @@
 //! A project: the sermons it draws from, the reading chosen for each verse, and how to export.
-//! Everything is kept as JSON in the app's data folder.
+//! It's plain data, kept as JSON by whoever uses it (the app keeps it in its data folder, the CLI
+//! in a project folder).
 
 use std::{
     collections::BTreeMap,
-    path::{Path, PathBuf},
+    hash::{DefaultHasher, Hash, Hasher},
+    path::Path,
 };
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bible::{Bible, BibleSummary},
-    error::{AppError, Result},
+    bible::Bible,
     matcher::{Match, Run},
 };
 
@@ -203,18 +204,6 @@ impl Default for Metadata {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectSummary {
-    pub id: String,
-    pub name: String,
-    pub bible_id: String,
-    pub book: Option<u8>,
-    pub updated_at: u64,
-    pub source_count: usize,
-    pub selection_count: usize,
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MatchSet {
@@ -223,129 +212,149 @@ pub struct MatchSet {
     pub runs: Vec<Run>,
 }
 
+/// Milliseconds since 1970 (0 in WebAssembly, which has no clock of its own)
 pub fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
 }
 
-/// Where everything is kept
-#[derive(Clone)]
-pub struct Store {
-    root: PathBuf,
+/// A short id made from some text, the same every time (a source's id from its audio's path)
+pub fn stable_id(text: &str) -> String {
+    let mut h = DefaultHasher::new();
+    text.hash(&mut h);
+    format!("{:012x}", h.finish() & 0xffff_ffff_ffff)
 }
 
-fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    // Written beside, then moved, so a crash never leaves half a file
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec(value)?)?;
-    std::fs::rename(tmp, path)?;
-    Ok(())
-}
-
-fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    let bytes = std::fs::read(path).map_err(|e| AppError::msg(format!("{}: {e}", path.display())))?;
-    Ok(serde_json::from_slice(&bytes)?)
-}
-
-fn safe_id(id: &str) -> Result<&str> {
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(AppError::msg(format!("Bad id: {id}")));
-    }
-    Ok(id)
-}
-
-impl Store {
-    pub fn new(root: PathBuf) -> Self {
-        Self { root }
-    }
-
-    pub fn cache_dir(&self) -> PathBuf {
-        self.root.join("cache")
+impl Project {
+    /**
+    A new project drawing on `bible`, for one `book` or the whole Bible. With no name, it's
+    named after the book and translation ("John (ESV)")
+    */
+    pub fn new(id: impl Into<String>, name: &str, bible: &Bible, book: Option<u8>) -> Self {
+        let book_name = book.and_then(|b| bible.book(b)).map(|b| b.name.clone());
+        let metadata = Metadata { language: bible.language.clone().unwrap_or_default(), ..Default::default() };
+        let translation = if bible.abbreviation.is_empty() { &bible.name } else { &bible.abbreviation };
+        Project {
+            id: id.into(),
+            name: match (name.trim(), book_name) {
+                ("", Some(book)) => format!("{book} ({translation})"),
+                ("", None) => format!("{} audio Bible", bible.name),
+                (name, _) => name.into(),
+            },
+            bible_id: bible.id.clone(),
+            book,
+            created_at: now(),
+            updated_at: now(),
+            sources: vec![],
+            selections: BTreeMap::new(),
+            settings: Default::default(),
+            metadata,
+        }
     }
 
-    fn bible_path(&self, id: &str) -> Result<PathBuf> {
-        Ok(self.root.join("bibles").join(format!("{}.json", safe_id(id)?)))
-    }
-
-    fn project_dir(&self, id: &str) -> Result<PathBuf> {
-        Ok(self.root.join("projects").join(safe_id(id)?))
-    }
-
-    pub fn save_bible(&self, bible: &Bible) -> Result<()> {
-        write_json(&self.bible_path(&bible.id)?, bible)?;
-        write_json(&self.root.join("bibles").join(format!("{}.summary", bible.id)), &bible.summary())
-    }
-
-    pub fn bible(&self, id: &str) -> Result<Bible> {
-        read_json(&self.bible_path(id)?)
-    }
-
-    pub fn delete_bible(&self, id: &str) -> Result<()> {
-        let path = self.bible_path(id)?;
-        let _ = std::fs::remove_file(path.with_extension("summary"));
-        Ok(std::fs::remove_file(path)?)
-    }
-
-    pub fn bibles(&self) -> Result<Vec<BibleSummary>> {
-        let dir = self.root.join("bibles");
-        let mut out = vec![];
-        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "summary") {
-                if let Ok(s) = read_json::<BibleSummary>(&path) {
-                    out.push(s);
-                }
+    /**
+    Adds sermons from file paths: each audio file is paired with the transcript (`.json`) of
+    the same name, in the same folder first, then anywhere among the paths. Audio already in the
+    project is skipped. Returns how many were added and the files that had no partner
+    */
+    pub fn add_sources(&mut self, paths: &[String]) -> Added {
+        let (transcripts, audios): (Vec<&String>, Vec<&String>) = (paths.iter())
+            .filter(|f| ext(f) == "json" || AUDIO.contains(&ext(f).as_str()))
+            .partition(|f| ext(f) == "json");
+        let mut used = vec![false; transcripts.len()];
+        let mut added = Added::default();
+        let parent = |p: &str| Path::new(p).parent().map(Path::to_path_buf);
+        for audio in audios {
+            let base = base_name(audio);
+            let pick = (0..transcripts.len())
+                .filter(|&i| !used[i] && base_name(transcripts[i]) == base)
+                .min_by_key(|&i| parent(transcripts[i]) != parent(audio));
+            let Some(i) = pick else {
+                added.unpaired.push(audio.clone());
+                continue;
+            };
+            used[i] = true;
+            if self.sources.iter().any(|s| &s.audio_path == audio) {
+                continue;
             }
+            self.sources.push(Source {
+                id: stable_id(audio),
+                label: base,
+                audio_path: audio.clone(),
+                transcript_path: transcripts[i].clone(),
+                duration: None,
+                word_count: 0,
+                match_count: 0,
+            });
+            added.added += 1;
         }
-        out.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(out)
+        added.unpaired.extend(transcripts.iter().zip(&used).filter(|(_, u)| !**u).map(|(t, _)| (*t).clone()));
+        self.updated_at = now();
+        added
     }
+}
 
-    pub fn save_project(&self, project: &Project) -> Result<()> {
-        write_json(&self.project_dir(&project.id)?.join("project.json"), project)
-    }
+/// What [`Project::add_sources`] did
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Added {
+    pub added: usize,
+    /// Files that had no partner (audio without a transcript, or the reverse)
+    pub unpaired: Vec<String>,
+}
 
-    pub fn project(&self, id: &str) -> Result<Project> {
-        read_json(&self.project_dir(id)?.join("project.json"))
-    }
+/// The audio files a sermon can be
+pub const AUDIO: [&str; 7] = ["mp3", "m4a", "wav", "flac", "ogg", "aac", "mp4"];
 
-    pub fn delete_project(&self, id: &str) -> Result<()> {
-        Ok(std::fs::remove_dir_all(self.project_dir(id)?)?)
-    }
+fn ext(p: &str) -> String {
+    Path::new(p).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+}
 
-    pub fn projects(&self) -> Result<Vec<ProjectSummary>> {
-        let mut out = vec![];
-        for entry in std::fs::read_dir(self.root.join("projects")).into_iter().flatten().flatten() {
-            if let Ok(p) = read_json::<Project>(&entry.path().join("project.json")) {
-                out.push(ProjectSummary {
-                    id: p.id,
-                    name: p.name,
-                    bible_id: p.bible_id,
-                    book: p.book,
-                    updated_at: p.updated_at,
-                    source_count: p.sources.len(),
-                    selection_count: p.selections.len(),
-                });
-            }
+/// A file's name without its extensions (`sermon.mp3.json` and `sermon.json` are `sermon`)
+fn base_name(p: &str) -> String {
+    let mut stem = Path::new(p).file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+    while let Some((s, ext)) = stem.rsplit_once('.') {
+        if ext.eq_ignore_ascii_case("json") || AUDIO.contains(&ext.to_ascii_lowercase().as_str()) {
+            stem = s.to_string();
+        } else {
+            break;
         }
-        out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        Ok(out)
     }
+    stem
+}
 
-    pub fn save_matches(&self, project_id: &str, matches: &MatchSet) -> Result<()> {
-        write_json(&self.project_dir(project_id)?.join("matches.json"), matches)
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    pub fn matches(&self, project_id: &str) -> Result<MatchSet> {
-        let path = self.project_dir(project_id)?.join("matches.json");
-        if !path.exists() {
-            return Ok(MatchSet::default());
-        }
-        read_json(&path)
+    #[test]
+    fn pairs_audio_with_transcripts() {
+        let bible = Bible {
+            id: "b".into(),
+            name: "Test".into(),
+            abbreviation: "T".into(),
+            language: None,
+            format: "text".into(),
+            books: vec![],
+        };
+        let mut p = Project::new("p", "", &bible, None);
+        let paths: Vec<String> = ["a/one.mp3", "b/one.json", "a/one.json", "a/two.m4a", "a/three.json", "notes.txt"]
+            .map(String::from)
+            .into();
+        let added = p.add_sources(&paths);
+        assert_eq!(added.added, 1);
+        assert_eq!(p.sources[0].transcript_path, "a/one.json");
+        assert_eq!(added.unpaired, ["a/two.m4a", "b/one.json", "a/three.json"]);
+        assert_eq!(p.sources[0].id, stable_id("a/one.mp3"));
+        assert_eq!(p.add_sources(&paths).added, 0);
     }
 }

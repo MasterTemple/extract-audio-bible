@@ -1,30 +1,29 @@
-mod audio;
-mod bible;
+//! The app's commands: the library (`extract-audio-bible`) does the work, and this keeps the
+//! app's Bibles and projects, caches what's slow to make again, and reports progress.
+
 mod error;
-mod export;
-mod matcher;
-mod project;
-mod transcript;
-#[cfg(test)]
-mod e2e_test;
+mod store;
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
-use rayon::prelude::*;
+use extract_audio_bible::{
+    Bible, ChapterRef, ClipOptions, Disk, ExportedFile, MatchSet, Project, Transcript, Word, audio,
+    bible::{BibleSummary, BookOutline},
+    export, matcher,
+    project::now,
+    scripture_quotes,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State, ipc::Response};
 
 use crate::{
-    bible::{Bible, BibleSummary, BookOutline},
     error::{AppError, Result},
-    export::{ChapterRef, ExportedFile},
-
-    project::{MatchSet, Project, ProjectSummary, Source, Store, now},
-    transcript::{Transcript, Word},
+    store::{ProjectSummary, Store},
 };
 
 /// The Bible last searched for, ready to search again, by its id
@@ -41,7 +40,7 @@ impl AppState {
         if let Some(t) = self.transcripts.lock().unwrap().get(path) {
             return Ok(t.clone());
         }
-        let t = Arc::new(Transcript::open(Path::new(path))?);
+        let t = Arc::new(Transcript::open(&Disk, path)?);
         self.transcripts.lock().unwrap().insert(path.to_string(), t.clone());
         Ok(t)
     }
@@ -74,15 +73,9 @@ async fn import_bible(
     let store = state.store.clone();
     blocking(move || {
         let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-        let (books, format) = bible::import(&paths)?;
-        let bible = Bible {
-            id: new_id(),
-            name: if name.trim().is_empty() { "Untitled translation".into() } else { name.trim().into() },
-            abbreviation: abbreviation.trim().to_string(),
-            language: language.filter(|l| !l.trim().is_empty()),
-            format,
-            books,
-        };
+        let name = if name.trim().is_empty() { "Untitled translation" } else { name.trim() };
+        let mut bible = Bible::new(new_id(), name, abbreviation.trim(), extract_audio_bible::import_paths(&paths)?);
+        bible.language = language.filter(|l| !l.trim().is_empty());
         store.save_bible(&bible)?;
         Ok(bible.summary())
     })
@@ -120,25 +113,7 @@ fn list_projects(state: State<AppState>) -> Result<Vec<ProjectSummary>> {
 #[tauri::command]
 fn create_project(state: State<AppState>, name: String, bible_id: String, book: Option<u8>) -> Result<Project> {
     let bible = state.store.bible(&bible_id)?;
-    let book_name = book.and_then(|b| bible.book(b)).map(|b| b.name.clone());
-    let mut metadata = project::Metadata::default();
-    metadata.language = bible.language.clone().unwrap_or_default();
-    let project = Project {
-        id: new_id(),
-        name: match (name.trim(), book_name) {
-            ("", Some(book)) => format!("{book} ({})", if bible.abbreviation.is_empty() { &bible.name } else { &bible.abbreviation }),
-            ("", None) => format!("{} audio Bible", bible.name),
-            (name, _) => name.into(),
-        },
-        bible_id,
-        book,
-        created_at: now(),
-        updated_at: now(),
-        sources: vec![],
-        selections: BTreeMap::new(),
-        settings: Default::default(),
-        metadata,
-    };
+    let project = Project::new(new_id(), &name, &bible, book);
     state.store.save_project(&project)?;
     Ok(project)
 }
@@ -160,37 +135,6 @@ fn delete_project(state: State<AppState>, id: String) -> Result<()> {
     state.store.delete_project(&id)
 }
 
-const AUDIO: [&str; 7] = ["mp3", "m4a", "wav", "flac", "ogg", "aac", "mp4"];
-
-fn walk(path: &Path, out: &mut Vec<PathBuf>) {
-    if path.is_dir() {
-        let mut entries: Vec<_> = std::fs::read_dir(path).into_iter().flatten().flatten().map(|e| e.path()).collect();
-        entries.sort();
-        for e in entries {
-            walk(&e, out);
-        }
-    } else {
-        out.push(path.to_path_buf());
-    }
-}
-
-fn lower_ext(p: &Path) -> String {
-    p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
-}
-
-/// A file's name without its extensions (`sermon.mp3.json` and `sermon.json` are `sermon`)
-fn base_name(p: &Path) -> String {
-    let mut stem = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-    while let Some((s, ext)) = stem.rsplit_once('.') {
-        if ext.eq_ignore_ascii_case("json") || AUDIO.contains(&ext.to_ascii_lowercase().as_str()) {
-            stem = s.to_string();
-        } else {
-            break;
-        }
-    }
-    stem
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AddedSources {
@@ -205,46 +149,12 @@ struct AddedSources {
 #[tauri::command]
 fn add_sources(state: State<AppState>, project_id: String, paths: Vec<String>) -> Result<AddedSources> {
     let mut project = state.store.project(&project_id)?;
-    let mut files = vec![];
-    for p in &paths {
-        walk(Path::new(p), &mut files);
-    }
-    let (jsons, audios): (Vec<PathBuf>, Vec<PathBuf>) = files
-        .into_iter()
-        .filter(|f| lower_ext(f) == "json" || AUDIO.contains(&lower_ext(f).as_str()))
-        .partition(|f| lower_ext(f) == "json");
-    let mut used = vec![false; jsons.len()];
-    let mut unpaired = vec![];
-    let mut added = 0;
-    for audio in audios {
-        let base = base_name(&audio);
-        let pick = (0..jsons.len())
-            .filter(|&i| !used[i] && base_name(&jsons[i]) == base)
-            .min_by_key(|&i| jsons[i].parent() != audio.parent());
-        let Some(i) = pick else {
-            unpaired.push(audio.to_string_lossy().into_owned());
-            continue;
-        };
-        used[i] = true;
-        let audio_path = audio.to_string_lossy().into_owned();
-        if project.sources.iter().any(|s| s.audio_path == audio_path) {
-            continue;
-        }
-        project.sources.push(Source {
-            id: new_id(),
-            label: base,
-            audio_path,
-            transcript_path: jsons[i].to_string_lossy().into_owned(),
-            duration: None,
-            word_count: 0,
-            match_count: 0,
-        });
-        added += 1;
-    }
-    unpaired.extend(jsons.iter().zip(&used).filter(|(_, u)| !**u).map(|(j, _)| j.to_string_lossy().into_owned()));
-    project.updated_at = now();
+    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    let files: Vec<String> =
+        extract_audio_bible::files::gather(&paths)?.into_iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    let added = project.add_sources(&files);
     state.store.save_project(&project)?;
-    Ok(AddedSources { project, added, unpaired })
+    Ok(AddedSources { project, added: added.added, unpaired: added.unpaired })
 }
 
 #[derive(Clone, Serialize)]
@@ -267,8 +177,6 @@ struct Analyzed {
 #[tauri::command]
 async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project: Project) -> Result<Analyzed> {
     let store = state.store.clone();
-    let transcripts: Vec<Result<Arc<Transcript>>> =
-        project.sources.iter().map(|s| state.transcript(&s.transcript_path)).collect();
     let cached = state.engine.clone();
     blocking(move || {
         let mut project = project;
@@ -289,55 +197,14 @@ async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project: Pro
                 engine
             }
         };
-        // Only the book being built: a phrase shared with another book can't be mistaken for one
-        // of its verses
-        let searcher = matcher::searcher(&engine, project.book).map_err(|e| AppError::msg(e.to_string()))?;
-        emit(0, format!("Indexed {} verses", searcher.verse_count()));
-        let options =
-            scripture_quotes::Options { min_accuracy: project.settings.min_accuracy, ..Default::default() };
-        let counter = std::sync::atomic::AtomicUsize::new(0);
-        let results: Vec<_> = (project.sources.par_iter().zip(transcripts.into_par_iter()))
-            .map(|(source, transcript)| {
-                let out = transcript.map(|t| {
-                    let (matches, runs) = matcher::find_matches(&searcher, &t, &source.id, &options);
-                    (t.words.len(), t.duration(), matches, runs)
-                });
-                let done = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                emit(done, format!("Searched {}", source.label));
-                out
-            })
-            .collect();
-        let mut set = MatchSet { analyzed_at: now(), ..Default::default() };
-        let mut errors = vec![];
-        for (source, result) in project.sources.iter_mut().zip(results) {
-            match result {
-                Ok((words, duration, matches, runs)) => {
-                    source.word_count = words;
-                    source.match_count = matches.len();
-                    source.duration = source.duration.or(Some(duration));
-                    set.matches.extend(matches);
-                    set.runs.extend(runs);
-                }
-                Err(e) => errors.push(format!("{}: {e}", source.label)),
-            }
-        }
-        // Selections follow their reading to its new id, if the analysis changed it
-        for sel in project.selections.values_mut() {
-            if set.matches.iter().any(|m| m.id == sel.match_id) {
-                continue;
-            }
-            let found = set.matches.iter().find(|m| {
-                m.source_id == sel.source_id && m.start < sel.end && m.end > sel.start && sel.match_id.contains(&format!(":{}.{}.{}@", m.book, m.chapter, m.verse))
-            });
-            if let Some(m) = found {
-                sel.match_id = m.id.clone();
-            }
-        }
-        project.updated_at = now();
-        store.save_matches(&project.id, &set)?;
+        let analysis = extract_audio_bible::analyze_with(&mut project, &engine, &Disk, &|done, _, label| {
+            emit(done, format!("Searched {label}"))
+        })?;
+        let errors = analysis.errors.iter().map(|(label, e)| format!("{label}: {e}")).collect();
+        store.save_matches(&project.id, &analysis.matches)?;
         store.save_project(&project)?;
         emit(total, "Done".into());
-        Ok(Analyzed { project, matches: set, errors })
+        Ok(Analyzed { project, matches: analysis.matches, errors })
     })
     .await
 }
@@ -380,7 +247,7 @@ struct Peaks {
 async fn audio_peaks(state: State<'_, AppState>, audio_path: String, start: f64, end: f64) -> Result<Peaks> {
     let cache = state.store.cache_dir().join("peaks");
     blocking(move || {
-        let (all, duration) = audio::peaks(Path::new(&audio_path), &cache)?;
+        let (all, duration) = cached_peaks(&audio_path, &cache)?;
         let per = audio::PEAKS_PER_SECOND as f64;
         let s = ((start.max(0.0)) * per) as usize;
         let e = ((end * per).ceil() as usize).min(all.len());
@@ -394,24 +261,35 @@ async fn audio_peaks(state: State<'_, AppState>, audio_path: String, start: f64,
     .await
 }
 
+/// A whole file's waveform, kept in `cache_dir` by the file's path, size, and time
+fn cached_peaks(path: &str, cache_dir: &Path) -> Result<(Vec<f32>, f64)> {
+    let meta = std::fs::metadata(path)?;
+    let mut h = DefaultHasher::new();
+    (path, meta.len(), meta.modified().ok()).hash(&mut h);
+    let cache = cache_dir.join(format!("{:016x}.peaks", h.finish()));
+    if let Ok(bytes) = std::fs::read(&cache)
+        && bytes.len() >= 8
+    {
+        let duration = f64::from_le_bytes(bytes[..8].try_into().unwrap_or_default());
+        let peaks = bytes[8..].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        return Ok((peaks, duration));
+    }
+    let (peaks, duration) = audio::peaks(&Disk, path)?;
+    std::fs::create_dir_all(cache_dir)?;
+    let mut bytes = duration.to_le_bytes().to_vec();
+    bytes.extend(peaks.iter().flat_map(|p| p.to_le_bytes()));
+    std::fs::write(&cache, bytes)?;
+    Ok((peaks, duration))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ClipRequest {
     audio_path: String,
     start: f64,
     end: f64,
-    #[serde(default)]
-    pad_before: f64,
-    #[serde(default)]
-    pad_after: f64,
-    /// Level and fade it as the export will
-    #[serde(default)]
-    processed: bool,
-    /// Bring it to this level first, as "level each reading" does
-    #[serde(default)]
-    target_db: Option<f64>,
-    #[serde(default)]
-    gain_db: f64,
+    #[serde(flatten)]
+    options: ClipOptions,
 }
 
 /// A stretch of a sermon as WAV, for listening
@@ -419,22 +297,8 @@ struct ClipRequest {
 async fn render_clip(request: ClipRequest) -> Result<Response> {
     blocking(move || {
         let r = request;
-        let mut pcm = audio::decode_range(Path::new(&r.audio_path), r.start, r.end)?;
-        if r.processed {
-            pcm = audio::resample(&pcm, 44_100);
-            let mut gain = audio::db_to_gain(r.gain_db);
-            if let Some(db) = r.target_db {
-                gain *= audio::leveling_gain(&pcm.samples, pcm.rate, db);
-            }
-            audio::apply_gain(&mut pcm.samples, gain);
-            audio::fade(&mut pcm.samples, pcm.rate, 8.0);
-            audio::limit(&mut pcm.samples);
-        }
-        let rate = pcm.rate as f64;
-        let mut samples = vec![0.0; (r.pad_before.max(0.0) * rate) as usize];
-        samples.extend(pcm.samples);
-        samples.resize(samples.len() + (r.pad_after.max(0.0) * rate) as usize, 0.0);
-        Ok(Response::new(audio::wav(&audio::Pcm { rate: pcm.rate, samples })))
+        let pcm = extract_audio_bible::render_clip(&Disk, &r.audio_path, r.start, r.end, &r.options)?;
+        Ok(Response::new(audio::wav(&pcm)))
     })
     .await
 }
@@ -463,7 +327,7 @@ async fn render_chapter(state: State<'_, AppState>, project: Project, book: u8, 
     blocking(move || {
         let bible = store.bible(&project.bible_id)?;
         let book = bible.book(book).ok_or_else(|| AppError::msg("No such book"))?;
-        let pcm = export::render_chapter(&project, book, chapter, 24_000)?;
+        let pcm = export::render_chapter(&project, book, chapter, 24_000, &Disk)?;
         Ok(Response::new(audio::wav(&pcm)))
     })
     .await
@@ -489,9 +353,12 @@ async fn export_chapters(
         if chapters.is_empty() {
             return Err(AppError::msg("No chapters have chosen verses yet"));
         }
-        export::export(&project, &bible, &chapters, |p| {
+        let dir = (project.metadata.output_dir.as_deref())
+            .filter(|d| !d.is_empty())
+            .ok_or_else(|| AppError::msg("Choose a folder to export to"))?;
+        Ok(export::export_to_dir(&project, &bible, &chapters, &Disk, Path::new(dir), |p| {
             let _ = app.emit("export-progress", p);
-        })
+        })?)
     })
     .await
 }

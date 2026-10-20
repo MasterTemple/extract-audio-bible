@@ -1,7 +1,7 @@
 //! Putting chosen readings together, and writing them as tagged MP3s: a file per chapter, a file
 //! per verse, or both.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::Path};
 
 use id3::{
     Tag, TagLike, Version,
@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     audio::{self, Pcm},
     bible::{Bible, BibleBook},
-    error::{AppError, Result},
+    error::{Error, Result},
+    files::Files,
     project::{ExportMode, Leveling, Project, Selection},
 };
 
@@ -84,13 +85,15 @@ fn chapter_pieces<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> (
         let length = (clip.end - clip.start).max(0.0);
         // A verse that starts where the last one ended, in the same sermon at the same volume,
         // continues it
-        if let (true, Some(Piece::Audio(last))) = (silence <= 0.0, out.last_mut()) {
-            if last.path == clip.path && last.gain_db == clip.gain_db && (clip.start - last.end).abs() < 0.05 {
-                last.end = clip.end;
-                times.push(VerseTime { verse: *verse, start: at, end: at + length });
-                at += length;
-                continue;
-            }
+        if let (true, Some(Piece::Audio(last))) = (silence <= 0.0, out.last_mut())
+            && last.path == clip.path
+            && last.gain_db == clip.gain_db
+            && (clip.start - last.end).abs() < 0.05
+        {
+            last.end = clip.end;
+            times.push(VerseTime { verse: *verse, start: at, end: at + length });
+            at += length;
+            continue;
         }
         if silence > 0.0 {
             out.push(Piece::Silence(silence));
@@ -113,7 +116,8 @@ pub fn chapter_timeline(project: &Project, book: &BibleBook, chapter: u16) -> Ve
 }
 
 /// How each clip's volume is set
-pub struct Leveler {
+pub struct Leveler<'f> {
+    files: &'f dyn Files,
     leveling: Leveling,
     target_db: f64,
     fade_ms: f64,
@@ -121,20 +125,20 @@ pub struct Leveler {
     overall: f64,
 }
 
-impl Leveler {
+impl<'f> Leveler<'f> {
     /// For a project, measuring `clips` when the whole export is leveled together
-    pub fn new(project: &Project, clips: &[Clip]) -> Result<Self> {
+    pub fn new(project: &Project, clips: &[Clip], files: &'f dyn Files) -> Result<Self> {
         let s = &project.settings;
         let mut overall = audio::db_to_gain(s.output_gain_db);
         if s.leveling == Leveling::Export {
-            overall *= export_gain(clips, s.target_db)?;
+            overall *= export_gain(files, clips, s.target_db)?;
         }
-        Ok(Self { leveling: s.leveling, target_db: s.target_db, fade_ms: s.fade_ms, overall })
+        Ok(Self { files, leveling: s.leveling, target_db: s.target_db, fade_ms: s.fade_ms, overall })
     }
 
     /// One clip, ready to join others: resampled, its volume set, and faded at its ends
     pub fn render(&self, clip: &Clip, rate: u32) -> Result<Pcm> {
-        let pcm = audio::decode_range(std::path::Path::new(clip.path), clip.start, clip.end)?;
+        let pcm = audio::decode_range(self.files, clip.path, clip.start, clip.end)?;
         let mut pcm = audio::resample(&pcm, rate);
         let mut gain = audio::db_to_gain(clip.gain_db) * self.overall;
         if self.leveling == Leveling::Each {
@@ -158,11 +162,46 @@ impl Leveler {
     }
 }
 
+/// How to render a stretch of a sermon to listen to ([`render_clip`])
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ClipOptions {
+    /// Silence before and after it, in seconds
+    pub pad_before: f64,
+    pub pad_after: f64,
+    /// Level and fade it as an export will (at 44.1 kHz)
+    pub processed: bool,
+    /// When processed, bring it to this level first, as leveling each reading does (dBFS RMS)
+    pub target_db: Option<f64>,
+    /// When processed, a volume change in dB
+    pub gain_db: f64,
+}
+
+/// `start` to `end` seconds of a sermon's audio, mono, at its own rate unless processed
+pub fn render_clip(files: &dyn Files, path: &str, start: f64, end: f64, options: &ClipOptions) -> Result<Pcm> {
+    let mut pcm = audio::decode_range(files, path, start, end)?;
+    if options.processed {
+        pcm = audio::resample(&pcm, 44_100);
+        let mut gain = audio::db_to_gain(options.gain_db);
+        if let Some(db) = options.target_db {
+            gain *= audio::leveling_gain(&pcm.samples, pcm.rate, db);
+        }
+        audio::apply_gain(&mut pcm.samples, gain);
+        audio::fade(&mut pcm.samples, pcm.rate, 8.0);
+        audio::limit(&mut pcm.samples);
+    }
+    let rate = pcm.rate as f64;
+    let mut samples = vec![0.0; (options.pad_before.max(0.0) * rate) as usize];
+    samples.extend(pcm.samples);
+    samples.resize(samples.len() + (options.pad_after.max(0.0) * rate) as usize, 0.0);
+    Ok(Pcm { rate: pcm.rate, samples })
+}
+
 /// The one gain that brings all of `clips` (each with its own volume change) to the target
-fn export_gain(clips: &[Clip], target_db: f64) -> Result<f64> {
+fn export_gain(files: &dyn Files, clips: &[Clip], target_db: f64) -> Result<f64> {
     let mut levels = vec![];
     for clip in clips {
-        let pcm = audio::decode_range(std::path::Path::new(clip.path), clip.start, clip.end)?;
+        let pcm = audio::decode_range(files, clip.path, clip.start, clip.end)?;
         let gain = audio::db_to_gain(clip.gain_db);
         levels.extend(audio::levels(&pcm.samples, pcm.rate).into_iter().map(|l| l * gain));
     }
@@ -174,9 +213,9 @@ fn export_gain(clips: &[Clip], target_db: f64) -> Result<f64> {
 
 /// A chapter as it will be exported, at `rate` (leveled as a whole on its own, when the export
 /// is leveled as a whole)
-pub fn render_chapter(project: &Project, book: &BibleBook, chapter: u16, rate: u32) -> Result<Pcm> {
+pub fn render_chapter(project: &Project, book: &BibleBook, chapter: u16, rate: u32, files: &dyn Files) -> Result<Pcm> {
     let clips: Vec<Clip> = chosen(project, book, chapter).into_iter().map(|(_, _, c)| c).collect();
-    Leveler::new(project, &clips)?.render_pieces(&chapter_pieces(project, book, chapter).0, rate)
+    Leveler::new(project, &clips, files)?.render_pieces(&chapter_pieces(project, book, chapter).0, rate)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -193,6 +232,8 @@ pub struct ExportedFile {
     pub chapter: u16,
     /// For a verse's own file
     pub verse: Option<u16>,
+    /// Where it goes, under the folder exported to (`13 1 Thessalonians/52_1Thess_005.mp3`), or
+    /// the whole path once written there
     pub path: String,
     pub duration: f64,
     pub missing: Vec<u16>,
@@ -257,7 +298,8 @@ struct Tagger<'a> {
 }
 
 impl Tagger<'_> {
-    fn write(&self, path: &PathBuf, book: &BibleBook, chapter: u16, verse: Option<u16>, track: (u32, u32), disc: u32) -> Result<()> {
+    /// An MP3's ID3v2.4 tag, to put before its audio
+    fn tag(&self, book: &BibleBook, chapter: u16, verse: Option<u16>, track: (u32, u32), disc: u32) -> Result<Vec<u8>> {
         let meta = &self.project.metadata;
         let fill = |t: &str| fill(t, self.bible, book, chapter, verse);
         let mut tag = Tag::new();
@@ -293,24 +335,30 @@ impl Tagger<'_> {
                 data: data.clone(),
             });
         }
-        tag.write_to_path(path, Version::Id3v24)?;
-        Ok(())
+        let mut bytes = vec![];
+        tag.write_to(&mut bytes, Version::Id3v24)?;
+        Ok(bytes)
     }
 }
 
+/**
+Exports chapters (see [`chapters_to_export`]) as the project's metadata says: a tagged MP3 per
+chapter, per verse, or both. Each file is handed to `write` as it's made, with its path under
+the folder exported to, so nothing has to be kept in memory; it returns what was written.
+Natively, [`export_to_dir`] writes them to a folder
+*/
 pub fn export(
     project: &Project,
     bible: &Bible,
     chapters: &[ChapterRef],
+    files: &dyn Files,
     mut progress: impl FnMut(ExportProgress),
+    mut write: impl FnMut(&ExportedFile, Vec<u8>) -> Result<()>,
 ) -> Result<Vec<ExportedFile>> {
     let meta = &project.metadata;
-    let out_dir = PathBuf::from(
-        meta.output_dir.as_deref().filter(|d| !d.is_empty()).ok_or_else(|| AppError::msg("Choose a folder to export to"))?,
-    );
     let cover = match meta.cover_path.as_deref().filter(|p| !p.is_empty()) {
         Some(p) => {
-            let data = std::fs::read(p).map_err(|e| AppError::msg(format!("Cover image {p}: {e}")))?;
+            let data = files.read(p).map_err(|e| Error::not_found(format!("Cover image {p}: {e}")))?;
             let mime = if p.to_ascii_lowercase().ends_with(".png") { "image/png" } else { "image/jpeg" };
             Some((data, mime.to_string()))
         }
@@ -318,7 +366,7 @@ pub fn export(
     };
     let tagger = Tagger { project, bible, cover };
     let books: Vec<&BibleBook> = (chapters.iter())
-        .map(|c| bible.book(c.book).ok_or_else(|| AppError::msg(format!("No book {}", c.book))))
+        .map(|c| bible.book(c.book).ok_or_else(|| Error::not_found(format!("No book {}", c.book))))
         .collect::<Result<_>>()?;
 
     let clips: Vec<Clip> = (chapters.iter().zip(&books))
@@ -327,66 +375,85 @@ pub fn export(
     if project.settings.leveling == Leveling::Export {
         progress(ExportProgress { done: 0, total: chapters.len(), current: "Measuring loudness".into() });
     }
-    let leveler = Leveler::new(project, &clips)?;
+    let leveler = Leveler::new(project, &clips, files)?;
     let (chapter_files, verse_files) = match meta.export_mode {
         ExportMode::Chapter => (true, false),
         ExportMode::Verse => (false, true),
         ExportMode::Both => (true, true),
     };
+    let join = |dir: &str, name: String| if dir.is_empty() { name } else { format!("{dir}/{name}") };
 
     let mut done = vec![];
     for (i, (ch, book)) in chapters.iter().zip(&books).enumerate() {
         progress(ExportProgress { done: i, total: chapters.len(), current: format!("{} {}", book.name, ch.chapter) });
-        let book_dir = if meta.folder_per_book {
-            out_dir.join(file_name(&format!("{:02} {}", book.id, book.name)))
-        } else {
-            out_dir.clone()
-        };
+        let book_dir = if meta.folder_per_book { file_name(&format!("{:02} {}", book.id, book.name)) } else { String::new() };
         let missing = missing_verses(project, book, ch.chapter);
         if chapter_files {
             let pcm = leveler.render_pieces(&chapter_pieces(project, book, ch.chapter).0, meta.sample_rate)?;
-            std::fs::create_dir_all(&book_dir)?;
-            let path = book_dir.join(format!("{}.mp3", file_name(&fill(&meta.filename_template, bible, book, ch.chapter, None))));
-            audio::write_mp3(&pcm, meta.bitrate, &path)?;
+            let path = join(&book_dir, format!("{}.mp3", file_name(&fill(&meta.filename_template, bible, book, ch.chapter, None))));
             let track = if meta.track_numbering == "sequence" {
                 (i as u32 + 1, chapters.len() as u32)
             } else {
                 (ch.chapter as u32, book.chapters.len() as u32)
             };
-            tagger.write(&path, book, ch.chapter, None, track, book.id as u32)?;
-            done.push(ExportedFile {
+            let mut bytes = tagger.tag(book, ch.chapter, None, track, book.id as u32)?;
+            bytes.extend(audio::mp3(&pcm, meta.bitrate)?);
+            let file = ExportedFile {
                 book: ch.book,
                 chapter: ch.chapter,
                 verse: None,
-                path: path.to_string_lossy().into_owned(),
+                path,
                 duration: pcm.seconds(),
                 missing: missing.clone(),
-            });
+            };
+            write(&file, bytes)?;
+            done.push(file);
         }
         if verse_files {
-            let dir = book_dir.join(file_name(&format!("{} {}", book.name, ch.chapter)));
-            std::fs::create_dir_all(&dir)?;
+            let dir = join(&book_dir, file_name(&format!("{} {}", book.name, ch.chapter)));
             let count = book.chapters[ch.chapter as usize - 1].len() as u32;
             for (v, sel, clip) in chosen(project, book, ch.chapter) {
                 let pieces = [Piece::Silence(sel.pad_before), Piece::Audio(clip), Piece::Silence(sel.pad_after)];
                 let pcm = leveler.render_pieces(&pieces, meta.sample_rate)?;
-                let path = dir.join(format!(
-                    "{}.mp3",
-                    file_name(&fill(&meta.verse_filename_template, bible, book, ch.chapter, Some(v)))
-                ));
-                audio::write_mp3(&pcm, meta.bitrate, &path)?;
-                tagger.write(&path, book, ch.chapter, Some(v), (v as u32, count), ch.chapter as u32)?;
-                done.push(ExportedFile {
+                let path = join(&dir, format!("{}.mp3", file_name(&fill(&meta.verse_filename_template, bible, book, ch.chapter, Some(v)))));
+                let mut bytes = tagger.tag(book, ch.chapter, Some(v), (v as u32, count), ch.chapter as u32)?;
+                bytes.extend(audio::mp3(&pcm, meta.bitrate)?);
+                let file = ExportedFile {
                     book: ch.book,
                     chapter: ch.chapter,
                     verse: Some(v),
-                    path: path.to_string_lossy().into_owned(),
+                    path,
                     duration: pcm.seconds(),
                     missing: vec![],
-                });
+                };
+                write(&file, bytes)?;
+                done.push(file);
             }
         }
     }
     progress(ExportProgress { done: chapters.len(), total: chapters.len(), current: String::new() });
     Ok(done)
+}
+
+/// [`export`] into a folder on disk (made if need be); the files' paths are where they were written
+pub fn export_to_dir(
+    project: &Project,
+    bible: &Bible,
+    chapters: &[ChapterRef],
+    files: &dyn Files,
+    dir: &Path,
+    progress: impl FnMut(ExportProgress),
+) -> Result<Vec<ExportedFile>> {
+    let mut written = export(project, bible, chapters, files, progress, |file, bytes| {
+        let path = dir.join(&file.path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, bytes)?;
+        Ok(())
+    })?;
+    for file in &mut written {
+        file.path = dir.join(&file.path).to_string_lossy().into_owned();
+    }
+    Ok(written)
 }

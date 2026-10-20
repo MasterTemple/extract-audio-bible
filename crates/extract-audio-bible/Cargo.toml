@@ -1,0 +1,23 @@
+[package]
+name = "extract-audio-bible"
+version.workspace = true
+edition.workspace = true
+description = "Build an audio Bible from the Scripture read in sermons: find each verse's readings in transcripts, choose and trim them, and export tagged MP3s"
+license.workspace = true
+authors.workspace = true
+keywords = ["bible", "audio", "sermon", "transcript", "mp3"]
+categories = ["multimedia::audio", "text-processing"]
+
+[dependencies]
+id3 = "1.17.2"
+logoxide-text = "0.1"
+rusty_mp3 = "1.0.1"
+scripture-quotes = { path = "../../../../rust/scripture-quotes" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+symphonia = { version = "0.5", features = ["mp3", "aac", "isomp4"] }
+thiserror = "2.0.21"
+
+# Searching sermons in parallel
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1.12.0"

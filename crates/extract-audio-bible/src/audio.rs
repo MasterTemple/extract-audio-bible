@@ -1,12 +1,5 @@
 //! Reading sermons' audio (any part of it, as mono samples), drawing it, and writing MP3 and WAV.
 
-use std::{
-    fs::File,
-    hash::{Hash, Hasher},
-    io::Write,
-    path::{Path, PathBuf},
-};
-
 use symphonia::core::{
     audio::SampleBuffer,
     codecs::{CODEC_TYPE_NULL, DecoderOptions},
@@ -18,7 +11,10 @@ use symphonia::core::{
     units::Time,
 };
 
-use crate::error::{AppError, Result};
+use crate::{
+    error::{Error, Result},
+    files::Files,
+};
 
 /// Mono samples at a rate
 #[derive(Clone, Debug, Default)]
@@ -41,11 +37,10 @@ struct Opened {
     time_base: Option<symphonia::core::units::TimeBase>,
 }
 
-fn open(path: &Path) -> Result<Opened> {
-    let file = File::open(path).map_err(|e| AppError::msg(format!("{}: {e}", path.display())))?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+fn open(files: &dyn Files, path: &str) -> Result<Opened> {
+    let mss = MediaSourceStream::new(files.open(path)?, Default::default());
     let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+    if let Some((_, ext)) = path.rsplit_once('.') {
         hint.with_extension(ext);
     }
     let probed = symphonia::default::get_probe().format(
@@ -57,7 +52,7 @@ fn open(path: &Path) -> Result<Opened> {
     let format = probed.format;
     let track = (format.tracks().iter())
         .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or_else(|| AppError::msg(format!("{} has no audio", path.display())))?;
+        .ok_or_else(|| Error::Audio(format!("{path} has no audio")))?;
     let decoder = symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
     Ok(Opened {
         track_id: track.id,
@@ -112,8 +107,8 @@ fn decode_from(opened: &mut Opened, mut each: impl FnMut(f64, &[f32]) -> bool) -
 }
 
 /// The audio from `start` to `end` seconds, mono, at the file's own rate
-pub fn decode_range(path: &Path, start: f64, end: f64) -> Result<Pcm> {
-    let mut opened = open(path)?;
+pub fn decode_range(files: &dyn Files, path: &str, start: f64, end: f64) -> Result<Pcm> {
+    let mut opened = open(files, path)?;
     let rate = opened.rate;
     let start = start.max(0.0);
     let seek = (start - 1.0).max(0.0);
@@ -149,21 +144,10 @@ pub fn decode_range(path: &Path, start: f64, end: f64) -> Result<Pcm> {
 /// Peaks per second of audio drawn
 pub const PEAKS_PER_SECOND: u32 = 50;
 
-/// Loudest sample of every 1/50 s of the whole file, and its length in seconds (kept in
-/// `cache_dir` by the file's path, size, and time)
-pub fn peaks(path: &Path, cache_dir: &Path) -> Result<(Vec<f32>, f64)> {
-    let meta = std::fs::metadata(path)?;
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    (path, meta.len(), meta.modified().ok()).hash(&mut h);
-    let cache = cache_dir.join(format!("{:016x}.peaks", h.finish()));
-    if let Ok(bytes) = std::fs::read(&cache) {
-        if bytes.len() >= 8 {
-            let duration = f64::from_le_bytes(bytes[..8].try_into().unwrap());
-            let peaks = bytes[8..].chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
-            return Ok((peaks, duration));
-        }
-    }
-    let mut opened = open(path)?;
+/// Loudest sample of every 1/50 s of the whole file, and its length in seconds (it decodes the
+/// whole file: about two seconds for an hour of audio)
+pub fn peaks(files: &dyn Files, path: &str) -> Result<(Vec<f32>, f64)> {
+    let mut opened = open(files, path)?;
     let per = (opened.rate / PEAKS_PER_SECOND).max(1) as usize;
     let mut peaks = vec![];
     let (mut current, mut count, mut total) = (0f32, 0usize, 0usize);
@@ -183,10 +167,6 @@ pub fn peaks(path: &Path, cache_dir: &Path) -> Result<(Vec<f32>, f64)> {
         peaks.push(current);
     }
     let duration = total as f64 / opened.rate as f64;
-    std::fs::create_dir_all(cache_dir)?;
-    let mut bytes = duration.to_le_bytes().to_vec();
-    bytes.extend(peaks.iter().flat_map(|p| p.to_le_bytes()));
-    std::fs::write(&cache, bytes)?;
     Ok((peaks, duration))
 }
 
@@ -309,40 +289,24 @@ pub fn wav(pcm: &Pcm) -> Vec<u8> {
     out
 }
 
-/// MP3, mono, at a constant bitrate
-pub fn write_mp3(pcm: &Pcm, kbps: u16, path: &PathBuf) -> Result<()> {
-    use mp3lame_encoder::{Bitrate, Builder, FlushNoGap, MonoPcm, Quality};
-    let bitrate = match kbps {
-        0..=40 => Bitrate::Kbps32,
-        41..=56 => Bitrate::Kbps48,
-        57..=72 => Bitrate::Kbps64,
-        73..=88 => Bitrate::Kbps80,
-        89..=104 => Bitrate::Kbps96,
-        105..=120 => Bitrate::Kbps112,
-        121..=144 => Bitrate::Kbps128,
-        145..=176 => Bitrate::Kbps160,
-        177..=208 => Bitrate::Kbps192,
-        209..=240 => Bitrate::Kbps224,
-        241..=288 => Bitrate::Kbps256,
-        _ => Bitrate::Kbps320,
-    };
-    let lame = |e: &dyn std::fmt::Display| AppError::msg(format!("MP3 encoder: {e}"));
-    let mut builder = Builder::new().ok_or_else(|| AppError::msg("MP3 encoder could not start"))?;
-    builder.set_num_channels(1).map_err(|e| lame(&e))?;
-    builder.set_sample_rate(pcm.rate).map_err(|e| lame(&e))?;
-    builder.set_brate(bitrate).map_err(|e| lame(&e))?;
-    builder.set_quality(Quality::Best).map_err(|e| lame(&e))?;
-    let mut encoder = builder.build().map_err(|e| lame(&e))?;
+/// MP3, mono, at a constant bitrate (snapped to the nearest one MP3 has), with a header that
+/// lets players skip the encoder's padding
+pub fn mp3(pcm: &Pcm, kbps: u16) -> Result<Vec<u8>> {
+    use rusty_mp3::{Error as Mp3Error, Mp3Encoder, Mp3EncoderConfig};
+    let mut encoder = Mp3Encoder::new(Mp3EncoderConfig { bitrate_kbps: kbps as u32, vbr_quality: None });
+    encoder
+        .push_pcm_f32(&pcm.samples, 1, pcm.rate)
+        .map_err(|e| Error::Audio(format!("MP3 encoder: {e}")))?;
+    encoder.finish();
     let mut out = Vec::with_capacity(pcm.samples.len() / 4);
-    for chunk in pcm.samples.chunks(1 << 16) {
-        out.reserve(mp3lame_encoder::max_required_buffer_size(chunk.len()));
-        encoder.encode_to_vec(MonoPcm(chunk), &mut out).map_err(|e| lame(&e))?;
+    loop {
+        match encoder.next_packet() {
+            Ok(packet) => out.extend(packet),
+            Err(Mp3Error::Again | Mp3Error::Eof) => break,
+            Err(e) => return Err(Error::Audio(format!("MP3 encoder: {e}"))),
+        }
     }
-    out.reserve(7200);
-    encoder.flush_to_vec::<FlushNoGap>(&mut out).map_err(|e| lame(&e))?;
-    let mut file = File::create(path)?;
-    file.write_all(&out)?;
-    Ok(())
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -363,14 +327,14 @@ mod tests {
     fn encodes_and_decodes() {
         let rate = 44_100;
         let samples: Vec<f32> = (0..rate * 2).map(|i| (i as f32 * 300.0 * std::f32::consts::TAU / rate as f32).sin() * 0.3).collect();
-        let path = std::env::temp_dir().join(format!("cab-{}.mp3", std::process::id()));
-        write_mp3(&Pcm { rate, samples }, 64, &path).unwrap();
-        let back = decode_range(&path, 0.5, 1.5).unwrap();
+        let mut files = crate::files::Memory::new();
+        files.insert("tone.mp3", mp3(&Pcm { rate, samples }, 64).unwrap());
+        let back = decode_range(&files, "tone.mp3", 0.5, 1.5).unwrap();
         assert_eq!(back.rate, rate);
         assert_eq!(back.samples.len(), rate as usize);
         let peak = back.samples.iter().fold(0f32, |m, s| m.max(s.abs()));
         assert!(peak > 0.2 && peak < 0.4, "{peak}");
-        let (peaks, duration) = peaks(&path, &std::env::temp_dir().join("cab-peaks-test")).unwrap();
+        let (peaks, duration) = peaks(&files, "tone.mp3").unwrap();
         assert!((duration - 2.0).abs() < 0.1, "{duration}");
         assert!(peaks.len() >= 99);
     }

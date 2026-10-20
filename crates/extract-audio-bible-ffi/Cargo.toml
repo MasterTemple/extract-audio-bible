@@ -1,0 +1,19 @@
+[package]
+name = "extract-audio-bible-ffi"
+publish = false
+description = "Bindings for TypeScript/WASM, Python, Swift, and Kotlin (via BoltFFI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+# Matches the published package name (extract-audio-bible), which BoltFFI uses for artifacts
+name = "extract_audio_bible"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+boltffi = "0.31.0"
+# Named eab here: this crate's own library is extract_audio_bible (the package name BoltFFI uses)
+eab = { package = "extract-audio-bible", path = "../extract-audio-bible" }
+serde_json = "1"

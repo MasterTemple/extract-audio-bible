@@ -1,0 +1,493 @@
+{
+ "segments": [
+  {
+   "start": 0.8,
+   "end": 6.64,
+   "text": " good morning church turn with me to john eleven verse thirty three.",
+   "words": [
+    {
+     "word": "good",
+     "start": 0.8,
+     "end": 1.2,
+     "score": 0.9
+    },
+    {
+     "word": "morning",
+     "start": 1.28,
+     "end": 1.74,
+     "score": 0.9
+    },
+    {
+     "word": "church",
+     "start": 1.82,
+     "end": 2.26,
+     "score": 0.9
+    },
+    {
+     "word": "turn",
+     "start": 2.34,
+     "end": 2.74,
+     "score": 0.9
+    },
+    {
+     "word": "with",
+     "start": 2.82,
+     "end": 3.22,
+     "score": 0.9
+    },
+    {
+     "word": "me",
+     "start": 3.3,
+     "end": 3.66,
+     "score": 0.9
+    },
+    {
+     "word": "to",
+     "start": 3.74,
+     "end": 4.1,
+     "score": 0.9
+    },
+    {
+     "word": "john",
+     "start": 4.18,
+     "end": 4.58,
+     "score": 0.9
+    },
+    {
+     "word": "eleven",
+     "start": 4.66,
+     "end": 5.1,
+     "score": 0.9
+    },
+    {
+     "word": "verse",
+     "start": 5.18,
+     "end": 5.6,
+     "score": 0.9
+    },
+    {
+     "word": "thirty",
+     "start": 5.68,
+     "end": 6.12,
+     "score": 0.9
+    },
+    {
+     "word": "three.",
+     "start": 6.2,
+     "end": 6.64,
+     "score": 0.9
+    }
+   ]
+  },
+  {
+   "start": 7.22,
+   "end": 13.82,
+   "text": " When Jesus saw her weeping, and the Jews who had come with her also",
+   "words": [
+    {
+     "word": "When",
+     "start": 7.22,
+     "end": 7.62,
+     "score": 0.9
+    },
+    {
+     "word": "Jesus",
+     "start": 7.7,
+     "end": 8.12,
+     "score": 0.9
+    },
+    {
+     "word": "saw",
+     "start": 8.2,
+     "end": 8.58,
+     "score": 0.9
+    },
+    {
+     "word": "her",
+     "start": 8.66,
+     "end": 9.04,
+     "score": 0.9
+    },
+    {
+     "word": "weeping,",
+     "start": 9.12,
+     "end": 9.6,
+     "score": 0.9
+    },
+    {
+     "word": "and",
+     "start": 9.68,
+     "end": 10.06,
+     "score": 0.9
+    },
+    {
+     "word": "the",
+     "start": 10.14,
+     "end": 10.52,
+     "score": 0.9
+    },
+    {
+     "word": "Jews",
+     "start": 10.6,
+     "end": 11.0,
+     "score": 0.9
+    },
+    {
+     "word": "who",
+     "start": 11.08,
+     "end": 11.46,
+     "score": 0.9
+    },
+    {
+     "word": "had",
+     "start": 11.54,
+     "end": 11.92,
+     "score": 0.9
+    },
+    {
+     "word": "come",
+     "start": 12.0,
+     "end": 12.4,
+     "score": 0.9
+    },
+    {
+     "word": "with",
+     "start": 12.48,
+     "end": 12.88,
+     "score": 0.9
+    },
+    {
+     "word": "her",
+     "start": 12.96,
+     "end": 13.34,
+     "score": 0.9
+    },
+    {
+     "word": "also",
+     "start": 13.42,
+     "end": 13.82,
+     "score": 0.9
+    }
+   ]
+  },
+  {
+   "start": 14.4,
+   "end": 18.8,
+   "text": " weeping, He was deeply moved in spirit and troubled.",
+   "words": [
+    {
+     "word": "weeping,",
+     "start": 14.4,
+     "end": 14.88,
+     "score": 0.9
+    },
+    {
+     "word": "He",
+     "start": 14.96,
+     "end": 15.32,
+     "score": 0.9
+    },
+    {
+     "word": "was",
+     "start": 15.4,
+     "end": 15.78,
+     "score": 0.9
+    },
+    {
+     "word": "deeply",
+     "start": 15.86,
+     "end": 16.3,
+     "score": 0.9
+    },
+    {
+     "word": "moved",
+     "start": 16.38,
+     "end": 16.8,
+     "score": 0.9
+    },
+    {
+     "word": "in",
+     "start": 16.88,
+     "end": 17.24,
+     "score": 0.9
+    },
+    {
+     "word": "spirit",
+     "start": 17.32,
+     "end": 17.76,
+     "score": 0.9
+    },
+    {
+     "word": "and",
+     "start": 17.84,
+     "end": 18.22,
+     "score": 0.9
+    },
+    {
+     "word": "troubled.",
+     "start": 18.3,
+     "end": 18.8,
+     "score": 0.9
+    }
+   ]
+  },
+  {
+   "start": 19.38,
+   "end": 22.68,
+   "text": " \u201cWhere have you put him?\u201d He asked.",
+   "words": [
+    {
+     "word": "\u201cWhere",
+     "start": 19.38,
+     "end": 19.82,
+     "score": 0.9
+    },
+    {
+     "word": "have",
+     "start": 19.9,
+     "end": 20.3,
+     "score": 0.9
+    },
+    {
+     "word": "you",
+     "start": 20.38,
+     "end": 20.76,
+     "score": 0.9
+    },
+    {
+     "word": "put",
+     "start": 20.84,
+     "end": 21.22,
+     "score": 0.9
+    },
+    {
+     "word": "him?\u201d",
+     "start": 21.3,
+     "end": 21.72,
+     "score": 0.9
+    },
+    {
+     "word": "He",
+     "start": 21.8,
+     "end": 22.16,
+     "score": 0.9
+    },
+    {
+     "word": "asked.",
+     "start": 22.24,
+     "end": 22.68,
+     "score": 0.9
+    }
+   ]
+  },
+  {
+   "start": 23.26,
+   "end": 26.2,
+   "text": " \u201cCome and see, Lord,\u201d they answered.",
+   "words": [
+    {
+     "word": "\u201cCome",
+     "start": 23.26,
+     "end": 23.68,
+     "score": 0.9
+    },
+    {
+     "word": "and",
+     "start": 23.76,
+     "end": 24.14,
+     "score": 0.9
+    },
+    {
+     "word": "see,",
+     "start": 24.22,
+     "end": 24.62,
+     "score": 0.9
+    },
+    {
+     "word": "Lord,\u201d",
+     "start": 24.7,
+     "end": 25.14,
+     "score": 0.9
+    },
+    {
+     "word": "they",
+     "start": 25.22,
+     "end": 25.62,
+     "score": 0.9
+    },
+    {
+     "word": "answered.",
+     "start": 25.7,
+     "end": 26.2,
+     "score": 0.9
+    }
+   ]
+  },
+  {
+   "start": 26.78,
+   "end": 27.7,
+   "text": " Jesus wept.",
+   "words": [
+    {
+     "word": "Jesus",
+     "start": 26.78,
+     "end": 27.2,
+     "score": 0.9
+    },
+    {
+     "word": "wept.",
+     "start": 27.28,
+     "end": 27.7,
+     "score": 0.9
+    }
+   ]
+  },
+  {
+   "start": 28.28,
+   "end": 33.0,
+   "text": " Then the Jews said, \u201cSee how He loved him!\u201d amen.",
+   "words": [
+    {
+     "word": "Then",
+     "start": 28.28,
+     "end": 28.68,
+     "score": 0.9
+    },
+    {
+     "word": "the",
+     "start": 28.76,
+     "end": 29.14,
+     "score": 0.9
+    },
+    {
+     "word": "Jews",
+     "start": 29.22,
+     "end": 29.62,
+     "score": 0.9
+    },
+    {
+     "word": "said,",
+     "start": 29.7,
+     "end": 30.12,
+     "score": 0.9
+    },
+    {
+     "word": "\u201cSee",
+     "start": 30.2,
+     "end": 30.6,
+     "score": 0.9
+    },
+    {
+     "word": "how",
+     "start": 30.68,
+     "end": 31.06,
+     "score": 0.9
+    },
+    {
+     "word": "He",
+     "start": 31.14,
+     "end": 31.5,
+     "score": 0.9
+    },
+    {
+     "word": "loved",
+     "start": 31.58,
+     "end": 32.0,
+     "score": 0.9
+    },
+    {
+     "word": "him!\u201d",
+     "start": 32.08,
+     "end": 32.5,
+     "score": 0.9
+    },
+    {
+     "word": "amen.",
+     "start": 32.58,
+     "end": 33.0,
+     "score": 0.9
+    }
+   ]
+  },
+  {
+   "start": 33.58,
+   "end": 39.28,
+   "text": " notice that jesus wept even though he knew what he would do.",
+   "words": [
+    {
+     "word": "notice",
+     "start": 33.58,
+     "end": 34.02,
+     "score": 0.9
+    },
+    {
+     "word": "that",
+     "start": 34.1,
+     "end": 34.5,
+     "score": 0.9
+    },
+    {
+     "word": "jesus",
+     "start": 34.58,
+     "end": 35.0,
+     "score": 0.9
+    },
+    {
+     "word": "wept",
+     "start": 35.08,
+     "end": 35.48,
+     "score": 0.9
+    },
+    {
+     "word": "even",
+     "start": 35.56,
+     "end": 35.96,
+     "score": 0.9
+    },
+    {
+     "word": "though",
+     "start": 36.04,
+     "end": 36.48,
+     "score": 0.9
+    },
+    {
+     "word": "he",
+     "start": 36.56,
+     "end": 36.92,
+     "score": 0.9
+    },
+    {
+     "word": "knew",
+     "start": 37.0,
+     "end": 37.4,
+     "score": 0.9
+    },
+    {
+     "word": "what",
+     "start": 37.48,
+     "end": 37.88,
+     "score": 0.9
+    },
+    {
+     "word": "he",
+     "start": 37.96,
+     "end": 38.32,
+     "score": 0.9
+    },
+    {
+     "word": "would",
+     "start": 38.4,
+     "end": 38.82,
+     "score": 0.9
+    },
+    {
+     "word": "do.",
+     "start": 38.9,
+     "end": 39.28,
+     "score": 0.9
+    }
+   ]
+  }
+ ],
+ "language": "en"
+}

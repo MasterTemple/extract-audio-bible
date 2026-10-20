@@ -1,11 +1,12 @@
 //! WhisperX output (or a Let's Church transcript): its words and when each was said. Segments
 //! without word times have their words spread evenly over the segment.
 
-use std::path::Path;
-
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AppError, Result};
+use crate::{
+    error::{Error, Result},
+    files::Files,
+};
 
 #[derive(Deserialize)]
 struct RawTranscript {
@@ -60,11 +61,25 @@ pub struct Transcript {
 }
 
 impl Transcript {
-    pub fn open(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)?;
-        let raw: RawTranscript = serde_json::from_str(&text)
-            .map_err(|e| AppError::msg(format!("{} is not WhisperX JSON: {e}", path.display())))?;
+    /// A transcript file (WhisperX JSON, or a Let's Church transcript)
+    pub fn open(files: &dyn Files, path: &str) -> Result<Self> {
+        Self::parse(&String::from_utf8_lossy(&files.read(path)?))
+            .map_err(|e| Error::invalid(format!("{path}: {e}")))
+    }
+
+    /// A transcript's JSON
+    pub fn parse(json: &str) -> Result<Self> {
+        let raw: RawTranscript = serde_json::from_str(json)
+            .map_err(|e| Error::invalid(format!("not a WhisperX or Let's Church transcript: {e}")))?;
         Ok(Self::from_raw(raw))
+    }
+
+    /// Words with times, already read (from another transcriber's output, say)
+    pub fn from_words(words: Vec<Word>) -> Self {
+        let mut words = words;
+        fill_times(&mut words);
+        let quotes = scripture_quotes::Transcript::from_words(words.iter().map(|w| &w.text));
+        Transcript { words, quotes }
     }
 
     fn from_raw(raw: RawTranscript) -> Self {
@@ -83,22 +98,31 @@ impl Transcript {
                 timed: w.start.is_some() && w.end.is_some(),
             });
         }
-        if raw.segments.iter().any(|s| !s.words.is_empty()) {
+        // WhisperX keeps every word in `word_segments` too; segments are read unless only that
+        // has the words (a segment with no word times has its words spread over its time)
+        let only_word_segments = !raw.word_segments.is_empty() && raw.segments.iter().all(|s| s.words.is_empty());
+        if !only_word_segments {
             for seg in &raw.segments {
                 if seg.words.is_empty() {
                     // Not aligned: its words share the segment's time evenly
+                    // (with no time of its own, from its neighbors below)
                     let parts: Vec<&str> = seg.text.split_whitespace().collect();
-                    let (Some(s), Some(e)) = (seg.start, seg.end) else { continue };
-                    let step = (e - s) / parts.len().max(1) as f64;
+                    let step = match (seg.start, seg.end) {
+                        (Some(s), Some(e)) => Some((s, (e - s) / parts.len().max(1) as f64)),
+                        _ => None,
+                    };
                     for (i, p) in parts.iter().enumerate() {
                         let w = RawWord {
                             word: p.to_string(),
-                            start: Some(s + step * i as f64),
-                            end: Some(s + step * (i + 1) as f64),
+                            start: step.map(|(s, step)| s + step * i as f64),
+                            end: step.map(|(s, step)| s + step * (i + 1) as f64),
                             score: None,
                             speaker: None,
                         };
                         push(&mut words, &w);
+                        if let Some(last) = words.last_mut() {
+                            last.timed = false;
+                        }
                     }
                     continue;
                 }
@@ -107,10 +131,10 @@ impl Transcript {
                 for w in &seg.words {
                     push(&mut words, w);
                 }
-                if let Some(last) = words.last_mut() {
-                    if last.end.is_nan() {
-                        last.end = seg.end.unwrap_or(f64::NAN);
-                    }
+                if let Some(last) = words.last_mut()
+                    && last.end.is_nan()
+                {
+                    last.end = seg.end.unwrap_or(f64::NAN);
                 }
             }
         } else {
@@ -176,6 +200,15 @@ mod tests {
         assert_eq!(t.quotes.word_count(), 5);
         assert!(t.words[4].start >= 1.6 && t.words[4].end <= 3.0);
         assert!(!t.words[4].timed);
+    }
+
+    #[test]
+    fn no_word_times_at_all() {
+        let json = r#"{"segments": [{"start": 0.0, "end": 2.0, "text": "Jesus wept."}, {"start": 2.0, "end": 5.0, "text": "Then said the Jews"}]}"#;
+        let t = Transcript::parse(json).unwrap();
+        assert_eq!(t.words.len(), 6);
+        assert_eq!((t.words[1].start, t.words[1].end), (1.0, 2.0));
+        assert!(t.words.iter().all(|w| !w.timed));
     }
 
     #[test]
