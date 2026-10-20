@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Word } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -15,17 +15,66 @@ interface Props {
   now: number | null;
   words: Word[];
   onChange: (edge: "start" | "end", time: number) => void;
+  /** When a handle is picked up (its edge) and let go (null) */
+  onDrag?: (edge: "start" | "end" | null) => void;
   onWord?: (w: Word, e: React.MouseEvent) => void;
 }
 
-const HEIGHT = 80;
+const HEIGHT = 120;
+/** Rows of words under the waveform, and each one's height */
+const ROWS = 3;
+const ROW_HEIGHT = 20;
+
+let measurer: CanvasRenderingContext2D | null = null;
+/** How wide a word's label is, in pixels (12px text, its padding and border) */
+function labelWidth(text: string): number {
+  measurer ??= document.createElement("canvas").getContext("2d");
+  if (!measurer) return text.length * 7 + 6;
+  measurer.font = `12px ${getComputedStyle(document.body).fontFamily}`;
+  return Math.ceil(measurer.measureText(text).width) + 6;
+}
+
+interface Label {
+  word: Word;
+  row: number;
+  left: number;
+  width: number;
+}
+
+/**
+Places each word's label at its start in the first row with room; when no row has, the label
+before it in the row that frees up first is shortened to make room, so no two overlap
+*/
+function layout(words: Word[], x: (t: number) => number): Label[] {
+  const last: (Label | null)[] = Array(ROWS).fill(null);
+  const labels: Label[] = [];
+  for (const word of words) {
+    const left = x(word.start);
+    const end = (l: Label | null) => (l ? l.left + l.width : -Infinity);
+    let row = last.findIndex((l) => end(l) <= left);
+    if (row < 0) {
+      row = last.reduce((best, l, i) => (end(l) < end(last[best]) ? i : best), 0);
+      const before = last[row]!;
+      before.width = Math.max(0, left - before.left - 1);
+    }
+    const label = { word, row, left, width: labelWidth(word.text) };
+    labels.push(label);
+    last[row] = label;
+  }
+  return labels;
+}
 
 /** A sermon's waveform around a clip, with handles to drag its start and end */
-export function Waveform({ peaks, peaksStart, perSecond, start, end, clipStart, clipEnd, now, words, onChange, onWord }: Props) {
+export function Waveform({ peaks, peaksStart, perSecond, start, end, clipStart, clipEnd, now, words, onChange, onDrag, onWord }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(480);
-  const [drag, setDrag] = useState<"start" | "end" | null>(null);
+  const [drag, setDragState] = useState<"start" | "end" | null>(null);
+  const setDrag = (edge: "start" | "end" | null) => {
+    if (edge === drag) return;
+    setDragState(edge);
+    onDrag?.(edge);
+  };
   const span = Math.max(0.1, end - start);
   const x = (t: number) => ((t - start) / span) * width;
   const t = (px: number) => start + (px / width) * span;
@@ -66,6 +115,11 @@ export function Waveform({ peaks, peaksStart, perSecond, start, end, clipStart, 
     }
     ctx.globalAlpha = 1;
   }, [peaks, peaksStart, perSecond, width, start, end, clipStart, clipEnd]);
+
+  const labels = useMemo(
+    () => layout(words.filter((w) => w.end >= start && w.start <= end), (time) => ((time - start) / span) * width),
+    [words, start, end, span, width],
+  );
 
   const onMove = (e: React.PointerEvent) => {
     if (!drag) return;
@@ -108,29 +162,26 @@ export function Waveform({ peaks, peaksStart, perSecond, start, end, clipStart, 
           <div className="pointer-events-none absolute inset-y-0 w-px bg-red-500" style={{ left: x(now) }} />
         )}
       </div>
-      <div className="relative h-9 overflow-hidden text-[10px]">
-        {words
-          .filter((w) => w.end >= start && w.start <= end)
-          .map((w, i) => {
-            const inside = w.start >= clipStart - 0.01 && w.end <= clipEnd + 0.01;
-            const speaking = now !== null && now >= w.start && now < w.end;
-            return (
-              <span
-                key={i}
-                onClick={onWord ? (e) => onWord(w, e) : undefined}
-                title={`${w.text} · ${w.start.toFixed(2)}s`}
-                className={cn(
-                  "absolute cursor-pointer truncate rounded-sm border-l px-0.5 leading-4 hover:bg-muted",
-                  i % 2 ? "top-4" : "top-0",
-                  inside ? "border-emerald-500 text-foreground" : "border-border text-muted-foreground",
-                  speaking && "bg-primary text-primary-foreground",
-                )}
-                style={{ left: x(w.start), maxWidth: Math.max(14, x(w.end) - x(w.start) + 40) }}
-              >
-                {w.text}
-              </span>
-            );
-          })}
+      <div className="relative overflow-hidden text-xs" style={{ height: ROWS * ROW_HEIGHT }}>
+        {labels.map(({ word: w, row, left, width: labelW }, i) => {
+          const inside = w.start >= clipStart - 0.01 && w.end <= clipEnd + 0.01;
+          const speaking = now !== null && now >= w.start && now < w.end;
+          return (
+            <span
+              key={i}
+              onClick={onWord ? (e) => onWord(w, e) : undefined}
+              title={`${w.text} · ${w.start.toFixed(2)}s`}
+              className={cn(
+                "absolute cursor-pointer truncate rounded-sm border-l px-0.5 hover:z-10 hover:w-auto! hover:bg-muted",
+                inside ? "border-emerald-500 text-foreground" : "border-border text-muted-foreground",
+                speaking && "bg-primary text-primary-foreground",
+              )}
+              style={{ left, top: row * ROW_HEIGHT, width: labelW, height: ROW_HEIGHT - 2, lineHeight: `${ROW_HEIGHT - 2}px` }}
+            >
+              {w.text}
+            </span>
+          );
+        })}
       </div>
     </div>
   );

@@ -62,6 +62,46 @@ function Seconds({ id, label, value, onChange }: { id: string; label: string; va
   );
 }
 
+/** Each part's color, in the order they play */
+const PART_COLORS = ["#059669", "#2563eb", "#9333ea", "#d97706", "#db2777", "#0891b2"];
+const partColor = (i: number) => PART_COLORS[i % PART_COLORS.length];
+
+/** The verse's words, each in the color of the part that says it; words no part says are struck through */
+function JoinedText({ text, heard }: { text: string; heard: (boolean[] | undefined)[] }) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const said = words.map((_, i) => heard.flatMap((h, k) => (h?.[i] ? [k] : [])));
+  const missing = said.filter((by) => by.length === 0).length;
+  return (
+    <div className="space-y-1">
+      <p className="text-[13px] leading-relaxed">
+        {words.map((w, i) => {
+          const by = said[i];
+          return (
+            <span key={i}>
+              <span
+                title={by.length === 0 ? "Not said in any part" : `Said in part ${by.map((k) => k + 1).join(" and ")}`}
+                className={cn(
+                  "font-medium",
+                  by.length === 0 && "text-red-600 line-through decoration-red-400 dark:text-red-400",
+                  by.length > 1 && "underline decoration-dotted underline-offset-2",
+                )}
+                style={by.length > 0 ? { color: partColor(by[0]) } : undefined}
+              >
+                {w}
+              </span>{" "}
+            </span>
+          );
+        })}
+      </p>
+      {missing > 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          {missing} word{missing === 1 ? "" : "s"} of the verse {missing === 1 ? "isn't" : "aren't"} in any part.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Where a part is cut, with its trims */
 function cuts(part: Part): [number, number] {
   const start = Math.max(0, part.start + part.trimStart);
@@ -69,7 +109,7 @@ function cuts(part: Part): [number, number] {
 }
 
 /** The chosen reading of a verse (or readings, for a verse read in pieces): where each is cut, their order, the silence around them, and listening to them */
-export function ClipEditor({ verseKey, selection }: { verseKey: string; selection: Selection }) {
+export function ClipEditor({ verseKey, selection, verseText }: { verseKey: string; selection: Selection; verseText: string }) {
   const { project, matchById, editSelection, editPart, unselect, unjoin, arrange } = useApp();
   const player = usePlayer();
   const parts = partsOf(selection);
@@ -79,9 +119,14 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
   const source = project?.sources.find((s) => s.id === part.sourceId);
   const match = matchById.get(part.matchId);
   const [clipStart, clipEnd] = cuts(part);
-  // The window moves in whole seconds, so dragging a handle doesn't refetch the waveform
-  const winStart = Math.max(0, Math.floor(Math.min(part.start, clipStart) - 3));
-  const winEnd = Math.ceil(Math.max(part.end, clipEnd) + 3);
+  // The window is around the reading's own cut points, in whole seconds, growing only when the
+  // clip comes near its edge; while a handle is dragged it stays put, so the waveform doesn't
+  // move under the pointer
+  const [held, setHeld] = useState<[number, number] | null>(null);
+  const [winStart, winEnd] = held ?? [
+    Math.max(0, Math.floor(Math.min(part.start - 3, clipStart - 1))),
+    Math.ceil(Math.max(part.end + 3, clipEnd + 1)),
+  ];
   const { data: peaks, error } = usePeaks(source?.audioPath, winStart, winEnd);
   const words = useWords(source?.transcriptPath, (match?.wordStart ?? 0) - 25, (match?.wordEnd ?? 0) + 25);
   if (!project || !source) return null;
@@ -135,6 +180,7 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
 
       {joined && (
         <div className="space-y-1">
+          {verseText && <JoinedText text={verseText} heard={parts.map((p) => matchById.get(p.matchId)?.verseWordsHeard)} />}
           <div className="text-[11px] text-muted-foreground">Played one after another, in this order. Click one to cut it.</div>
           {parts.map((p, i) => {
             const s = project.sources.find((x) => x.id === p.sourceId);
@@ -148,7 +194,12 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
                   i === index && "border-emerald-500 bg-emerald-500/5",
                 )}
               >
-                <span className="w-3 font-semibold text-muted-foreground tabular-nums">{i + 1}</span>
+                <span
+                  className="flex size-4 shrink-0 items-center justify-center rounded-sm text-[10px] font-semibold text-white tabular-nums"
+                  style={{ background: partColor(i) }}
+                >
+                  {i + 1}
+                </span>
                 <span className="size-2 shrink-0 rounded-full" style={{ background: sourceColor(project, p.sourceId) }} />
                 <span className="min-w-0 flex-1 truncate">
                   {s?.label ?? "Missing sermon"} · {formatTime(a, true)}–{formatTime(b, true)}{" "}
@@ -183,10 +234,11 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
           now={now}
           words={words?.words ?? []}
           onChange={setEdge}
+          onDrag={(edge) => setHeld(edge ? [winStart, winEnd] : null)}
           onWord={(w, e) => (e.shiftKey ? setEdge("end", w.end + 0.08) : setEdge("start", w.start - 0.08))}
         />
       ) : (
-        <div className="flex h-[116px] items-center justify-center gap-2 rounded-md border text-xs text-muted-foreground">
+        <div className="flex h-[184px] items-center justify-center gap-2 rounded-md border text-xs text-muted-foreground">
           {error ? (
             error
           ) : (

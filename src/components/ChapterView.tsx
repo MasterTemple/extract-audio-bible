@@ -7,7 +7,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { api, type Match, type Selection, type VerseTime } from "@/lib/api";
+import { api, type Match, type Project, type Selection, type VerseTime } from "@/lib/api";
 import { partsOf, useApp } from "@/lib/store";
 import { play, stop, usePlayer } from "@/lib/player";
 import { bookName, chapterStatus, verseKey, versesNeeded, sourceColor, runLabel } from "@/lib/refs";
@@ -47,6 +47,23 @@ function autoPick(verses: number[], book: number, chapter: number, selections: R
     previous = best ? { runId: best.runId, sourceId: best.sourceId } : null;
   }
   return picks;
+}
+
+/** The last chapter rendered, to play again at once when nothing it's made from has changed */
+let rendered: { key: string; wav: ArrayBuffer } | null = null;
+
+async function renderChapter(p: Project, book: number, chapter: number): Promise<ArrayBuffer> {
+  const prefix = `${book}.${chapter}.`;
+  const key = JSON.stringify([
+    book,
+    chapter,
+    Object.entries(p.selections).filter(([k]) => k.startsWith(prefix)),
+    p.settings,
+    p.sources.map((s) => [s.id, s.audioPath]),
+  ]);
+  if (rendered?.key !== key) rendered = { key, wav: await api.renderChapter(p, book, chapter) };
+  // Playing takes the bytes it's given, so it gets a copy
+  return rendered.wav.slice(0);
 }
 
 export function ChapterView() {
@@ -113,7 +130,7 @@ export function ChapterView() {
         () => setTimeline(null),
       );
     }
-    void play(playId, () => api.renderChapter(p, b.id, chapter));
+    void play(playId, () => renderChapter(p, b.id, chapter));
   };
 
   return (

@@ -22,7 +22,7 @@ export function VerseDetail() {
   const i = verses.indexOf(verse);
 
   return (
-    <aside className="flex w-[34rem] shrink-0 flex-col border-l bg-muted/20">
+    <aside className="flex w-[40rem] shrink-0 flex-col border-l bg-muted/20">
       <div className="flex items-center gap-1 border-b px-3 py-2">
         <h3 className="font-semibold">
           {bookName(outline, b.id)} {chapter}:{verse}
@@ -65,7 +65,7 @@ export function VerseDetail() {
             </div>
           )}
 
-          {sel && <ClipEditor verseKey={key} selection={sel} />}
+          {sel && <ClipEditor verseKey={key} selection={sel} verseText={text?.[verse - 1] ?? ""} />}
 
           <div className="space-y-2">
             <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Readings found</div>

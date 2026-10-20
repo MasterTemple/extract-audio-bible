@@ -180,29 +180,60 @@ pub fn resample(pcm: &Pcm, rate: u32) -> Pcm {
     let cutoff = (1.0 / ratio).min(1.0) * 0.95;
     let out_len = (pcm.samples.len() as f64 / ratio).round() as usize;
     let x = &pcm.samples;
-    let mut out = Vec::with_capacity(out_len);
     let reach = (TAPS as f64 / cutoff).ceil() as isize;
-    for k in 0..out_len {
-        let t = k as f64 * ratio;
-        let center = t.floor() as isize;
-        let mut acc = 0.0f64;
-        let mut norm = 0.0f64;
-        for j in center - reach + 1..=center + reach {
-            if j < 0 || j as usize >= x.len() {
-                continue;
+    let width = (2 * reach) as usize;
+
+    // Output sample k falls at input k·M/L: past input sample k·M div L by (k·M mod L)/L. There are
+    // only L such offsets (L is 80 from 44.1 to 24 kHz), so each one's weights are worked out once;
+    // rates with more are rounded to the nearest of 4096
+    let g = gcd(pcm.rate as u64, rate as u64);
+    let (m, l) = (pcm.rate as u64 / g, rate as u64 / g);
+    let phases = l.min(4096);
+    let weight = |d: f64| {
+        let arg = d * cutoff;
+        let sinc = if arg.abs() < 1e-9 { 1.0 } else { (std::f64::consts::PI * arg).sin() / (std::f64::consts::PI * arg) };
+        // Hann window over the filter's reach
+        sinc * 0.5 * (1.0 + (std::f64::consts::PI * d / reach as f64).cos())
+    };
+    // Weights of input samples center - reach + 1 ..= center + reach, for each offset
+    let table: Vec<f64> = (0..=phases)
+        .flat_map(|p| {
+            let frac = p as f64 / phases as f64;
+            (-reach + 1..=reach).map(move |j| weight(frac - j as f64))
+        })
+        .collect();
+
+    let mut out = Vec::with_capacity(out_len);
+    for k in 0..out_len as u64 {
+        let (mut center, rest) = ((k * m / l) as isize, k * m % l);
+        let mut phase = if phases == l { rest } else { (rest as f64 / l as f64 * phases as f64).round() as u64 };
+        if phase == phases {
+            (center, phase) = (center + 1, 0);
+        }
+        let weights = &table[phase as usize * width..][..width];
+        let first = center - reach + 1;
+        let (mut acc, mut norm) = (0.0f64, 0.0f64);
+        if first >= 0 && (first as usize + width) <= x.len() {
+            for (s, c) in x[first as usize..][..width].iter().zip(weights) {
+                acc += *s as f64 * c;
+                norm += c;
             }
-            let d = t - j as f64;
-            let arg = d * cutoff;
-            let sinc = if arg.abs() < 1e-9 { 1.0 } else { (std::f64::consts::PI * arg).sin() / (std::f64::consts::PI * arg) };
-            // Hann window over the filter's reach
-            let w = 0.5 * (1.0 + (std::f64::consts::PI * d / reach as f64).cos());
-            let c = sinc * w;
-            acc += x[j as usize] as f64 * c;
-            norm += c;
+        } else {
+            // At the ends, only the samples there are
+            for (j, c) in (first..first + width as isize).zip(weights) {
+                if j >= 0 && (j as usize) < x.len() {
+                    acc += x[j as usize] as f64 * c;
+                    norm += c;
+                }
+            }
         }
         out.push(if norm.abs() > 1e-9 { (acc / norm) as f32 } else { 0.0 });
     }
     Pcm { rate, samples: out }
+}
+
+fn gcd(a: u64, b: u64) -> u64 {
+    if b == 0 { a } else { gcd(b, a % b) }
 }
 
 /// Fade the first and last `ms` in and out, so cuts don't click

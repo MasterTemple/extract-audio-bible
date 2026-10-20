@@ -13,33 +13,62 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { api, errorMessage, type ExportedFile, type Metadata, type Progress as ProgressEvent, type Settings } from "@/lib/api";
+import { api, errorMessage, type BookOutline, type ExportedFile, type Metadata, type Progress as ProgressEvent, type Settings } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { bookName, fileName, formatTime, verseKey, versesNeeded } from "@/lib/refs";
 
 const PLACEHOLDERS =
   "{book} {osis} {bookNumber} {bookNumber2} {chapter} {chapter2} {chapter3} {chapters} {verse} {verse2} {verse3} {verses} {translation} {abbreviation}";
 
-/** A template filled in for John 3:16, to show what it makes */
-function sample(template: string, translation: string, abbreviation: string) {
+/** Where a preview is filled in from: a chapter of the project, and a verse of it */
+interface Sample {
+  book: BookOutline;
+  chapter: number;
+  verse: number;
+  translation: string;
+  abbreviation: string;
+}
+
+/** A template filled in as the export fills it (no verse for a chapter's file) */
+function fill(template: string, s: Sample, verse: number | null) {
+  const pad = (n: number, width: number) => String(n).padStart(width, "0");
   const values: Record<string, string> = {
-    book: "John",
-    osis: "John",
-    bookNumber: "43",
-    bookNumber2: "43",
-    chapter: "3",
-    chapter2: "03",
-    chapter3: "003",
-    chapters: "21",
-    verse: "16",
-    verse2: "16",
-    verse3: "016",
-    verses: "36",
-    translation,
-    abbreviation,
+    book: s.book.name,
+    osis: s.book.osis,
+    bookNumber: String(s.book.id),
+    bookNumber2: pad(s.book.id, 2),
+    chapter: String(s.chapter),
+    chapter2: pad(s.chapter, 2),
+    chapter3: pad(s.chapter, 3),
+    chapters: String(s.book.chapters.length),
+    verse: verse === null ? "" : String(verse),
+    verse2: verse === null ? "" : pad(verse, 2),
+    verse3: verse === null ? "" : pad(verse, 3),
+    verses: String(s.book.chapters[s.chapter - 1] ?? 0),
+    translation: s.translation,
+    abbreviation: s.abbreviation,
   };
   return template.replace(/\{(\w+)\}/g, (all, key: string) => values[key] ?? all);
 }
+
+/** A name made safe for a file, as the export makes it */
+function safeName(name: string) {
+  return name
+    .replace(/[/\\:*?"<>|\p{Cc}]/gu, "_")
+    .trim()
+    .replace(/^\.+|\.+$/g, "");
+}
+
+/** What a field will be: its value, in the file shown */
+function Preview({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="truncate rounded bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground">
+      → <span className="font-medium text-foreground">{children}</span>
+    </p>
+  );
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -82,9 +111,37 @@ export function ExportPanel() {
   const bible = bibles.find((b) => b.id === project.bibleId);
   const setMeta = (change: Partial<Metadata>) => update((p) => ({ ...p, metadata: { ...p.metadata, ...change } }));
   const setSettings = (change: Partial<Settings>) => update((p) => ({ ...p, settings: { ...p.settings, ...change } }));
-  const text = (key: keyof Metadata, label: string, placeholder = "", hint?: string) => (
+  // Previews are of the first chapter to be exported (or the book's first), and its first chosen verse
+  const first = chapters[0] ?? (project.book !== null ? { book: project.book, chapter: 1 } : null);
+  const sampleBook = outline.find((b) => b.id === (first?.book ?? outline[0]?.id));
+  const sampleChapter = first?.chapter ?? 1;
+  const sample: Sample | null = sampleBook
+    ? {
+        book: sampleBook,
+        chapter: sampleChapter,
+        verse:
+          versesNeeded(sampleBook, sampleChapter).find((v) => project.selections[verseKey(sampleBook.id, sampleChapter, v)]) ?? 1,
+        translation: bible?.name ?? "",
+        abbreviation: bible?.abbreviation ?? "",
+      }
+    : null;
+  /** How a field previews: a tag of a chapter's file (or a verse's), or a file's path */
+  type Shows = "tag" | "verseTag" | "file" | "verseFile" | "none";
+  const preview = (key: keyof Metadata, shows: Shows) => {
+    if (!sample || shows === "none") return null;
+    const value = (meta[key] as string) ?? "";
+    if (!value.trim()) return <Preview>{shows === "tag" || shows === "verseTag" ? "Not written" : "(no name)"}</Preview>;
+    if (key === "year" && !/^\s*-?\d+\s*$/.test(value)) return <Preview>Not written: a year is a number</Preview>;
+    const filled = fill(value, sample, shows === "verseTag" || shows === "verseFile" ? sample.verse : null);
+    if (shows === "tag" || shows === "verseTag") return <Preview>{filled}</Preview>;
+    const bookDir = meta.folderPerBook ? `${safeName(`${pad2(sample.book.id)} ${sample.book.name}`)}/` : "";
+    const dir = shows === "verseFile" ? `${bookDir}${safeName(`${sample.book.name} ${sample.chapter}`)}/` : bookDir;
+    return <Preview>{`${dir}${safeName(filled)}.mp3`}</Preview>;
+  };
+  const text = (key: keyof Metadata, label: string, placeholder = "", hint?: string, shows: Shows = "tag") => (
     <Field label={label} hint={hint}>
       <Input value={(meta[key] as string) ?? ""} placeholder={placeholder} onChange={(e) => setMeta({ [key]: e.target.value })} />
+      {preview(key, shows)}
     </Field>
   );
   const seconds = (key: keyof Settings, label: string, hint?: string) => (
@@ -127,7 +184,6 @@ export function ExportPanel() {
     }
   };
 
-  const example = (t: string) => `${sample(t, bible?.name ?? "", bible?.abbreviation ?? "")}.mp3`;
   const chapterFiles = meta.exportMode !== "verse";
   const verseFiles = meta.exportMode !== "chapter";
   const verseCount = chapters.reduce((n, c) => n + c.chosen, 0);
@@ -140,7 +196,14 @@ export function ExportPanel() {
             <CardHeader>
               <CardTitle>Tags</CardTitle>
               <CardDescription>
-                Written into every MP3 (ID3v2.4). Templates can use <code className="text-[11px]">{PLACEHOLDERS}</code>
+                Written into every MP3 (ID3v2.4). Any field can use <code className="text-[11px]">{PLACEHOLDERS}</code>
+                {sample && (
+                  <>
+                    {" "}
+                    Previews show {sample.book.name} {sample.chapter}
+                    {verseFiles && `, and verse ${sample.verse} for verse files`}.
+                  </>
+                )}
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -157,6 +220,7 @@ export function ExportPanel() {
               <div className="sm:col-span-2">
                 <Field label="Comment">
                   <Textarea value={meta.comment} onChange={(e) => setMeta({ comment: e.target.value })} rows={2} />
+                  {preview("comment", "tag")}
                 </Field>
               </div>
               <div className="sm:col-span-2">
@@ -190,6 +254,15 @@ export function ExportPanel() {
                     <SelectItem value="sequence">Order in this export</SelectItem>
                   </SelectContent>
                 </Select>
+                {sample && (
+                  <Preview>
+                    {meta.trackNumbering === "sequence"
+                      ? `Track 1 of ${Math.max(1, chapters.length)}`
+                      : `Track ${sample.chapter} of ${sample.book.chapters.length}`}
+                    , disc {sample.book.id}
+                    {verseFiles && ` (verse files: track ${sample.verse} of ${sample.book.chapters[sample.chapter - 1]}, disc ${sample.chapter})`}
+                  </Preview>
+                )}
               </Field>
               <p className="self-end pb-2 text-[11px] text-muted-foreground">The disc number is the book's number (Genesis is 1).</p>
             </CardContent>
@@ -300,16 +373,23 @@ export function ExportPanel() {
                 </Field>
               </div>
               {chapterFiles &&
-                text("filenameTemplate", "Chapter file name", "{bookNumber2}_{osis}_{chapter3}", `e.g. ${example(meta.filenameTemplate)}`)}
+                text("filenameTemplate", "Chapter file name", "{bookNumber2}_{osis}_{chapter3}", undefined, "file")}
               {verseFiles && (
                 <>
                   {text(
                     "verseFilenameTemplate",
                     "Verse file name",
                     "{bookNumber2}_{osis}_{chapter3}_{verse3}",
-                    `e.g. ${example(meta.verseFilenameTemplate)}`,
+                    undefined,
+                    "verseFile",
                   )}
-                  {text("verseTitleTemplate", "Verse title", "{book} {chapter}:{verse}", "Verse files are numbered by verse, with the chapter as the disc")}
+                  {text(
+                    "verseTitleTemplate",
+                    "Verse title",
+                    "{book} {chapter}:{verse}",
+                    "Verse files are numbered by verse, with the chapter as the disc",
+                    "verseTag",
+                  )}
                 </>
               )}
               <div className="grid grid-cols-2 gap-3">
