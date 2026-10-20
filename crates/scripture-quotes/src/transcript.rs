@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use crate::text::tokenize_into;
+use crate::text::{tokenize, tokenize_into};
 
 /// The words of a transcript, normalized once so it can be searched many times
 #[derive(Clone, Debug, Default)]
@@ -97,6 +97,38 @@ impl Transcript {
         first..last + 1
     }
 
+    /**
+    Where a phrase was said, as word ranges (end exclusive), in order. The phrase is compared as
+    quotations are: case, accents, and punctuation aside, numerals spelled out ("70 times 7"
+    finds "seventy times seven"). With `prefix`, its last word may be the start of one ("for
+    giv" finds "forgive" and "forgiveness"), for searching as someone types. Nothing for a
+    phrase with no words
+    */
+    pub fn find(&self, phrase: &str, prefix: bool) -> Vec<Range<usize>> {
+        let query = tokenize(phrase);
+        let Some((last, rest)) = query.split_last() else {
+            return vec![];
+        };
+        let n = query.len();
+        let mut found: Vec<Range<usize>> = vec![];
+        for i in 0..self.tokens.len().saturating_sub(n - 1) {
+            let window = &self.tokens[i..i + n];
+            let end = &window[n - 1];
+            if window[..n - 1] != *rest
+                || !(end == last || prefix && end.starts_with(last.as_str()))
+            {
+                continue;
+            }
+            let words = self.token_word[i] as usize..self.token_word[i + n - 1] as usize + 1;
+            // A word split into several tokens is found once
+            if found.last().is_some_and(|f| f.start == words.start) {
+                continue;
+            }
+            found.push(words);
+        }
+        found
+    }
+
     /// Where some words are in the text given to [`Transcript::from_text`]
     pub fn byte_range(&self, words: &Range<usize>) -> Option<Range<usize>> {
         let first = self.word_bytes.get(words.start)?;
@@ -110,6 +142,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::single_range_in_vec_init)]
     fn words_segments_and_bytes() {
         let t = Transcript::from_segments(["Jesus wept.", "Then said the Jews 70"]);
         assert_eq!(
@@ -118,6 +151,13 @@ mod tests {
         );
         assert_eq!(t.word_count(), 7);
         assert_eq!(t.segment_range(&(1..3)), 0..2);
+
+        assert_eq!(t.find("JESUS, wept", false), [0..2]);
+        assert_eq!(t.find("the jews seventy", false), [4..7]);
+        assert_eq!(t.find("jews 70", false), [5..7]);
+        assert!(t.find("je", false).is_empty());
+        assert_eq!(t.find("je", true), [0..1, 5..6]);
+        assert!(t.find(" .. ", true).is_empty());
 
         let text = "said  Jesus wept, and";
         let t = Transcript::from_text(text);

@@ -215,6 +215,70 @@ impl SourceInfo {
     }
 }
 
+/// Where a phrase was said in a sermon
+#[data]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Said {
+    pub source_id: String,
+    /// Its words, by index into the transcript's words (inclusive)
+    pub word_start: u32,
+    pub word_end: u32,
+    /// When it was said, in seconds
+    pub start: f64,
+    pub end: f64,
+    /// The words before it, it, and the words after it, as the transcript has them
+    pub before: String,
+    pub text: String,
+    pub after: String,
+}
+
+impl From<eab::Said> for Said {
+    fn from(s: eab::Said) -> Self {
+        Said {
+            source_id: s.source_id,
+            word_start: s.word_start,
+            word_end: s.word_end,
+            start: s.start,
+            end: s.end,
+            before: s.before,
+            text: s.text,
+            after: s.after,
+        }
+    }
+}
+
+/// How to look for a phrase
+#[data]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FindOptions {
+    /// Its last word may be the start of one ("forgiv" finds "forgive"), for searching as
+    /// someone types
+    pub prefix: bool,
+    /// Words of context given on each side
+    pub context: u32,
+    /// The most places to give (0 for all)
+    pub limit: u32,
+}
+
+impl From<&FindOptions> for eab::FindOptions {
+    fn from(o: &FindOptions) -> Self {
+        eab::FindOptions {
+            prefix: o.prefix,
+            context: o.context as usize,
+            limit: o.limit as usize,
+        }
+    }
+}
+
+/// Where a phrase was said in a project's sermons
+#[data]
+#[derive(Clone, Debug, PartialEq)]
+pub struct SaidInSermons {
+    pub found: Vec<Said>,
+    /// Sermons whose transcripts couldn't be read, with why
+    pub errors: Vec<String>,
+}
+
 /// What's known about a sermon, by its file id
 #[data]
 #[derive(Clone, Debug, PartialEq, Eq, Default)]

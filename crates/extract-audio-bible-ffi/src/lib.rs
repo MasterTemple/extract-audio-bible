@@ -358,6 +358,18 @@ impl Transcript {
         self.inner.paragraphs.iter().map(|&i| i as u32).collect()
     }
 
+    /**
+    Where a phrase was said, in order: its words one after another, compared as verses are (case,
+    accents, and punctuation aside, numerals spelled out: "70 times 7" finds "seventy times
+    seven"). `sourceId` is given back in each place. Milliseconds for an hour-long sermon
+    */
+    pub fn find(&self, phrase: String, source_id: String, options: FindOptions) -> Vec<Said> {
+        eab::find_in(&self.inner, &source_id, &phrase, &(&options).into())
+            .into_iter()
+            .map(Said::from)
+            .collect()
+    }
+
     /// The id it gives its sermon (a Let's Church transcript's media id), if any
     pub fn id(&self) -> Option<String> {
         self.inner.id.clone()

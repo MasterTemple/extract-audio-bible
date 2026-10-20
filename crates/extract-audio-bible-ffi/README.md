@@ -130,7 +130,10 @@ the whole Bible's, read at least `minAccuracy` faithfully (0.85 is a good start)
 its verse, the transcript's words it spans, where to cut (in seconds), and how well it was read;
 verses read one after another are a run. A transcript's `paragraphStarts` say where each of its
 paragraphs (or segments) begins, by word, to show it whole; `id` and `title` are what it says of
-its sermon (a Let's Church transcript's media id and title), if anything.
+its sermon (a Let's Church transcript's media id and title), if anything. `find` gives where a
+phrase was said, with words of context: its words in order, compared as verses are (case,
+accents, and punctuation aside, numerals spelled out), the last one the start of a word if
+`prefix`.
 
 ```ts
 import { ReadingKind } from "extract-audio-bible";
@@ -152,10 +155,14 @@ for (const r of found.readings) {
 // → 11:35 true 1 34.54 35.52
 const run = found.runs[0];
 console.log(`${run.startChapter}:${run.startVerse}-${run.endVerse}`, run.readingIds.length); // → 11:33-36 4
+
+const said = transcript.find("Jesus wept", "sunday", { prefix: false, context: 3, limit: 0 });
+console.log(said.length, said[1].before, "|", said[1].text, "|", said[1].after, said[1].wordStart); // → 2 amen. notice that | jesus wept | even though he 62
+console.log(transcript.find("John 11", "sunday", { prefix: false, context: 0, limit: 0 })[0].text); // → john eleven
 ```
 
 ```python
-from extract_audio_bible import ReadingKind
+from extract_audio_bible import FindOptions, ReadingKind
 
 transcript = eab.read_transcript(Path("sermon.json").read_text())
 print(transcript.word_count(), f"{transcript.duration():.1f}")  # → 72 39.3
@@ -173,6 +180,10 @@ for r in found.readings:
 # → 11:35 True 1.0 34.54 35.52
 run = found.runs[0]
 print(f"{run.start_chapter}:{run.start_verse}-{run.end_verse}", len(run.reading_ids))  # → 11:33-36 4
+
+said = transcript.find("Jesus wept", "sunday", FindOptions(prefix=False, context=3, limit=0))
+print(len(said), said[1].before, "|", said[1].text, "|", said[1].after, said[1].word_start)  # → 2 amen. notice that | jesus wept | even though he 62
+print(transcript.find("John 11", "sunday", FindOptions(prefix=False, context=0, limit=0))[0].text)  # → john eleven
 ```
 
 The last reading is the sermon saying "Jesus wept" again after reading the passage.
@@ -195,6 +206,9 @@ says where from, with `{id}` for the file id (`https://example.com/audio/{id}.mp
 `addSources` adds transcripts without audio, and their `audioPath` is the URL. Natively,
 `Files.downloading(folder)` downloads it once into a folder (failing with a `Network` error); in
 WebAssembly, fetch it and `add` it to memory files under that URL.
+
+`searchTranscripts` finds a phrase in every sermon of the project (as `Transcript.find` does in
+one), reading their transcripts through `files`.
 
 ```ts
 import { Files } from "extract-audio-bible";
@@ -224,6 +238,9 @@ project.applyJson('{"settings": {"audioUrl": "https://example.com/audio/{id}.mp3
 console.log(project.addSources(["sermons/later.json"]).added, project.sources()[1].audioPath); // → 1 https://example.com/audio/later.mp3
 project.removeSource(project.sources()[1].id);
 project.applyJson('{"settings": {"audioUrl": ""}}');
+
+const where = project.searchTranscripts(files, "deeply mov", { prefix: true, context: 0, limit: 0 });
+console.log(where.found.length, where.found[0].text, where.found[0].start.toFixed(2), where.errors.length); // → 1 deeply moved 15.86 0
 ```
 
 ```python
@@ -256,6 +273,9 @@ project.apply_json('{"settings": {"audioUrl": "https://example.com/audio/{id}.mp
 print(project.add_sources(["sermons/later.json"]).added, project.sources()[1].audio_path)  # → 1 https://example.com/audio/later.mp3
 project.remove_source(project.sources()[1].id)
 project.apply_json('{"settings": {"audioUrl": ""}}')
+
+where = project.search_transcripts(files, "deeply mov", FindOptions(prefix=True, context=0, limit=0))
+print(len(where.found), where.found[0].text, f"{where.found[0].start:.2f}", len(where.errors))  # → 1 deeply moved 15.86 0
 ```
 
 ## Choosing readings
@@ -587,11 +607,11 @@ Each class, record, and enum <!-- source -->(by their TypeScript names)<!-- /sou
 | `ExtractAudioBible.readProject` | [Saving and opening](#saving-and-opening) |
 | `ExtractAudioBible.importBibleFromPaths`, `openTranscript` | [Reading natively](#reading-natively) |
 | `Bible.id`, `name`, `abbreviation`, `books`, `verse`, `chapter`, `toJson` | [A Bible](#a-bible), [Saving and opening](#saving-and-opening) |
-| `Transcript.words`, `wordCount`, `duration`, `paragraphStarts`, `id`, `title` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
+| `Transcript.words`, `wordCount`, `duration`, `paragraphStarts`, `id`, `title`, `find` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `Searcher.find` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `Files.memory`, `add`, `paths` | [A project](#a-project) |
 | `Files.disk`, `downloading`, `has`, `remove` | [Reading natively](#reading-natively) |
-| `Project.name`, `book`, `addSources`, `search`, `sources`, `runs`, `readings`, `fileMetadata`, `setFileMetadata`, `applyFileMetadataJson` | [A project](#a-project) |
+| `Project.name`, `book`, `addSources`, `search`, `sources`, `runs`, `readings`, `fileMetadata`, `setFileMetadata`, `applyFileMetadataJson`, `searchTranscripts` | [A project](#a-project) |
 | `Project.chooseBest`, `chooseBestIn`, `status`, `verseReadings`, `selection`, `selections`, `updateSelection`, `select`, `unselect`, `join`, `arrange`, `unjoin` | [Choosing readings](#choosing-readings) |
 | `Project.settings`, `setSettings`, `metadata`, `setMetadata`, `applyJson` | [Settings and metadata](#settings-and-metadata) |
 | `Project.chapterTimeline`, `renderChapter`, `renderVerse` | [Listening](#listening) |
@@ -599,8 +619,8 @@ Each class, record, and enum <!-- source -->(by their TypeScript names)<!-- /sou
 | `Project.exportToFolder` | [Reading natively](#reading-natively) |
 | `Project.toJson`, `readingsJson`, `id`, `bibleId`, `rename`, `removeSource` | [Saving and opening](#saving-and-opening) |
 | `InputFile`, `BookInfo` | [A Bible](#a-bible) |
-| `Word`, `Readings`, `Reading`, `ReadingRun`, `ReadingKind` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
-| `SourceInfo`, `FileMetadata`, `Added`, `SearchSummary` | [A project](#a-project) |
+| `Word`, `Readings`, `Reading`, `ReadingRun`, `ReadingKind`, `Said`, `FindOptions` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
+| `SourceInfo`, `FileMetadata`, `Added`, `SearchSummary`, `SaidInSermons` | [A project](#a-project) |
 | `ChapterChoice`, `ChapterStatus`, `Selection`, `SelectionPart` | [Choosing readings](#choosing-readings) |
 | `Settings`, `Leveling`, `ExportMetadata`, `ExportMode`, `TrackNumbering` | [Settings and metadata](#settings-and-metadata) |
 | `ClipOptions`, `VerseTime` | [Listening](#listening) |

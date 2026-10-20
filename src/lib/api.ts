@@ -32,6 +32,19 @@ export interface Source {
   fileId?: string;
 }
 
+/** Where a phrase was said in a sermon */
+export interface Said {
+  sourceId: string;
+  /** Its words, by index into the transcript (inclusive) */
+  wordStart: number;
+  wordEnd: number;
+  start: number;
+  end: number;
+  before: string;
+  text: string;
+  after: string;
+}
+
 /** What's known about a sermon, by its file id */
 export interface FileMetadata {
   title?: string | null;
@@ -259,6 +272,9 @@ export const api = {
   /** A whole transcript, in paragraphs (where each begins, by word) */
   transcript: (transcriptPath: string) =>
     invoke<{ id: string | null; title: string | null; words: Word[]; paragraphs: number[] }>("transcript", { transcriptPath }),
+  /** Where a phrase was said in the project's sermons (or one), up to `limit` places; its last word may be the start of one */
+  searchTranscripts: (project: Project, phrase: string, sourceId: string | null, limit: number, prefix = true) =>
+    invoke<{ found: Said[]; more: boolean; errors: string[] }>("search_transcripts", { project, phrase, prefix, sourceId, limit }),
   renderVerse: (project: Project, book: number, chapter: number, verse: number) =>
     invoke<ArrayBuffer>("render_verse", { project, book, chapter, verse }),
   /** When each chosen verse is heard in `renderChapter`'s audio */

@@ -240,6 +240,58 @@ async fn transcript(state: State<'_, AppState>, transcript_path: String) -> Resu
     Ok(FullTranscript { id: t.id.clone(), title: t.title.clone(), words: t.words.clone(), paragraphs: t.paragraphs.clone() })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaidIn {
+    found: Vec<extract_audio_bible::Said>,
+    /// Whether there were more than the limit
+    more: bool,
+    /// Sermons whose transcripts couldn't be read, with why
+    errors: Vec<String>,
+}
+
+/**
+Where a phrase was said in the project's sermons (or one of them), up to `limit` places. The
+transcripts not already held are read for each search (all at once) and not kept: every sermon's,
+held, could take hundreds of megabytes, but reading them is quick
+*/
+#[tauri::command]
+async fn search_transcripts(
+    state: State<'_, AppState>,
+    project: Project,
+    phrase: String,
+    prefix: bool,
+    source_id: Option<String>,
+    limit: usize,
+) -> Result<SaidIn> {
+    use rayon::prelude::*;
+    let held = state.transcripts.lock().unwrap().clone();
+    blocking(move || {
+        let options = extract_audio_bible::FindOptions { prefix, context: 14, limit: limit + 1 };
+        let sources: Vec<_> = project.sources.iter().filter(|s| source_id.as_ref().is_none_or(|id| &s.id == id)).collect();
+        let results: Vec<_> = (sources.par_iter())
+            .map(|source| {
+                let t = match held.get(&source.transcript_path) {
+                    Some(t) => t.clone(),
+                    None => Arc::new(Transcript::open(&Disk, &source.transcript_path)?),
+                };
+                Ok::<_, extract_audio_bible::Error>(extract_audio_bible::find_in(&t, &source.id, &phrase, &options))
+            })
+            .collect();
+        let mut out = SaidIn { found: vec![], more: false, errors: vec![] };
+        for (source, result) in sources.iter().zip(results) {
+            match result {
+                Ok(found) => out.found.extend(found),
+                Err(e) => out.errors.push(format!("{}: {e}", project.source_title(source))),
+            }
+        }
+        out.more = out.found.len() > limit;
+        out.found.truncate(limit);
+        Ok(out)
+    })
+    .await
+}
+
 /// Words `from` to `to` (inclusive) of a transcript
 #[tauri::command]
 async fn transcript_words(state: State<'_, AppState>, transcript_path: String, from: i64, to: i64) -> Result<WordWindow> {
@@ -440,6 +492,7 @@ pub fn run() {
             get_matches,
             transcript_words,
             transcript,
+            search_transcripts,
             audio_peaks,
             render_clip,
             render_chapter,

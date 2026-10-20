@@ -61,6 +61,17 @@ fn bible_and_search_without_a_project() {
         .read_transcript(r#"{"mediaId": "m1", "title": "Lazarus", "paragraphs": [{"start": 0, "end": 1, "text": "Jesus wept."}, {"start": 2, "end": 3, "text": "Amen."}]}"#.into())
         .unwrap();
     assert_eq!(lets_church.paragraph_starts(), [0, 2]);
+    let options = FindOptions {
+        prefix: true,
+        context: 1,
+        limit: 0,
+    };
+    let said = lets_church.find("jesus WE".into(), "s".into(), options);
+    assert_eq!(said.len(), 1);
+    assert_eq!(
+        (said[0].text.as_str(), said[0].after.as_str(), said[0].word_end),
+        ("Jesus wept.", "Amen.", 1)
+    );
     assert_eq!(
         (lets_church.id().as_deref(), lets_church.title().as_deref()),
         (Some("m1"), Some("Lazarus"))

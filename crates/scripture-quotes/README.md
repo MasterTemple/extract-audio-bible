@@ -92,6 +92,10 @@ assert_eq!(found.quotations.len(), 1);
 - `Transcript::from_text(text)`: plain text; `byte_range` gives a quotation's place in it
 - `push_word` and `end_segment` to build one yourself
 
+`find(phrase, prefix)` gives where anything else was said, as word ranges: the phrase's words in
+order, compared the way quotations are (case, accents, and punctuation aside, numerals spelled
+out), its last word the start of one with `prefix`.
+
 ## Performance
 
 On one core of an i7-10750H, with 200 real sermons (WhisperX, 817,000 words): the whole ESV is

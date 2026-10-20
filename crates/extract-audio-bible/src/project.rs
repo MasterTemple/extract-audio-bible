@@ -370,7 +370,7 @@ impl Project {
 
     /**
     Where a sermon's audio is: its own file, or (when it has none) the project's audio URL filled
-    in with its file id, for [`Downloading`](crate::Downloading) files (or a host) to fetch.
+    in with its file id, for `Downloading` files (the `download` feature) or a host to fetch.
     Empty when it has neither
     */
     pub fn audio_path(&self, source: &Source) -> String {

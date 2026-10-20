@@ -61,6 +61,7 @@ extract-audio-bible export 1thess -o audio-bible/
 | `add DIR PATHS…` | Adds sermons: audio files with the transcript of the same name, from files or folders (and, with `audioUrl` set, transcripts alone) |
 | `sermons DIR [--info FILE]` | Lists the sermons with their ids, titles, and passages; `--info` first reads titles and passages by id from JSON (`{"<id>": {"title": "…", "passage": "…"}}`), field by field. A sermon's id is the one its transcript gives (a Let's Church media id) once searched, or its file's name |
 | `transcript DIR SERMON` | A sermon's whole transcript (by its id or file name), in paragraphs with their times, the readings found marked where they begin (`[1Thess 5:15]` chosen, `<…>` not) |
+| `grep DIR PHRASE [--prefix] [--context N] [--limit N]` | Where a phrase was said in the sermons, with its words in order whatever their case, accents, or punctuation, numbers spelled out ("70 times 7" finds "seventy times seven") |
 | `search DIR` | Finds every reading of the project's verses in its sermons |
 | `choose DIR [--chapter C]… [--min-score S] [--replace]` | Chooses the best reading for each verse without one (0.9 exact, 0.75 exact and close, 0 anything) |
 | `status DIR` | Each chapter's chosen and missing verses |

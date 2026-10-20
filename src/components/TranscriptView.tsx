@@ -1,9 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Play, Square } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Play, Search, Square } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { api, errorMessage, type Match, type Word } from "@/lib/api";
+import { api, errorMessage, type Match, type Said, type Word } from "@/lib/api";
 import { partsOf, useApp } from "@/lib/store";
 import { play, sourceTime, stop, usePlayer } from "@/lib/player";
 import { audioPathOf, fileIdOf, fileMetadataOf, formatTime, sourceTitle } from "@/lib/refs";
@@ -27,15 +28,17 @@ interface ParagraphProps {
   marks: Map<number, Mark>;
   /** The time being heard, if it's in this paragraph */
   now: number | null;
-  /** A word to point out (where the transcript was opened) */
-  target: number | null;
+  /** Words to point out (where the transcript was opened, or the place found), if in this paragraph */
+  target: [number, number] | null;
+  /** The words of every place found, by word */
+  found: Set<number>;
   verseLabel: (m: Match) => string;
   onWord: (time: number) => void;
   onVerse: (m: Match) => void;
 }
 
 /** A paragraph: its time, and its words, the readings among them marked */
-const Paragraph = memo(function Paragraph({ from, words, marks, now, target, verseLabel, onWord, onVerse }: ParagraphProps) {
+const Paragraph = memo(function Paragraph({ from, words, marks, now, target, found, verseLabel, onWord, onVerse }: ParagraphProps) {
   return (
     <div className="grid grid-cols-[4.5rem_1fr] gap-3" data-from={from}>
       <button
@@ -71,7 +74,8 @@ const Paragraph = memo(function Paragraph({ from, words, marks, now, target, ver
                 className={cn(
                   "cursor-pointer rounded-sm hover:underline",
                   mark && (mark.chosen ? "bg-emerald-100 dark:bg-emerald-950" : "bg-amber-100 dark:bg-amber-950/60"),
-                  i === target && "ring-2 ring-primary",
+                  found.has(i) && "bg-yellow-200 dark:bg-yellow-700/60",
+                  target && i >= target[0] && i <= target[1] && "ring-2 ring-primary",
                   speaking && "bg-primary text-primary-foreground",
                 )}
               >
@@ -129,17 +133,59 @@ export function TranscriptView() {
     return starts.map((from, k) => ({ from, words: full.words.slice(from, starts[k + 1] ?? full.words.length) })).filter((p) => p.words.length);
   }, [full]);
 
-  // The word at the time it was opened at, scrolled to
-  const target = useMemo(() => {
+  // Finding a phrase in it: every place, and the one shown
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<Said[]>([]);
+  const [current, setCurrent] = useState(-1);
+  const findBox = useRef<HTMLInputElement>(null);
+  useEffect(() => setQuery(reading?.query ?? ""), [reading]);
+  const sourceId = source?.id;
+  useEffect(() => {
+    const p = useApp.getState().project;
+    if (!p || !sourceId || !query.trim()) {
+      setHits([]);
+      setCurrent(-1);
+      return;
+    }
+    let live = true;
+    const timer = setTimeout(() => {
+      api.searchTranscripts(p, query, sourceId, 5000).then(
+        (r) => {
+          if (!live) return;
+          setHits(r.found);
+          // The first place at or after where it was opened
+          const at = useApp.getState().reading?.at ?? 0;
+          const first = r.found.findIndex((s) => s.end >= at);
+          setCurrent(r.found.length ? Math.max(0, first) : -1);
+        },
+        () => live && setHits([]),
+      );
+    }, 150);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [query, sourceId]);
+  const found = useMemo(() => {
+    const words = new Set<number>();
+    for (const s of hits) for (let i = s.wordStart; i <= s.wordEnd; i++) words.add(i);
+    return words;
+  }, [hits]);
+  const step = (by: number) => hits.length && setCurrent((c) => (c + by + hits.length) % hits.length);
+
+  // What to point out and scroll to: the place found, or the word at the time it was opened at
+  const target = useMemo((): [number, number] | null => {
+    const hit = hits[current];
+    if (hit) return [hit.wordStart, hit.wordEnd];
     if (!full || reading?.at == null) return null;
     const i = full.words.findIndex((w) => w.end > reading.at!);
-    return i < 0 ? null : i;
-  }, [full, reading?.at]);
+    return i < 0 ? null : [i, i];
+  }, [hits, current, full, reading?.at]);
   useEffect(() => {
     if (target === null) return;
     // After the dialog has laid out
     const id = requestAnimationFrame(() =>
-      body.current?.querySelector(`[data-word="${target}"]`)?.scrollIntoView({ block: "center" }),
+      body.current?.querySelector(`[data-word="${target[0]}"]`)?.scrollIntoView({ block: "center" }),
     );
     return () => cancelAnimationFrame(id);
   }, [target, paragraphs]);
@@ -174,7 +220,15 @@ export function TranscriptView() {
 
   return (
     <Dialog open={!!reading} onOpenChange={(open) => !open && openTranscript(null)}>
-      <DialogContent className="flex h-[88vh] max-w-4xl flex-col gap-0 p-0 sm:max-w-4xl">
+      <DialogContent
+        className="flex h-[88vh] max-w-4xl flex-col gap-0 p-0 sm:max-w-4xl"
+        onKeyDown={(e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+            e.preventDefault();
+            findBox.current?.select();
+          }
+        }}
+      >
         <DialogHeader className="border-b px-5 py-3">
           <DialogTitle>{source ? sourceTitle(project, source) : "Transcript"}</DialogTitle>
           <DialogDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -206,6 +260,35 @@ export function TranscriptView() {
               Click any word or time to play from there.
             </div>
           )}
+          <div className="flex items-center gap-1.5 pt-2">
+            <div className="relative max-w-sm flex-1">
+              <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                ref={findBox}
+                className="h-8 pl-8 text-sm"
+                placeholder="Find in this sermon"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    step(e.shiftKey ? -1 : 1);
+                  }
+                }}
+              />
+            </div>
+            {query.trim() && (
+              <span className="w-20 text-xs text-muted-foreground tabular-nums">
+                {hits.length ? `${current + 1} of ${hits.length}` : "Not found"}
+              </span>
+            )}
+            <Button size="icon-sm" variant="ghost" title="Previous (Shift+Enter)" disabled={!hits.length} onClick={() => step(-1)}>
+              <ChevronUp />
+            </Button>
+            <Button size="icon-sm" variant="ghost" title="Next (Enter)" disabled={!hits.length} onClick={() => step(1)}>
+              <ChevronDown />
+            </Button>
+          </div>
         </DialogHeader>
         <div ref={body} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
           {error ? (
@@ -225,7 +308,8 @@ export function TranscriptView() {
                   words={p.words}
                   marks={marks}
                   now={inside ? now : null}
-                  target={target !== null && target >= p.from && target < p.from + p.words.length ? target : null}
+                  target={target !== null && target[1] >= p.from && target[0] < p.from + p.words.length ? target : null}
+                  found={found}
                   verseLabel={verseLabel}
                   onWord={onWord}
                   onVerse={onVerse}

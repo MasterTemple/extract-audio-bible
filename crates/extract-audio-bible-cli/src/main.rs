@@ -98,6 +98,22 @@ enum Command {
         /// The sermon: its id or file name (as `sermons` lists them)
         sermon: String,
     },
+    /// Find where a phrase was said in the project's sermons: its words in order, whatever their
+    /// case, accents, or punctuation, numbers spelled out ("70 times 7" finds "seventy times
+    /// seven")
+    Grep {
+        dir: PathBuf,
+        phrase: String,
+        /// Its last word may be the start of one ("forgiv" finds "forgive" and "forgiveness")
+        #[arg(long)]
+        prefix: bool,
+        /// Words of context on each side
+        #[arg(long, default_value_t = 10)]
+        context: usize,
+        /// The most places to give (0 for all)
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// Find every reading of the project's verses in its sermons
     Search { dir: PathBuf },
     /// Choose the best reading for each verse that has none
@@ -453,6 +469,47 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 let mut text = format!("{title}\n");
                 for para in &paragraphs {
                     text += &format!("\n[{}] {}\n", clock(para.start), para.text);
+                }
+                text.trim_end().to_string()
+            })
+        }
+        Command::Grep {
+            dir,
+            phrase,
+            prefix,
+            context,
+            limit,
+        } => {
+            let p = Folder::open(&dir)?;
+            let options = extract_audio_bible::FindOptions { prefix, context, limit };
+            let (found, errors) = extract_audio_bible::search_transcripts(&p.project, &Disk, &phrase, &options);
+            for (sermon, e) in &errors {
+                out.note(format!("couldn't read {sermon}: {e}"));
+            }
+            out.result(&found, || {
+                let mut text = String::new();
+                let mut sermon = "";
+                for s in &found {
+                    if s.source_id != sermon {
+                        sermon = &s.source_id;
+                        let source = p.project.sources.iter().find(|x| x.id == s.source_id);
+                        let title = source.map_or_else(|| s.source_id.clone(), |x| p.project.source_title(x));
+                        text += &format!("{}{title}\n", if text.is_empty() { "" } else { "\n" });
+                    }
+                    let before = if s.before.is_empty() {
+                        String::new()
+                    } else {
+                        format!("…{} ", s.before)
+                    };
+                    let after = if s.after.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}…", s.after)
+                    };
+                    text += &format!("  [{}] {before}«{}»{after}\n", clock(s.start), s.text);
+                }
+                if found.is_empty() {
+                    text = format!("\"{phrase}\" wasn't found");
                 }
                 text.trim_end().to_string()
             })

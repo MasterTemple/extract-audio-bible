@@ -62,6 +62,7 @@ export_to_dir(&project, &bible, &chapters, &Disk, Path::new("audio-bible"), |_| 
   their words spread over their time, and each transcript keeps where its paragraphs begin
 - [`matcher`]: every reading of every verse, with cut points (verses are found by
   `scripture-quotes`)
+- [`said`]: where anything else was said in sermons ([`find_in`], [`search_transcripts`])
 - [`project`]: a project's sermons, chosen readings, settings, and export metadata, as plain data
   (serde), and [`analyze`] to search its sermons. A verse read in pieces (its first half, then the
   rest minutes later) is chosen as several readings played one after another

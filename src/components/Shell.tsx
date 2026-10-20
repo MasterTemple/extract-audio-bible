@@ -8,6 +8,7 @@ import { SourcesPanel } from "./SourcesPanel";
 import { VersesPanel } from "./VersesPanel";
 import { ExportPanel } from "./ExportPanel";
 import { TranscriptView } from "./TranscriptView";
+import { SearchPanel } from "./SearchPanel";
 
 export function Shell() {
   const { project, bibles, tab, setTab, saving, closeProject, outline } = useApp();
@@ -49,6 +50,7 @@ export function Shell() {
             <TabsTrigger value="sources">
               Sermons <span className="text-muted-foreground">{project.sources.length}</span>
             </TabsTrigger>
+            <TabsTrigger value="search">Search</TabsTrigger>
             <TabsTrigger value="export">Export</TabsTrigger>
           </TabsList>
         </Tabs>
@@ -67,6 +69,7 @@ export function Shell() {
       <main className="min-h-0 flex-1">
         {tab === "verses" && <VersesPanel />}
         {tab === "sources" && <SourcesPanel />}
+        {tab === "search" && <SearchPanel />}
         {tab === "export" && <ExportPanel />}
       </main>
       <TranscriptView />

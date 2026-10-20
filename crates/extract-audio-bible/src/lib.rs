@@ -11,6 +11,7 @@ pub mod export;
 pub mod files;
 pub mod matcher;
 pub mod project;
+pub mod said;
 pub mod transcript;
 #[cfg(test)]
 mod e2e_test;
@@ -28,5 +29,6 @@ pub use download::Downloading;
 pub use files::{Disk, Files, Memory};
 pub use matcher::{Match, MatchKind, Run};
 pub use project::{Added, ExportMode, Leveling, FileMetadata, MatchSet, Metadata, Part, Project, Selection, Settings, Source};
+pub use said::{FindOptions, Said, find_in, search_transcripts};
 pub use scripture_quotes;
 pub use transcript::{Transcript, Word};

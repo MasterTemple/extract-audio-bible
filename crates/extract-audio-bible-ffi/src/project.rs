@@ -9,8 +9,9 @@ use eab::MatchSet;
 use crate::{
     Bible, ExtractAudioBibleError, Files, invalid, not_found,
     records::{
-        Added, ChapterChoice, ChapterRef, ChapterStatus, ExportMetadata, ExportedFile, FileMetadata, Reading,
-        ReadingRun, SearchSummary, Selection, Settings, SourceInfo, VerseTime, WrittenFile,
+        Added, ChapterChoice, ChapterRef, ChapterStatus, ExportMetadata, ExportedFile, FileMetadata, FindOptions,
+        Reading, ReadingRun, Said, SaidInSermons, SearchSummary, Selection, Settings, SourceInfo, VerseTime,
+        WrittenFile,
     },
 };
 
@@ -171,6 +172,20 @@ impl Project {
         s.matches.matches.retain(|m| m.source_id != id);
         s.matches.runs.retain(|r| r.source_id != id);
         s.project.sources.len() < before
+    }
+
+    /**
+    Where a phrase was said in each of the project's sermons, in their order (up to
+    `options.limit` places in all), their transcripts read through `files`: see
+    `Transcript.find`. About a millisecond per sermon, once read
+    */
+    pub fn search_transcripts(&self, files: &Files, phrase: String, options: FindOptions) -> SaidInSermons {
+        let project = self.state().project.clone();
+        let (found, errors) = eab::search_transcripts(&project, files, &phrase, &(&options).into());
+        SaidInSermons {
+            found: found.into_iter().map(Said::from).collect(),
+            errors: errors.into_iter().map(|(sermon, e)| format!("{sermon}: {e}")).collect(),
+        }
     }
 
     /**
