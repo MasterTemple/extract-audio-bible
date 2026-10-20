@@ -22,9 +22,9 @@ pub fn verse_key(book: u8, chapter: u16, verse: u16) -> String {
 }
 
 /// One stretch of one sermon: a verse, or verses read straight through
-#[derive(Clone, Copy, Debug)]
-pub struct Clip<'a> {
-    pub path: &'a str,
+#[derive(Clone, Debug)]
+pub struct Clip {
+    pub path: String,
     pub start: f64,
     pub end: f64,
     /// The volume change chosen for it, in dB
@@ -32,9 +32,9 @@ pub struct Clip<'a> {
 }
 
 /// What a file is made of
-pub(crate) enum Piece<'a> {
+pub(crate) enum Piece {
     Silence(f64),
-    Audio(Clip<'a>),
+    Audio(Clip),
 }
 
 /// The verses of a chapter that have text but no chosen reading
@@ -49,7 +49,7 @@ pub fn missing_verses(project: &Project, book: &BibleBook, chapter: u16) -> Vec<
 
 /// A chapter's chosen verses, in order, with their clips (more than one for a verse read in
 /// pieces)
-fn chosen<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> Vec<(u16, &'a Selection, Vec<Clip<'a>>)> {
+fn chosen<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> Vec<(u16, &'a Selection, Vec<Clip>)> {
     let count = book.chapters.get(chapter as usize - 1).map_or(0, Vec::len) as u16;
     (1..=count)
         .filter_map(|v| {
@@ -61,10 +61,10 @@ fn chosen<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> Vec<(u16,
 }
 
 /// A verse's clips, in the order they're played (leaving out any whose sermon is gone)
-fn clips<'a>(project: &'a Project, sel: &Selection) -> Vec<Clip<'a>> {
+fn clips(project: &Project, sel: &Selection) -> Vec<Clip> {
     (sel.parts().iter())
         .filter_map(|part| {
-            let path = project.sources.iter().find(|s| s.id == part.source_id)?.audio_path.as_str();
+            let path = project.audio_path(project.sources.iter().find(|s| s.id == part.source_id)?);
             let (start, end) = part.clip();
             Some(Clip { path, start, end, gain_db: sel.gain_db })
         })
@@ -81,11 +81,7 @@ pub struct VerseTime {
 }
 
 /// A chapter's audio as pieces, and when each verse is heard in it
-pub(crate) fn chapter_pieces<'a>(
-    project: &'a Project,
-    book: &BibleBook,
-    chapter: u16,
-) -> (Vec<Piece<'a>>, Vec<VerseTime>) {
+pub(crate) fn chapter_pieces(project: &Project, book: &BibleBook, chapter: u16) -> (Vec<Piece>, Vec<VerseTime>) {
     let settings = &project.settings;
     let verses = chosen(project, book, chapter);
     let mut out = vec![Piece::Silence(settings.chapter_lead_in)];
@@ -112,7 +108,7 @@ pub(crate) fn chapter_pieces<'a>(
                 last.end = clip.end;
                 continue;
             }
-            out.push(Piece::Audio(*clip));
+            out.push(Piece::Audio(clip.clone()));
         }
         times.push(VerseTime { verse: *verse, start, end: at });
     }
@@ -151,7 +147,7 @@ impl<'f> Leveler<'f> {
 
     /// One clip, ready to join others: resampled, its volume set, and faded at its ends
     pub fn render(&self, clip: &Clip, rate: u32) -> Result<Pcm> {
-        let pcm = audio::decode_range(self.files, clip.path, clip.start, clip.end)?;
+        let pcm = audio::decode_range(self.files, &clip.path, clip.start, clip.end)?;
         let mut pcm = audio::resample(&pcm, rate);
         let mut gain = audio::db_to_gain(clip.gain_db) * self.overall;
         if self.leveling == Leveling::Each {
@@ -214,7 +210,7 @@ pub fn render_clip(files: &dyn Files, path: &str, start: f64, end: f64, options:
 fn export_gain(files: &dyn Files, clips: &[Clip], target_db: f64) -> Result<f64> {
     let mut levels = vec![];
     for clip in clips {
-        let pcm = audio::decode_range(files, clip.path, clip.start, clip.end)?;
+        let pcm = audio::decode_range(files, &clip.path, clip.start, clip.end)?;
         let gain = audio::db_to_gain(clip.gain_db);
         levels.extend(audio::levels(&pcm.samples, pcm.rate).into_iter().map(|l| l * gain));
     }
@@ -232,9 +228,9 @@ pub fn render_chapter(project: &Project, book: &BibleBook, chapter: u16, rate: u
 }
 
 /// A verse's pieces: the silence before it, its readings, and the silence after
-fn verse_pieces<'a>(sel: &Selection, clips: &[Clip<'a>]) -> Vec<Piece<'a>> {
+fn verse_pieces(sel: &Selection, clips: &[Clip]) -> Vec<Piece> {
     let mut pieces = vec![Piece::Silence(sel.pad_before)];
-    pieces.extend(clips.iter().map(|c| Piece::Audio(*c)));
+    pieces.extend(clips.iter().map(|c| Piece::Audio(c.clone())));
     pieces.push(Piece::Silence(sel.pad_after));
     pieces
 }

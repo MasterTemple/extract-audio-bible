@@ -43,6 +43,20 @@ export function fileIdOf(source: Source): string {
   return name;
 }
 
+/** Text made safe in a URL, as the library does: letters, digits, and -._~ kept, the rest percent-encoded */
+function urlEncode(text: string): string {
+  return Array.from(new TextEncoder().encode(text), (b) =>
+    /[A-Za-z0-9\-._~]/.test(String.fromCharCode(b)) ? String.fromCharCode(b) : `%${b.toString(16).toUpperCase().padStart(2, "0")}`,
+  ).join("");
+}
+
+/** Where a sermon's audio is: its own file, or the project's audio URL filled in with its file id (downloaded when it's needed) */
+export function audioPathOf(project: Project, source: Source): string {
+  if (source.audioPath) return source.audioPath;
+  const template = project.settings.audioUrl?.trim() ?? "";
+  return template ? template.split("{id}").join(urlEncode(fileIdOf(source))) : "";
+}
+
 /** What's known about a sermon */
 export function fileMetadataOf(project: Project, source: Source): FileMetadata {
   return project.files?.[fileIdOf(source)] ?? {};

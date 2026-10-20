@@ -12,7 +12,8 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use extract_audio_bible::{
-    Bible, ChapterRef, ClipOptions, Disk, ExportMode, MatchSet, Project, Transcript, audio, bible, export, matcher,
+    Bible, ChapterRef, ClipOptions, Disk, Downloading, ExportMode, MatchSet, Project, Transcript, audio, bible, export,
+    matcher,
     project::{now, stable_id},
 };
 use serde::Serialize;
@@ -375,7 +376,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
                         label: s.label.clone(),
                         title: meta.title,
                         passage: meta.passage,
-                        audio_path: s.audio_path.clone(),
+                        audio_path: p.project.audio_path(s),
                         transcript_path: s.transcript_path.clone(),
                         readings: s.match_count,
                     }
@@ -555,7 +556,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
             let (pcm, timeline) = match verse {
                 Some(v) => {
                     let key = export::verse_key(c.book, c.chapter, v);
-                    let pcm = export::render_verse(&p.project, &key, rate, &Disk)?.ok_or_else(|| {
+                    let pcm = export::render_verse(&p.project, &key, rate, &p.audio())?.ok_or_else(|| {
                         anyhow!(
                             "nothing is chosen for {}",
                             reference(&p.bible, c.book, c.chapter, Some(v))
@@ -570,7 +571,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
                     (pcm, vec![heard])
                 }
                 None => (
-                    export::render_chapter(&p.project, book, c.chapter, rate, &Disk)?,
+                    export::render_chapter(&p.project, book, c.chapter, rate, &p.audio())?,
                     export::chapter_timeline(&p.project, book, c.chapter),
                 ),
             };
@@ -590,7 +591,9 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 processed,
                 ..Default::default()
             };
-            let pcm = extract_audio_bible::render_clip(&Disk, &path.to_string_lossy(), start, end, &options)?;
+            // A URL is downloaded to a temporary folder
+            let files = Downloading::new(&Disk, std::env::temp_dir().join("extract-audio-bible-downloads"));
+            let pcm = extract_audio_bible::render_clip(&files, &path.to_string_lossy(), start, end, &options)?;
             std::fs::write(&output, audio::wav(&pcm))?;
             out.result(&pcm.seconds(), || {
                 format!("{:.1} seconds → {}", pcm.seconds(), output.display())
@@ -683,6 +686,11 @@ struct Folder {
 }
 
 impl Folder {
+    /// Files from disk, with sermon audio given by a URL downloaded once into `downloads/`
+    fn audio(&self) -> Downloading<'static> {
+        Downloading::new(&Disk, self.dir.join("downloads"))
+    }
+
     fn open(dir: &Path) -> Result<Self> {
         let project: Project = read_json(&dir.join("project.json"))
             .with_context(|| format!("{} isn't a project folder (start one with `init`)", dir.display()))?;
@@ -887,7 +895,7 @@ fn export_to(
         &p.project,
         &p.bible,
         chapters,
-        &Disk,
+        &p.audio(),
         output,
         |progress| {
             if !progress.current.is_empty() {

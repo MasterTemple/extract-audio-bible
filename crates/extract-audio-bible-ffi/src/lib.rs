@@ -27,6 +27,8 @@ pub enum ExtractAudioBibleError {
     Invalid { message: String },
     /// Audio that can't be decoded or encoded
     Audio { message: String },
+    /// Audio given by a URL that couldn't be downloaded
+    Network { message: String },
 }
 
 impl From<eab::Error> for ExtractAudioBibleError {
@@ -37,6 +39,7 @@ impl From<eab::Error> for ExtractAudioBibleError {
             K::NotFound => Self::NotFound { message },
             K::Io => Self::Io { message },
             K::Audio => Self::Audio { message },
+            K::Network => Self::Network { message },
             // `Invalid`, and any kind a newer library adds
             _ => Self::Invalid { message },
         }
@@ -385,13 +388,18 @@ impl Searcher {
 }
 
 enum Store {
-    Disk,
+    /// With the folder audio given by URL is downloaded into, if any
+    Disk(Option<String>),
     Memory(RwLock<eab::Memory>),
 }
 
 /**
 Where audio, transcripts, and cover images are read from: the disk (native only), or files the
 host adds as bytes, by the paths a project names them by.
+
+A sermon whose audio comes from the project's audio URL has that URL as its path
+(`SourceInfo.audioPath`): natively, `downloading` fetches it once into a folder; in WebAssembly,
+fetch it and add it to memory files under that URL.
 
 ```ts
 const files = Files.memory();
@@ -406,7 +414,19 @@ pub struct Files {
 impl Files {
     /// Files read from disk (native only: in WebAssembly every read fails; use `memory`)
     pub fn disk() -> Self {
-        Files { store: Store::Disk }
+        Files {
+            store: Store::Disk(None),
+        }
+    }
+
+    /**
+    Files read from disk, and audio given by a URL downloaded the first time it's read into
+    `folder` and kept there (native only: in WebAssembly every read fails; use `memory`)
+    */
+    pub fn downloading(folder: String) -> Self {
+        Files {
+            store: Store::Disk(Some(folder)),
+        }
     }
 
     /// Files the host adds
@@ -426,14 +446,14 @@ impl Files {
     pub fn remove(&self, path: String) -> bool {
         match &self.store {
             Store::Memory(m) => m.write().unwrap_or_else(|e| e.into_inner()).remove(&path),
-            Store::Disk => false,
+            Store::Disk(_) => false,
         }
     }
 
     pub fn has(&self, path: String) -> bool {
         match &self.store {
             Store::Memory(m) => m.read().unwrap_or_else(|e| e.into_inner()).contains(&path),
-            Store::Disk => std::path::Path::new(&path).exists(),
+            Store::Disk(_) => std::path::Path::new(&path).exists(),
         }
     }
 
@@ -450,7 +470,7 @@ impl Files {
                 paths.sort();
                 paths
             }
-            Store::Disk => vec![],
+            Store::Disk(_) => vec![],
         }
     }
 }
@@ -459,26 +479,32 @@ impl eab::Files for Files {
     fn read(&self, path: &str) -> eab::Result<Vec<u8>> {
         match &self.store {
             Store::Memory(m) => m.read().unwrap_or_else(|e| e.into_inner()).read(path),
-            Store::Disk => disk_read(path),
+            Store::Disk(downloads) => disk_read(downloads.as_deref(), path),
         }
     }
 
     fn open(&self, path: &str) -> eab::Result<Box<dyn eab::files::MediaSource>> {
         match &self.store {
             Store::Memory(m) => m.read().unwrap_or_else(|e| e.into_inner()).open(path),
-            Store::Disk => disk_open(path),
+            Store::Disk(downloads) => disk_open(downloads.as_deref(), path),
         }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn disk_read(path: &str) -> eab::Result<Vec<u8>> {
-    eab::Files::read(&eab::Disk, path)
+fn disk_read(downloads: Option<&str>, path: &str) -> eab::Result<Vec<u8>> {
+    match downloads {
+        Some(folder) => eab::Files::read(&eab::Downloading::new(&eab::Disk, folder), path),
+        None => eab::Files::read(&eab::Disk, path),
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn disk_open(path: &str) -> eab::Result<Box<dyn eab::files::MediaSource>> {
-    eab::Files::open(&eab::Disk, path)
+fn disk_open(downloads: Option<&str>, path: &str) -> eab::Result<Box<dyn eab::files::MediaSource>> {
+    match downloads {
+        Some(folder) => eab::Files::open(&eab::Downloading::new(&eab::Disk, folder), path),
+        None => eab::Files::open(&eab::Disk, path),
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -489,11 +515,11 @@ fn no_disk(path: &str) -> eab::Error {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn disk_read(path: &str) -> eab::Result<Vec<u8>> {
+fn disk_read(_downloads: Option<&str>, path: &str) -> eab::Result<Vec<u8>> {
     Err(no_disk(path))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn disk_open(path: &str) -> eab::Result<Box<dyn eab::files::MediaSource>> {
+fn disk_open(_downloads: Option<&str>, path: &str) -> eab::Result<Box<dyn eab::files::MediaSource>> {
     Err(no_disk(path))
 }

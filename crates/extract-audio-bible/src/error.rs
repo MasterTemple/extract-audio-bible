@@ -14,6 +14,8 @@ pub enum ErrorKind {
     Invalid,
     /// Audio that can't be decoded or encoded
     Audio,
+    /// Audio that couldn't be downloaded
+    Network,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +34,8 @@ pub enum Error {
     Audio(String),
     #[error("Tags: {0}")]
     Tag(#[from] id3::Error),
+    #[error("Downloading {url}: {message}")]
+    Download { url: String, message: String },
 }
 
 impl Error {
@@ -50,6 +54,7 @@ impl Error {
             Error::Io(_) => ErrorKind::Io,
             Error::Invalid(_) | Error::Json(_) | Error::Text(_) => ErrorKind::Invalid,
             Error::Audio(_) | Error::Tag(_) => ErrorKind::Audio,
+            Error::Download { .. } => ErrorKind::Network,
         }
     }
 }

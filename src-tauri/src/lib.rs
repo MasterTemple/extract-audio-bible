@@ -246,8 +246,9 @@ struct Peaks {
 #[tauri::command]
 async fn audio_peaks(state: State<'_, AppState>, audio_path: String, start: f64, end: f64) -> Result<Peaks> {
     let cache = state.store.cache_dir().join("peaks");
+    let files = state.store.audio_files();
     blocking(move || {
-        let (all, duration) = cached_peaks(&audio_path, &cache)?;
+        let (all, duration) = cached_peaks(&files.local(&audio_path)?, &cache)?;
         let per = audio::PEAKS_PER_SECOND as f64;
         let s = ((start.max(0.0)) * per) as usize;
         let e = ((end * per).ceil() as usize).min(all.len());
@@ -294,10 +295,11 @@ struct ClipRequest {
 
 /// A stretch of a sermon as WAV, for listening
 #[tauri::command]
-async fn render_clip(request: ClipRequest) -> Result<Response> {
+async fn render_clip(state: State<'_, AppState>, request: ClipRequest) -> Result<Response> {
+    let files = state.store.audio_files();
     blocking(move || {
         let r = request;
-        let pcm = extract_audio_bible::render_clip(&Disk, &r.audio_path, r.start, r.end, &r.options)?;
+        let pcm = extract_audio_bible::render_clip(&files, &r.audio_path, r.start, r.end, &r.options)?;
         Ok(Response::new(audio::wav(&pcm)))
     })
     .await
@@ -327,7 +329,7 @@ async fn render_chapter(state: State<'_, AppState>, project: Project, book: u8, 
     blocking(move || {
         let bible = store.bible(&project.bible_id)?;
         let book = bible.book(book).ok_or_else(|| AppError::msg("No such book"))?;
-        let pcm = export::render_chapter(&project, book, chapter, 24_000, &Disk)?;
+        let pcm = export::render_chapter(&project, book, chapter, 24_000, &store.audio_files())?;
         Ok(Response::new(audio::wav(&pcm)))
     })
     .await
@@ -343,10 +345,17 @@ fn read_file_metadata(path: String) -> Result<std::collections::BTreeMap<String,
 
 /// A verse as it will be exported (all its readings, one after another), as WAV
 #[tauri::command]
-async fn render_verse(project: Project, book: u8, chapter: u16, verse: u16) -> Result<Response> {
+async fn render_verse(
+    state: State<'_, AppState>,
+    project: Project,
+    book: u8,
+    chapter: u16,
+    verse: u16,
+) -> Result<Response> {
+    let files = state.store.audio_files();
     blocking(move || {
         let key = export::verse_key(book, chapter, verse);
-        let pcm = extract_audio_bible::render_verse(&project, &key, 44_100, &Disk)?
+        let pcm = extract_audio_bible::render_verse(&project, &key, 44_100, &files)?
             .ok_or_else(|| AppError::msg("No reading is chosen for this verse"))?;
         Ok(Response::new(audio::wav(&pcm)))
     })
@@ -376,7 +385,7 @@ async fn export_chapters(
         let dir = (project.metadata.output_dir.as_deref())
             .filter(|d| !d.is_empty())
             .ok_or_else(|| AppError::msg("Choose a folder to export to"))?;
-        Ok(export::export_to_dir(&project, &bible, &chapters, &Disk, Path::new(dir), |p| {
+        Ok(export::export_to_dir(&project, &bible, &chapters, &store.audio_files(), Path::new(dir), |p| {
             let _ = app.emit("export-progress", p);
         })?)
     })

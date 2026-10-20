@@ -77,6 +77,8 @@ export interface Settings {
   targetDb: number;
   outputGainDb: number;
   fadeMs: number;
+  /** Where to download a sermon's audio when it has no file, with `{id}` for its file id; empty for none */
+  audioUrl: string;
 }
 
 export type Leveling = "none" | "each" | "export";

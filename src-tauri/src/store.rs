@@ -60,6 +60,11 @@ impl Store {
         self.root.join("cache")
     }
 
+    /// Files from disk, with sermon audio given by a URL downloaded into the cache once
+    pub fn audio_files(&self) -> extract_audio_bible::Downloading<'static> {
+        extract_audio_bible::Downloading::new(&extract_audio_bible::Disk, self.cache_dir().join("audio"))
+    }
+
     fn bible_path(&self, id: &str) -> Result<PathBuf> {
         Ok(self.root.join("bibles").join(format!("{}.json", safe_id(id)?)))
     }

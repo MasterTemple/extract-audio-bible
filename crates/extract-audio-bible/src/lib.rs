@@ -4,6 +4,8 @@ pub mod analyze;
 pub mod audio;
 pub mod bible;
 pub mod choose;
+#[cfg(feature = "download")]
+pub mod download;
 pub mod error;
 pub mod export;
 pub mod files;
@@ -21,6 +23,8 @@ pub use export::{
     ChapterRef, ClipOptions, ExportProgress, ExportedFile, VerseTime, chapter_timeline, chapters_to_export, export, export_to_dir,
     render_chapter, render_clip, render_verse,
 };
+#[cfg(feature = "download")]
+pub use download::Downloading;
 pub use files::{Disk, Files, Memory};
 pub use matcher::{Match, MatchKind, Run};
 pub use project::{Added, ExportMode, Leveling, FileMetadata, MatchSet, Metadata, Part, Project, Selection, Settings, Source};

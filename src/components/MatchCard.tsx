@@ -7,7 +7,7 @@ import { api, type Match, type Word } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { useWords } from "@/lib/hooks";
 import { play, sourceTime, usePlayer } from "@/lib/player";
-import { fileName, formatTime, kindLabel, runLabel, sourceColor, sourceTitle, verseKey } from "@/lib/refs";
+import { audioPathOf, fileName, formatTime, kindLabel, runLabel, sourceColor, sourceTitle, verseKey } from "@/lib/refs";
 
 const CONTEXT_WORDS = 30;
 const CONTEXT_SECONDS = 4;
@@ -95,11 +95,11 @@ export function MatchCard({ match, verseText, part, parts }: { match: Match; ver
   const now = sourceTime(player, clipId) ?? sourceTime(player, contextId);
   const missed = match.verseWordsHeard.filter((h) => !h).length;
 
-  const playClip = () =>
-    play(clipId, () => api.renderClip({ audioPath: source.audioPath, start: match.start, end: match.end }), match.start);
+  const audioPath = audioPathOf(project, source);
+  const playClip = () => play(clipId, () => api.renderClip({ audioPath, start: match.start, end: match.end }), match.start);
   const playContext = () => {
     const start = Math.max(0, match.start - CONTEXT_SECONDS);
-    void play(contextId, () => api.renderClip({ audioPath: source.audioPath, start, end: match.end + CONTEXT_SECONDS }), start);
+    void play(contextId, () => api.renderClip({ audioPath, start, end: match.end + CONTEXT_SECONDS }), start);
   };
 
   return (
@@ -112,7 +112,7 @@ export function MatchCard({ match, verseText, part, parts }: { match: Match; ver
           </TooltipTrigger>
           <TooltipContent>
             <div className="flex items-center gap-1">
-              <AudioLines className="size-3" /> {fileName(source.audioPath)}
+              <AudioLines className="size-3" /> {fileName(audioPath)}
             </div>
           </TooltipContent>
         </Tooltip>
@@ -126,8 +126,8 @@ export function MatchCard({ match, verseText, part, parts }: { match: Match; ver
           {kindLabel[match.kind]} · {Math.round(match.score * 100)}%
         </span>
       </div>
-      <div className="truncate text-[11px] text-muted-foreground" title={source.audioPath}>
-        {fileName(source.audioPath)}
+      <div className="truncate text-[11px] text-muted-foreground" title={audioPath}>
+        {fileName(audioPath)}
       </div>
 
       {run && (

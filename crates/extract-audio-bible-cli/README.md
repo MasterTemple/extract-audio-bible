@@ -19,6 +19,19 @@ with `sunday.json`, WhisperX or Let's Church), finds every reading of the book's
 the best for each verse, and exports a tagged MP3 per chapter. With `--project`, the project is
 kept to look at, change, and export again.
 
+## Audio downloaded by id
+
+A sermon can be a transcript alone, its audio downloaded when it's first needed (rendering or
+exporting) into the project's `downloads/` folder:
+
+```sh
+extract-audio-bible set 1thess 'audioUrl=https://example.com/audio/{id}.mp3'
+extract-audio-bible add 1thess transcripts/          # transcripts without audio are added too
+```
+
+`{id}` is the sermon's id: the one its transcript gives (a Let's Church media id) once searched,
+or its file's name (`sermons` lists them).
+
 ## A step at a time
 
 A project is a folder holding `project.json` (its sermons, chosen readings, settings, and export
@@ -45,7 +58,7 @@ extract-audio-bible export 1thess -o audio-bible/
 | `import PATHS… -o FILE` | Reads a Bible's text and saves it as JSON |
 | `find --bible BIBLE [--book B] TRANSCRIPTS…` | The verses read in transcripts, with their times (no project) |
 | `init DIR --bible BIBLE [--book B] [--name N]` | Starts a project for a book (or, with no `--book`, the whole Bible) |
-| `add DIR PATHS…` | Adds sermons: audio files with the transcript of the same name, from files or folders |
+| `add DIR PATHS…` | Adds sermons: audio files with the transcript of the same name, from files or folders (and, with `audioUrl` set, transcripts alone) |
 | `sermons DIR [--info FILE]` | Lists the sermons with their ids, titles, and passages; `--info` first reads titles and passages by id from JSON (`{"<id>": {"title": "…", "passage": "…"}}`), field by field. A sermon's id is the one its transcript gives (a Let's Church media id) once searched, or its file's name |
 | `search DIR` | Finds every reading of the project's verses in its sermons |
 | `choose DIR [--chapter C]… [--min-score S] [--replace]` | Chooses the best reading for each verse without one (0.9 exact, 0.75 exact and close, 0 anything) |

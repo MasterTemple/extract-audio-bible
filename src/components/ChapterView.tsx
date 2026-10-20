@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { api, type Match, type Project, type Selection, type VerseTime } from "@/lib/api";
 import { partsOf, useApp } from "@/lib/store";
 import { play, stop, usePlayer } from "@/lib/player";
-import { bookName, chapterStatus, verseKey, versesNeeded, sourceColor, sourceTitle, runLabel } from "@/lib/refs";
+import { audioPathOf, bookName, chapterStatus, verseKey, versesNeeded, sourceColor, sourceTitle, runLabel } from "@/lib/refs";
 
 /** Whether `b` carries on straight from `a` in the same sermon (no cut between them) */
 export function continues(a: Selection | undefined, b: Selection | undefined): boolean {
@@ -59,7 +59,7 @@ async function renderChapter(p: Project, book: number, chapter: number): Promise
     chapter,
     Object.entries(p.selections).filter(([k]) => k.startsWith(prefix)),
     p.settings,
-    p.sources.map((s) => [s.id, s.audioPath]),
+    p.sources.map((s) => [s.id, audioPathOf(p, s)]),
   ]);
   if (rendered?.key !== key) rendered = { key, wav: await api.renderChapter(p, book, chapter) };
   // Playing takes the bytes it's given, so it gets a copy

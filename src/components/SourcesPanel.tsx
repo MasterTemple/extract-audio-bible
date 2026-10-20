@@ -1,18 +1,19 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { AudioLines, FileJson, FilePlus, FolderPlus, Loader2, ScanSearch, Tags, Trash2 } from "lucide-react";
+import { AudioLines, CloudDownload, FileJson, FilePlus, FolderPlus, Loader2, ScanSearch, Tags, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage, type Progress as ProgressEvent } from "@/lib/api";
 import { useApp } from "@/lib/store";
-import { fileIdOf, fileMetadataOf, fileName, formatTime, sourceColor } from "@/lib/refs";
+import { audioPathOf, fileIdOf, fileMetadataOf, fileName, formatTime, sourceColor } from "@/lib/refs";
 
 export function SourcesPanel() {
   const { project, update, setProject, setMatches, matchSet, flush, setTab, outline, go, setFileMetadata } = useApp();
@@ -105,9 +106,10 @@ export function SourcesPanel() {
             <div className="space-y-1.5">
               <CardTitle>Sermons</CardTitle>
               <CardDescription>
-                Each sermon is its audio and the WhisperX JSON transcribed from it, paired by file name (
-                <code className="text-xs">sermon.mp3</code> + <code className="text-xs">sermon.json</code>). Add
-                files, or a folder to pair everything in it. Titles and passages are kept by each sermon's id (its
+                Each sermon is its audio and the transcript made from it (WhisperX or Let's Church JSON), paired by file
+                name (<code className="text-xs">sermon.mp3</code> + <code className="text-xs">sermon.json</code>). Add
+                files, or a folder to pair everything in it. With somewhere to download audio from, a transcript alone is
+                enough. Titles and passages are kept by each sermon's id (its
                 transcript's, once searched), and can be read from JSON:{" "}
                 <code className="text-xs">{'{"<id>": {"title": …, "passage": …}}'}</code>.
               </CardDescription>
@@ -125,6 +127,18 @@ export function SourcesPanel() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-40 shrink-0 text-sm">Download audio from</div>
+              <Input
+                className="max-w-xl font-mono text-xs"
+                placeholder="https://example.com/audio/{id}.mp3"
+                value={project.settings.audioUrl ?? ""}
+                onChange={(e) => update((p) => ({ ...p, settings: { ...p.settings, audioUrl: e.target.value } }))}
+              />
+              <span className="text-xs text-muted-foreground">
+                For sermons with only a transcript: <code>{"{id}"}</code> is the sermon's id. It's downloaded when first played.
+              </span>
+            </div>
             {unpaired.length > 0 && (
               <Alert>
                 <AlertTitle>{unpaired.length} files had no partner</AlertTitle>
@@ -188,9 +202,19 @@ export function SourcesPanel() {
                           />
                         </TableCell>
                         <TableCell className="max-w-72 text-xs text-muted-foreground">
-                          <div className="flex items-center gap-1 truncate" title={s.audioPath}>
-                            <AudioLines className="size-3 shrink-0" /> {fileName(s.audioPath)}
-                          </div>
+                          {s.audioPath ? (
+                            <div className="flex items-center gap-1 truncate" title={s.audioPath}>
+                              <AudioLines className="size-3 shrink-0" /> {fileName(s.audioPath)}
+                            </div>
+                          ) : audioPathOf(project, s) ? (
+                            <div className="flex items-center gap-1 truncate" title={`Downloaded when needed from ${audioPathOf(project, s)}`}>
+                              <CloudDownload className="size-3 shrink-0" /> {audioPathOf(project, s)}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 text-amber-600">
+                              <AudioLines className="size-3 shrink-0" /> No audio: set where to download it from
+                            </div>
+                          )}
                           <div className="flex items-center gap-1 truncate" title={s.transcriptPath}>
                             <FileJson className="size-3 shrink-0" /> {fileName(s.transcriptPath)}
                           </div>

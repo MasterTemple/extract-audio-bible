@@ -21,3 +21,8 @@ thiserror = "2.0.21"
 # Searching sermons in parallel
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rayon = "1.12.0"
+ureq = { version = "3.4", optional = true }
+
+[features]
+# Downloading sermon audio given by URL (`Downloading`): native only
+download = ["dep:ureq"]

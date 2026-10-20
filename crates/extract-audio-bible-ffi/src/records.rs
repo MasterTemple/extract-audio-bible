@@ -187,6 +187,8 @@ pub struct SourceInfo {
     pub title: Option<String>,
     /// The passage it preaches, if given
     pub passage: Option<String>,
+    /// Its audio file, or (with none) the project's audio URL filled in with its file id; empty
+    /// when it has neither
     pub audio_path: String,
     pub transcript_path: String,
     /// Seconds, once searched
@@ -204,7 +206,7 @@ impl SourceInfo {
             label: s.label.clone(),
             title: meta.title,
             passage: meta.passage,
-            audio_path: s.audio_path.clone(),
+            audio_path: project.audio_path(s),
             transcript_path: s.transcript_path.clone(),
             duration: s.duration,
             word_count: s.word_count as u32,
@@ -457,6 +459,10 @@ pub struct Settings {
     pub output_gain_db: f64,
     /// Fades at every cut, in milliseconds
     pub fade_ms: f64,
+    /// Where to download a sermon's audio when it has no file, with `{id}` for its file id
+    /// (`https://example.com/audio/{id}.mp3`); empty for none. With one, transcripts alone are
+    /// added as sermons
+    pub audio_url: String,
 }
 
 impl From<&eab::Settings> for Settings {
@@ -474,6 +480,7 @@ impl From<&eab::Settings> for Settings {
             target_db: s.target_db,
             output_gain_db: s.output_gain_db,
             fade_ms: s.fade_ms,
+            audio_url: s.audio_url.clone(),
         }
     }
 }
@@ -493,6 +500,7 @@ impl From<&Settings> for eab::Settings {
             target_db: s.target_db,
             output_gain_db: s.output_gain_db,
             fade_ms: s.fade_ms,
+            audio_url: s.audio_url.clone(),
         }
     }
 }

@@ -186,6 +186,12 @@ preaches, is kept by file id, apart from the sermons: `setFileMetadata` sets it 
 not added yet), and `applyFileMetadataJson` for many, field by field. A transcript's own title is
 used when none is given.
 
+A sermon can be a transcript alone, its audio downloaded when it's needed: the setting `audioUrl`
+says where from, with `{id}` for the file id (`https://example.com/audio/{id}.mp3`). With one set,
+`addSources` adds transcripts without audio, and their `audioPath` is the URL. Natively,
+`Files.downloading(folder)` downloads it once into a folder (failing with a `Network` error); in
+WebAssembly, fetch it and `add` it to memory files under that URL.
+
 ```ts
 import { Files } from "extract-audio-bible";
 
@@ -209,6 +215,11 @@ const info = project.sources()[0];
 console.log(info.fileId, info.title, info.passage); // → sunday Jesus Wept John 11:33-36
 project.setFileMetadata("sunday", { ...project.fileMetadata("sunday"), title: null });
 console.log(project.sources()[0].title, project.fileMetadata("sunday").passage); // → null John 11:33-36
+
+project.applyJson('{"settings": {"audioUrl": "https://example.com/audio/{id}.mp3"}}');
+console.log(project.addSources(["sermons/later.json"]).added, project.sources()[1].audioPath); // → 1 https://example.com/audio/later.mp3
+project.removeSource(project.sources()[1].id);
+project.applyJson('{"settings": {"audioUrl": ""}}');
 ```
 
 ```python
@@ -236,6 +247,11 @@ info = project.sources()[0]
 print(info.file_id, info.title, info.passage)  # → sunday Jesus Wept John 11:33-36
 project.set_file_metadata("sunday", dataclasses.replace(project.file_metadata("sunday"), title=None))
 print(project.sources()[0].title, project.file_metadata("sunday").passage)  # → None John 11:33-36
+
+project.apply_json('{"settings": {"audioUrl": "https://example.com/audio/{id}.mp3"}}')
+print(project.add_sources(["sermons/later.json"]).added, project.sources()[1].audio_path)  # → 1 https://example.com/audio/later.mp3
+project.remove_source(project.sources()[1].id)
+project.apply_json('{"settings": {"audioUrl": ""}}')
 ```
 
 ## Choosing readings
@@ -439,7 +455,8 @@ print(reopened.remove_source(sermon.id), len(reopened.sources()), len(reopened.s
 ## Reading natively
 
 <!-- source -->In Python (and Swift and Kotlin),<!-- /source --><!-- ts: In the native packages (Python, Swift, and Kotlin), --><!-- python: In this package (and in Swift and Kotlin), -->
-`Files.disk` reads files from disk, `importBibleFromPaths` reads a Bible from files and folders,
+`Files.disk` reads files from disk (`Files.downloading` too, downloading audio given by URL into a
+folder), `importBibleFromPaths` reads a Bible from files and folders,
 `openTranscript` reads a transcript through any `Files`, and `exportToFolder` writes an export
 into a folder.
 <!-- source -->
@@ -465,6 +482,11 @@ try {
   console.log((error as ExtractAudioBibleErrorException).value.tag); // → Io
 }
 try {
+  eab.openTranscript(Files.downloading("downloads"), "sermon.json");
+} catch (error) {
+  console.log((error as ExtractAudioBibleErrorException).value.tag); // → Io
+}
+try {
   project.exportToFolder(bsb, files, "audio-bible", null);
 } catch (error) {
   console.log((error as ExtractAudioBibleErrorException).value.tag); // → Io
@@ -477,6 +499,7 @@ disk = Files.disk()
 from_disk = eab.import_bible_from_paths(["bsb-john-11.txt"], "Berean Standard Bible", "BSB")
 print(from_disk.verse(43, 11, 35), disk.has("sermon.json"))  # → Jesus wept. True
 print(eab.open_transcript(disk, "sermon.json").word_count())  # → 72
+print(eab.open_transcript(Files.downloading("downloads"), "sermon.json").word_count())  # → 72
 written = project.export_to_folder(bsb, files, "audio-bible", None)
 print(len(written), written[0].path.endswith("audio-bible/43 John/43_John_011.mp3"))  # → 5 True
 print(eab.open_transcript(files, "sermons/sunday.json").word_count())  # → 72
@@ -489,7 +512,7 @@ print(files.remove("sermons/sunday.json"), files.has("sermons/sunday.json"))  # 
 Errors are thrown as `ExtractAudioBibleErrorException` in TypeScript (`error.value` is
 `{ tag, message }`) and raised as `ExtractAudioBibleErrorException` in Python (`error.error` is
 an `ExtractAudioBibleErrorNotFound`, `ExtractAudioBibleErrorIo`, `ExtractAudioBibleErrorInvalid`,
-or `ExtractAudioBibleErrorAudio`, with its `message`).
+`ExtractAudioBibleErrorAudio`, or `ExtractAudioBibleErrorNetwork`, with its `message`).
 <!-- /source -->
 <!-- ts:
 Errors are thrown as `ExtractAudioBibleErrorException` (`error.value` is `{ tag, message }`).
@@ -497,11 +520,11 @@ Errors are thrown as `ExtractAudioBibleErrorException` (`error.value` is `{ tag,
 <!-- python:
 Errors are raised as `ExtractAudioBibleErrorException` (`error.error` is an
 `ExtractAudioBibleErrorNotFound`, `ExtractAudioBibleErrorIo`, `ExtractAudioBibleErrorInvalid`,
-or `ExtractAudioBibleErrorAudio`, with its `message`).
+`ExtractAudioBibleErrorAudio`, or `ExtractAudioBibleErrorNetwork`, with its `message`).
 -->
 The <!-- source -->tag<!-- /source --><!-- ts: tag --><!-- python: kind --> says what went wrong: `NotFound` (a file, book, chapter, or reading that isn't there),
-`Io` (reading or writing failed), `Invalid` (input that can't be used), or `Audio` (audio that
-can't be decoded).
+`Io` (reading or writing failed), `Invalid` (input that can't be used), `Audio` (audio that
+can't be decoded), or `Network` (audio given by a URL that couldn't be downloaded).
 
 ```ts
 try {
@@ -563,7 +586,7 @@ Each class, record, and enum <!-- source -->(by their TypeScript names)<!-- /sou
 | `Transcript.words`, `wordCount`, `duration` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `Searcher.find` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `Files.memory`, `add`, `paths` | [A project](#a-project) |
-| `Files.disk`, `has`, `remove` | [Reading natively](#reading-natively) |
+| `Files.disk`, `downloading`, `has`, `remove` | [Reading natively](#reading-natively) |
 | `Project.name`, `book`, `addSources`, `search`, `sources`, `runs`, `readings`, `fileMetadata`, `setFileMetadata`, `applyFileMetadataJson` | [A project](#a-project) |
 | `Project.chooseBest`, `chooseBestIn`, `status`, `verseReadings`, `selection`, `selections`, `updateSelection`, `select`, `unselect`, `join`, `arrange`, `unjoin` | [Choosing readings](#choosing-readings) |
 | `Project.settings`, `setSettings`, `metadata`, `setMetadata`, `applyJson` | [Settings and metadata](#settings-and-metadata) |

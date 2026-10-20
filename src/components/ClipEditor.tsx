@@ -9,7 +9,7 @@ import { api, type Part, type Selection } from "@/lib/api";
 import { partsOf, useApp } from "@/lib/store";
 import { usePeaks, useWords } from "@/lib/hooks";
 import { play, sourceTime, usePlayer } from "@/lib/player";
-import { fileName, formatTime, sourceColor, sourceTitle } from "@/lib/refs";
+import { audioPathOf, fileName, formatTime, sourceColor, sourceTitle } from "@/lib/refs";
 import { cn } from "@/lib/utils";
 import { Waveform } from "./Waveform";
 
@@ -127,7 +127,8 @@ export function ClipEditor({ verseKey, selection, verseText }: { verseKey: strin
     Math.max(0, Math.floor(Math.min(part.start - 3, clipStart - 1))),
     Math.ceil(Math.max(part.end + 3, clipEnd + 1)),
   ];
-  const { data: peaks, error } = usePeaks(source?.audioPath, winStart, winEnd);
+  const audioPath = source && project ? audioPathOf(project, source) : undefined;
+  const { data: peaks, error } = usePeaks(audioPath, winStart, winEnd);
   const words = useWords(source?.transcriptPath, (match?.wordStart ?? 0) - 25, (match?.wordEnd ?? 0) + 25);
   if (!project || !source) return null;
 
@@ -168,9 +169,9 @@ export function ClipEditor({ verseKey, selection, verseText }: { verseKey: strin
           <div className="truncate text-sm font-medium">
             {joined ? `Chosen: ${parts.length} readings, joined` : `Chosen: ${sourceTitle(project, source)}`}
           </div>
-          <div className="truncate text-[11px] text-muted-foreground" title={source.audioPath}>
+          <div className="truncate text-[11px] text-muted-foreground" title={audioPath}>
             {joined && `Part ${index + 1}: `}
-            {fileName(source.audioPath)} · {formatTime(clipStart, true)}–{formatTime(clipEnd, true)} ({(clipEnd - clipStart).toFixed(1)}s)
+            {fileName(audioPath ?? "")} · {formatTime(clipStart, true)}–{formatTime(clipEnd, true)} ({(clipEnd - clipStart).toFixed(1)}s)
           </div>
         </div>
         <Button size="icon-sm" variant="ghost" title="Unchoose" onClick={() => unselect(verseKey)}>
@@ -243,7 +244,8 @@ export function ClipEditor({ verseKey, selection, verseText }: { verseKey: strin
             error
           ) : (
             <>
-              <Loader2 className="size-4 animate-spin" /> Reading the sermon's audio (once per file)…
+              <Loader2 className="size-4 animate-spin" />{" "}
+              {/^https?:\/\//.test(audioPath ?? "") ? "Downloading the sermon's audio (once)…" : "Reading the sermon's audio (once per file)…"}
             </>
           )}
         </div>
@@ -301,7 +303,7 @@ export function ClipEditor({ verseKey, selection, verseText }: { verseKey: strin
               rawId,
               () =>
                 api.renderClip({
-                  audioPath: source.audioPath,
+                  audioPath: audioPath!,
                   start: clipStart,
                   end: clipEnd,
                   processed: selection.gainDb !== 0,
@@ -319,7 +321,7 @@ export function ClipEditor({ verseKey, selection, verseText }: { verseKey: strin
           title="Two seconds either side, to hear the cuts"
           onClick={() => {
             const s = Math.max(0, clipStart - 2);
-            void play(aroundId, () => api.renderClip({ audioPath: source.audioPath, start: s, end: clipEnd + 2 }), s);
+            void play(aroundId, () => api.renderClip({ audioPath: audioPath!, start: s, end: clipEnd + 2 }), s);
           }}
         >
           {icon(aroundId, Rewind)} Around cuts

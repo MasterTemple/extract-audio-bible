@@ -203,6 +203,12 @@ pub struct Settings {
     /// Volume change for everything exported, in dB
     pub output_gain_db: f64,
     pub fade_ms: f64,
+    /**
+    Where to download a sermon's audio when it has no file of its own, with `{id}` for its file
+    id: `https://example.com/audio/{id}.mp3`. Empty for none. With one, transcripts without audio
+    beside them are added as sermons too
+    */
+    pub audio_url: String,
 }
 
 impl Default for Settings {
@@ -216,6 +222,7 @@ impl Default for Settings {
             target_db: -20.0,
             output_gain_db: 0.0,
             fade_ms: 8.0,
+            audio_url: String::new(),
         }
     }
 }
@@ -361,6 +368,19 @@ impl Project {
         }
     }
 
+    /**
+    Where a sermon's audio is: its own file, or (when it has none) the project's audio URL filled
+    in with its file id, for [`Downloading`](crate::Downloading) files (or a host) to fetch.
+    Empty when it has neither
+    */
+    pub fn audio_path(&self, source: &Source) -> String {
+        if !source.audio_path.is_empty() {
+            return source.audio_path.clone();
+        }
+        let template = self.settings.audio_url.trim();
+        if template.is_empty() { String::new() } else { template.replace("{id}", &url_encode(&source.file_id())) }
+    }
+
     /// What's known about a sermon
     pub fn file_metadata(&self, source: &Source) -> FileMetadata {
         self.files.get(&source.file_id()).cloned().unwrap_or_default()
@@ -413,10 +433,40 @@ impl Project {
 
     /**
     Adds sermons from file paths: each audio file is paired with the transcript (`.json`) of
-    the same name, in the same folder first, then anywhere among the paths. Audio already in the
-    project is skipped. Returns how many were added and the files that had no partner
+    the same name, in the same folder first, then anywhere among the paths. With an audio URL
+    ([`Settings::audio_url`]), a transcript without audio is a sermon too, its audio downloaded
+    when it's needed. Sermons already in the project are skipped. Returns how many were added and
+    the files that had no partner
     */
     pub fn add_sources(&mut self, paths: &[String]) -> Added {
+        let mut added = self.pair_sources(paths);
+        // With somewhere to download audio from, a transcript is enough
+        if !self.settings.audio_url.trim().is_empty() {
+            let (transcripts, rest): (Vec<String>, Vec<String>) =
+                added.unpaired.drain(..).partition(|f| ext(f) == "json");
+            added.unpaired = rest;
+            for transcript in transcripts {
+                if self.sources.iter().any(|s| s.transcript_path == transcript) {
+                    continue;
+                }
+                let base = base_name(&transcript);
+                self.sources.push(Source {
+                    id: stable_id(&transcript),
+                    label: base.clone(),
+                    audio_path: String::new(),
+                    transcript_path: transcript,
+                    duration: None,
+                    word_count: 0,
+                    match_count: 0,
+                    file_id: base,
+                });
+                added.added += 1;
+            }
+        }
+        added
+    }
+
+    fn pair_sources(&mut self, paths: &[String]) -> Added {
         let (transcripts, audios): (Vec<&String>, Vec<&String>) = (paths.iter())
             .filter(|f| ext(f) == "json" || AUDIO.contains(&ext(f).as_str()))
             .partition(|f| ext(f) == "json");
@@ -463,6 +513,19 @@ pub struct Added {
     pub unpaired: Vec<String>,
 }
 
+/// `text` safe in a URL: letters, digits, and `-._~` as they are, everything else percent-encoded
+fn url_encode(text: &str) -> String {
+    let mut out = String::new();
+    for b in text.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// The audio files a sermon can be
 pub const AUDIO: [&str; 7] = ["mp3", "m4a", "wav", "flac", "ogg", "aac", "mp4"];
 
@@ -506,6 +569,33 @@ mod tests {
         assert_eq!(p.sources[0].transcript_path, "a/one.json");
         assert_eq!(added.unpaired, ["a/two.m4a", "b/one.json", "a/three.json"]);
         assert_eq!(p.sources[0].id, stable_id("a/one.mp3"));
+        assert_eq!(p.add_sources(&paths).added, 0);
+    }
+
+    #[test]
+    fn audio_from_a_url_by_file_id() {
+        let bible = Bible {
+            id: "b".into(),
+            name: "Test".into(),
+            abbreviation: "T".into(),
+            language: None,
+            format: "text".into(),
+            books: vec![],
+        };
+        let mut p = Project::new("p", "", &bible, None);
+        let paths: Vec<String> = ["a/one.mp3", "a/one.json", "b/two words.json"].map(String::from).into();
+        // Without an audio URL, a transcript alone isn't a sermon
+        assert_eq!(p.clone().add_sources(&paths).unpaired, ["b/two words.json"]);
+
+        p.settings.audio_url = "https://example.com/audio/{id}.mp3".into();
+        let added = p.add_sources(&paths);
+        assert_eq!((added.added, added.unpaired.len()), (2, 0));
+        assert_eq!(p.audio_path(&p.sources[0]), "a/one.mp3");
+        assert_eq!(p.audio_path(&p.sources[1]), "https://example.com/audio/two%20words.mp3");
+        // Its id from its transcript, once searched
+        let id = p.sources[1].id.clone();
+        p.identify(&id, Some("xyz"), None);
+        assert_eq!(p.audio_path(&p.sources[1]), "https://example.com/audio/xyz.mp3");
         assert_eq!(p.add_sources(&paths).added, 0);
     }
 

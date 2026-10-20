@@ -71,6 +71,8 @@ export_to_dir(&project, &bible, &chapters, &Disk, Path::new("audio-bible"), |_| 
   chapter or by verse; [`audio`] decodes MP3, AAC/M4A, WAV, and more (symphonia) and encodes MP3
   (pure Rust)
 - [`files`]: everything is read through [`Files`]: the disk ([`Disk`]), or files given as bytes
-  ([`Memory`]), so it all works in WebAssembly too
+  ([`Memory`]), so it all works in WebAssembly too. A sermon can be a transcript alone, its audio
+  given by a URL with its id ([`Settings::audio_url`]); with the `download` feature,
+  `Downloading` fetches such audio once into a folder
 
 Natively, sermons are searched in parallel (rayon); in WebAssembly, one at a time.

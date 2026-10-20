@@ -213,6 +213,37 @@ fn a_verse_read_in_two_pieces() {
 }
 
 #[test]
+fn audio_from_a_url() {
+    let eab = ExtractAudioBible::new();
+    let bible = bible(&eab);
+    let project = eab.new_project(&bible, String::new(), Some("John".into())).unwrap();
+    assert_eq!(project.add_sources(vec!["later.json".into()]).unpaired, ["later.json"]);
+    project
+        .apply_json(r#"{"settings": {"audioUrl": "http://127.0.0.1:9/{id}.mp3"}}"#.into())
+        .unwrap();
+    assert_eq!(project.add_sources(vec!["later.json".into()]).added, 1);
+    let sermon = &project.sources()[0];
+    assert_eq!(sermon.audio_path, "http://127.0.0.1:9/later.mp3");
+
+    // Nothing listens there
+    let files = Files::downloading(
+        std::env::temp_dir()
+            .join("eab-downloads")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let options = ClipOptions {
+        pad_before: 0.0,
+        pad_after: 0.0,
+        processed: false,
+        target_db: None,
+        gain_db: 0.0,
+    };
+    let clip = eab.render_clip(&files, sermon.audio_path.clone(), 0.0, 1.0, options);
+    assert!(matches!(clip, Err(ExtractAudioBibleError::Network { .. })), "{clip:?}");
+}
+
+#[test]
 fn settings_from_json() {
     let eab = ExtractAudioBible::new();
     let bible = bible(&eab);
