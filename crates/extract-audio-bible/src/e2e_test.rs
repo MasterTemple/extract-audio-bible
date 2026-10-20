@@ -16,7 +16,7 @@ fn e2e() {
     let bible = Bible::new("kjv", "KJV", "KJV", bible::import_paths(&[dir]).unwrap());
     println!("imported {} verses in {:?}", bible.summary().verse_count, t.elapsed());
     let t = Instant::now();
-    let engine = matcher::engine(&bible);
+    let engine = matcher::engine(&bible).unwrap();
     let searcher = engine.searcher();
     println!("indexed {} verses in {:?}", searcher.verse_count(), t.elapsed());
 
@@ -99,7 +99,7 @@ fn export_e2e() {
     let dir = PathBuf::from(std::env::var("KJV_USFM").expect("KJV_USFM"));
     let sermon = std::env::var("SERMON").expect("SERMON");
     let bible = Bible::new("kjv", "King James Version", "KJV", bible::import_paths(&[dir]).unwrap());
-    let engine = matcher::engine(&bible);
+    let engine = matcher::engine(&bible).unwrap();
     let transcript = Transcript::open(&crate::Disk, &format!("{sermon}.json")).unwrap();
     let (matches, runs) = find_matches(&engine.searcher(), &transcript, "s1", &Default::default());
     for m in &matches {

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     bible::{Bible, bible_data},
+    error::Error,
     transcript::Transcript,
 };
 
@@ -83,27 +84,37 @@ pub struct Run {
 }
 
 /// A Bible's text, ready to be searched for
-pub fn engine(bible: &Bible) -> Engine {
+pub fn engine(bible: &Bible) -> crate::Result<Engine> {
     engine_of([bible])
 }
 
 /// Several Bibles' texts, ready to be searched for together: each reading is of the translation
 /// it fits best (named by its Bible's id). References are read with [`bible_data`], as the Bibles
-/// were imported, so a deuterocanonical book is named and scoped like any other
-pub fn engine_of<'b>(bibles: impl IntoIterator<Item = &'b Bible>) -> Engine {
+/// were imported, so a deuterocanonical book is named and scoped like any other. A chapter or verse
+/// numbered past 255, which topos can't number, is an error
+pub fn engine_of<'b>(bibles: impl IntoIterator<Item = &'b Bible>) -> crate::Result<Engine> {
     let mut builder = Engine::builder().data(bible_data().clone());
     for bible in bibles {
         let mut translation = Translation::new(&bible.id);
         for book in &bible.books {
             for (c, chapter) in book.chapters.iter().enumerate() {
                 for (v, text) in chapter.iter().enumerate() {
-                    translation.verse(VerseRef::new(book.id, c as u8 + 1, v as u8 + 1), text);
+                    let (Ok(c), Ok(v)) = (u8::try_from(c + 1), u8::try_from(v + 1)) else {
+                        return Err(Error::invalid(format!(
+                            "{} {}:{} in {}: chapters and verses past 255 can't be searched",
+                            book.name,
+                            c + 1,
+                            v + 1,
+                            bible.name
+                        )));
+                    };
+                    translation.verse(VerseRef::new(book.id, c, v), text);
                 }
             }
         }
         builder.add(translation);
     }
-    builder.build()
+    Ok(builder.build())
 }
 
 /// Looks for one book's verses, or the whole Bible's
@@ -274,7 +285,7 @@ mod tests {
     #[test]
     fn finds_exact_close_and_neighbors() {
         let b = bible();
-        let engine = engine(&b);
+        let engine = engine(&b).unwrap();
         let searcher = searcher(&engine, Some(43)).unwrap();
         let t = transcript(
             "so turn with me. Jesus answered and said unto him verily verily I say unto thee except a man be born again he cannot see the kingdom of God. \
@@ -309,6 +320,15 @@ mod tests {
     }
 
     #[test]
+    fn verses_past_255_are_an_error() {
+        let mut b = bible();
+        b.books[0].chapters[0] = vec!["Selah.".into(); 256];
+        let e = engine(&b).err().expect("verse 256");
+        assert_eq!(e.kind(), crate::ErrorKind::Invalid);
+        assert!(e.to_string().starts_with("John 1:256"), "{e}");
+    }
+
+    #[test]
     fn deuterocanonical_books_are_named_and_scoped() {
         let mut b = bible();
         b.books = vec![BibleBook {
@@ -319,7 +339,7 @@ mod tests {
                 "I Tobit have walked all the days of my life in the ways of truth and justice".into(),
             ]],
         }];
-        let engine = engine(&b);
+        let engine = engine(&b).unwrap();
         let tobit = scoped(
             &engine,
             BookScope {

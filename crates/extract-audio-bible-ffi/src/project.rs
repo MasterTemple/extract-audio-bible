@@ -203,7 +203,7 @@ impl Project {
         if s.project.bibles_searched().len() > 1 {
             return Err(invalid("this project searches several translations: use searchIn"));
         }
-        self.search_with(&mut s, &bible.engine(), files)
+        self.search_with(&mut s, &*bible.engine()?, files)
     }
 
     /**
@@ -223,7 +223,7 @@ impl Project {
                 "the project searches Bible {missing}, which these translations don't have"
             )));
         }
-        self.search_with(&mut s, &translations.engine(), files)
+        self.search_with(&mut s, &*translations.engine()?, files)
     }
 
     /// Whether it's building an audio Bible or finding every verse read

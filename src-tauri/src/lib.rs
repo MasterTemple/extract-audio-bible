@@ -285,7 +285,7 @@ async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project: Pro
             Some(engine) => engine,
             None => {
                 let bibles = ids.iter().map(|id| store.bible(id)).collect::<Result<Vec<_>>>()?;
-                let engine = Arc::new(matcher::engine_of(&bibles));
+                let engine = Arc::new(matcher::engine_of(&bibles)?);
                 *cached.lock().unwrap() = Some((key, engine.clone()));
                 engine
             }

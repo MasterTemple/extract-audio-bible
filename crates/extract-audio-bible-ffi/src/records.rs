@@ -579,7 +579,7 @@ impl Selection {
         let mut parts = key.split('.').map(|p| p.parse::<u16>().ok());
         let (book, chapter, verse) = (parts.next()??, parts.next()??, parts.next()??);
         Some(Selection {
-            book: book as u8,
+            book: u8::try_from(book).ok()?,
             chapter,
             verse,
             reading_id: s.match_id.clone(),

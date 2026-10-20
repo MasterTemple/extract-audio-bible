@@ -19,7 +19,7 @@ let transcript = Transcript::parse(
     r#"{"segments": [{"start": 0, "end": 6, "text": "Jesus wept. Then said the Jews, behold how he loved him."}]}"#,
 )?;
 
-let engine = matcher::engine(&bible);
+let engine = matcher::engine(&bible)?;
 let searcher = matcher::searcher(&engine, Some(43)).expect("John is a book");
 let (readings, runs) = matcher::find_matches(&searcher, &transcript, "sunday", &Default::default());
 let verses: Vec<u16> = readings.iter().map(|r| r.verse).collect();

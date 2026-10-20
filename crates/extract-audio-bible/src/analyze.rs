@@ -32,7 +32,7 @@ pub fn analyze(
     files: &dyn Files,
     progress: &(dyn Fn(usize, usize, &str) + Sync),
 ) -> Result<Analysis> {
-    analyze_with(project, &matcher::engine(bible), files, progress)
+    analyze_with(project, &matcher::engine(bible)?, files, progress)
 }
 
 /// [`analyze`] with the Bible already indexed ([`matcher::engine`]: worth keeping when searching
@@ -163,7 +163,7 @@ mod tests {
             match_count: 0,
             file_id: "s".into(),
         });
-        let engine = matcher::engine_of([&kjv, &web]);
+        let engine = matcher::engine_of([&kjv, &web]).unwrap();
         let found = analyze_with(&mut project, &engine, &files, &|_, _, _| {}).unwrap();
         let read: Vec<(u16, &str, &[String])> = found
             .matches

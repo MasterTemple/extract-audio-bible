@@ -103,7 +103,7 @@ pub fn reading_rows(project: &Project, matches: &MatchSet, bibles: &[&Bible], fi
                 also_at: (m.also_at.iter())
                     .filter_map(|key| {
                         let mut parts = key.split('.').map(|p| p.parse::<u16>().ok());
-                        Some(name(parts.next()?? as u8, parts.next()??, parts.next()??))
+                        Some(name(u8::try_from(parts.next()??).ok()?, parts.next()??, parts.next()??))
                     })
                     .collect(),
                 start: m.start,

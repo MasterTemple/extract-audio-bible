@@ -192,7 +192,7 @@ impl ExtractAudioBible {
         min_accuracy: f64,
     ) -> Result<Searcher, ExtractAudioBibleError> {
         let book = book_named(book)?;
-        let engine = bible.engine();
+        let engine = bible.engine()?;
         let books = book.map(|b| BTreeSet::from([b]));
         eab::matcher::scoped(&engine, books.as_ref()).map_err(|e| invalid(e.to_string()))?;
         Ok(Searcher {
@@ -342,10 +342,12 @@ impl Bible {
         }
     }
 
-    fn engine(&self) -> Arc<Engine> {
-        self.engine
-            .get_or_init(|| Arc::new(eab::matcher::engine(&self.inner)))
-            .clone()
+    fn engine(&self) -> Result<Arc<Engine>, ExtractAudioBibleError> {
+        if let Some(engine) = self.engine.get() {
+            return Ok(engine.clone());
+        }
+        let engine = Arc::new(eab::matcher::engine(&self.inner)?);
+        Ok(self.engine.get_or_init(|| engine).clone())
     }
 }
 
@@ -487,10 +489,12 @@ pub struct Translations {
 }
 
 impl Translations {
-    pub(crate) fn engine(&self) -> Arc<Engine> {
-        self.engine
-            .get_or_init(|| Arc::new(eab::matcher::engine_of(self.bibles.iter().map(|b| b.as_ref()))))
-            .clone()
+    pub(crate) fn engine(&self) -> Result<Arc<Engine>, ExtractAudioBibleError> {
+        if let Some(engine) = self.engine.get() {
+            return Ok(engine.clone());
+        }
+        let engine = Arc::new(eab::matcher::engine_of(self.bibles.iter().map(|b| b.as_ref()))?);
+        Ok(self.engine.get_or_init(|| engine).clone())
     }
 
     pub(crate) fn bibles(&self) -> Vec<&eab::Bible> {
@@ -527,7 +531,7 @@ impl Translations {
             return Err(invalid("no translations: add some with withBible"));
         }
         let books = eab::BookScope::from(&scope).books()?;
-        let engine = self.engine();
+        let engine = self.engine()?;
         eab::matcher::scoped(&engine, books.as_ref()).map_err(|e| invalid(e.to_string()))?;
         Ok(Searcher {
             engine,

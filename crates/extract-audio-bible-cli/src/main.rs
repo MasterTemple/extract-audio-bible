@@ -390,7 +390,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
             project.settings.min_accuracy = min_accuracy;
             let names: Vec<String> = transcripts.iter().map(|p| p.to_string_lossy().into_owned()).collect();
             project.add_sources(&names);
-            let engine = matcher::engine_of(&bibles);
+            let engine = matcher::engine_of(&bibles)?;
             let analysis = extract_audio_bible::analyze_with(&mut project, &engine, &Disk, &|_, _, _| {})?;
             if let Some((name, e)) = analysis.errors.into_iter().next() {
                 bail!("{name}: {e}");
