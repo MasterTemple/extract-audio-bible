@@ -5,19 +5,24 @@ import { Input } from "@/components/ui/input";
 import { api, errorMessage, type Said } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { play, usePlayer } from "@/lib/player";
-import { audioPathOf, formatTime, sourceColor, sourceTitle } from "@/lib/refs";
+import { audioPathOf, formatTime, sermonMatches, sourceColor, sourceTitle, valuesOf } from "@/lib/refs";
+import { MultiSelect } from "./MultiSelect";
 
 /** The most places shown */
 const LIMIT = 500;
 
-/** What was last searched for, kept while other tabs are open */
+/** What was last searched for, and among whose sermons, kept while other tabs are open */
 let lastQuery = "";
+let lastSpeakers: string[] = [];
+let lastSeries: string[] = [];
 
 /** Searching every sermon's transcript for what was said */
 export function SearchPanel() {
   const { project, openTranscript } = useApp();
   const player = usePlayer();
   const [query, setQuery] = useState(lastQuery);
+  const [speakers, setSpeakers] = useState(lastSpeakers);
+  const [series, setSeries] = useState(lastSeries);
   const [result, setResult] = useState<{ query: string; found: Said[]; more: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -27,16 +32,18 @@ export function SearchPanel() {
 
   // Searched a moment after typing stops
   useEffect(() => {
-    lastQuery = query;
+    [lastQuery, lastSpeakers, lastSeries] = [query, speakers, series];
     const p = useApp.getState().project;
     if (!p || !query.trim()) {
       setResult(null);
       return;
     }
+    // Only the sermons of the speakers and series chosen (all, with none chosen)
+    const among = speakers.length || series.length ? p.sources.filter((s) => sermonMatches(p, s, speakers, series)).map((s) => s.id) : null;
     let live = true;
     const timer = setTimeout(() => {
       setBusy(true);
-      api.searchTranscripts(p, query, null, LIMIT).then(
+      api.searchTranscripts(p, query, among, LIMIT).then(
         (r) => {
           if (!live) return;
           setResult({ query, found: r.found, more: r.more });
@@ -54,7 +61,7 @@ export function SearchPanel() {
       live = false;
       clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, speakers, series]);
 
   // Places by sermon, in the sermons' order
   const groups = useMemo(() => {
@@ -90,6 +97,28 @@ export function SearchPanel() {
           />
           {busy && <Loader2 className="absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
         </div>
+        {(valuesOf(project, "speaker").length > 0 || valuesOf(project, "series").length > 0) && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {valuesOf(project, "speaker").length > 0 && (
+              <MultiSelect
+                options={valuesOf(project, "speaker").map((v) => ({ value: v, label: v }))}
+                value={speakers}
+                onChange={setSpeakers}
+                placeholder="Every speaker"
+                searchPlaceholder="Search speakers…"
+              />
+            )}
+            {valuesOf(project, "series").length > 0 && (
+              <MultiSelect
+                options={valuesOf(project, "series").map((v) => ({ value: v, label: v }))}
+                value={series}
+                onChange={setSeries}
+                placeholder="Every series"
+                searchPlaceholder="Search series…"
+              />
+            )}
+          </div>
+        )}
         <p className="text-xs text-muted-foreground">
           Words are found in order, whatever their case, accents, or punctuation, with numbers spelled out (“70 times 7” finds
           “seventy times seven”); the last word can be the start of one.

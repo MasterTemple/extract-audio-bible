@@ -331,7 +331,7 @@ export const useApp = create<AppState>((set, get) => {
         const files = { ...p.files };
         for (const [id, change] of Object.entries(given)) {
           const merged: FileMetadata = { ...files[id], ...change };
-          for (const key of ["title", "passage"] as const) if (!merged[key]?.trim()) delete merged[key];
+          for (const key of ["title", "passage", "speaker", "series"] as const) if (!merged[key]?.trim()) delete merged[key];
           if (Object.keys(merged).length === 0) delete files[id];
           else files[id] = merged;
         }

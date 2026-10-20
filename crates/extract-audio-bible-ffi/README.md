@@ -196,8 +196,8 @@ transcript (`.json`) of the same name; `search` reads their transcripts through 
 every reading. Here the files are in memory, by the paths the project names them by.
 
 Each sermon has a file id: the id its transcript gives (a Let's Church transcript's media id) once
-it's searched, or its file's name. What's known about a sermon, its title and the passage it
-preaches, is kept by file id, apart from the sermons: `setFileMetadata` sets it for one (even one
+it's searched, or its file's name. What's known about a sermon (its title, the passage it
+preaches, its speaker, and its series) is kept by file id, apart from the sermons: `setFileMetadata` sets it for one (even one
 not added yet), and `applyFileMetadataJson` for many, field by field. A transcript's own title is
 used when none is given.
 
@@ -228,9 +228,10 @@ const sermon = project.sources()[0];
 console.log(sermon.label, sermon.wordCount, sermon.readingCount); // → sunday 72 5
 console.log(project.runs().length, project.readings().length); // → 1 5
 
-project.applyFileMetadataJson('{"sunday": {"title": "Jesus Wept", "passage": "John 11:33-36"}}');
+project.applyFileMetadataJson('{"sunday": {"title": "Jesus Wept", "passage": "John 11:33-36", "speaker": "Pastor Jim", "series": "John"}}');
 const info = project.sources()[0];
 console.log(info.fileId, info.title, info.passage); // → sunday Jesus Wept John 11:33-36
+console.log(info.speaker, info.series); // → Pastor Jim John
 project.setFileMetadata("sunday", { ...project.fileMetadata("sunday"), title: null });
 console.log(project.sources()[0].title, project.fileMetadata("sunday").passage); // → null John 11:33-36
 
@@ -263,9 +264,10 @@ sermon = project.sources()[0]
 print(sermon.label, sermon.word_count, sermon.reading_count)  # → sunday 72 5
 print(len(project.runs()), len(project.readings()))  # → 1 5
 
-project.apply_file_metadata_json('{"sunday": {"title": "Jesus Wept", "passage": "John 11:33-36"}}')
+project.apply_file_metadata_json('{"sunday": {"title": "Jesus Wept", "passage": "John 11:33-36", "speaker": "Pastor Jim", "series": "John"}}')
 info = project.sources()[0]
 print(info.file_id, info.title, info.passage)  # → sunday Jesus Wept John 11:33-36
+print(info.speaker, info.series)  # → Pastor Jim John
 project.set_file_metadata("sunday", dataclasses.replace(project.file_metadata("sunday"), title=None))
 print(project.sources()[0].title, project.file_metadata("sunday").passage)  # → None John 11:33-36
 
@@ -487,7 +489,7 @@ for (const r of everything.readingTable(both, files).slice(1, 4)) console.log(r.
 // → John 11:34 BSB  | “Where have you put him?” He asked. “Come and see, Lord,” they answered.
 // → John 11:35 BSB KJV | Jesus wept.
 // → John 11:36 BSB  | Then the Jews said, “See how He loved him!”
-console.log(everything.readingsCsv(both, files).split("\n")[0]); // → sermon,sermon id,reference,book,chapter,verse,also at,translation,also in,start,end,kind,accuracy,coverage,said
+console.log(everything.readingsCsv(both, files).split("\n")[0]); // → sermon,sermon id,speaker,series,reference,book,chapter,verse,also at,translation,also in,start,end,kind,accuracy,coverage,said
 ```
 
 ```python
@@ -510,7 +512,7 @@ for r in everything.reading_table(both, files)[1:4]:
 # → John 11:34 BSB  | “Where have you put him?” He asked. “Come and see, Lord,” they answered.
 # → John 11:35 BSB KJV | Jesus wept.
 # → John 11:36 BSB  | Then the Jews said, “See how He loved him!”
-print(everything.readings_csv(both, files).splitlines()[0])  # → sermon,sermon id,reference,book,chapter,verse,also at,translation,also in,start,end,kind,accuracy,coverage,said
+print(everything.readings_csv(both, files).splitlines()[0])  # → sermon,sermon id,speaker,series,reference,book,chapter,verse,also at,translation,also in,start,end,kind,accuracy,coverage,said
 ```
 
 ## Saving and opening

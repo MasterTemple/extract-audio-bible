@@ -308,7 +308,7 @@ struct SaidIn {
 }
 
 /**
-Where a phrase was said in the project's sermons (or one of them), up to `limit` places. The
+Where a phrase was said in the project's sermons (or some of them, by id), up to `limit` places. The
 transcripts not already held are read for each search (all at once) and not kept: every sermon's,
 held, could take hundreds of megabytes, but reading them is quick
 */
@@ -318,14 +318,15 @@ async fn search_transcripts(
     project: Project,
     phrase: String,
     prefix: bool,
-    source_id: Option<String>,
+    source_ids: Option<Vec<String>>,
     limit: usize,
 ) -> Result<SaidIn> {
     use rayon::prelude::*;
     let held = state.transcripts.lock().unwrap().clone();
     blocking(move || {
         let options = extract_audio_bible::FindOptions { prefix, context: 14, limit: limit + 1 };
-        let sources: Vec<_> = project.sources.iter().filter(|s| source_id.as_ref().is_none_or(|id| &s.id == id)).collect();
+        let sources: Vec<_> =
+            project.sources.iter().filter(|s| source_ids.as_ref().is_none_or(|ids| ids.contains(&s.id))).collect();
         let results: Vec<_> = (sources.par_iter())
             .map(|source| {
                 let t = match held.get(&source.transcript_path) {

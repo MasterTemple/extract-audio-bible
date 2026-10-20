@@ -75,6 +75,12 @@ pub struct FileMetadata {
     /// The passage it preaches ("1 Thessalonians 5:12-15")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub passage: Option<String>,
+    /// Who preached it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+    /// The series it's part of ("1 Thessalonians")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub series: Option<String>,
 }
 
 impl FileMetadata {
@@ -83,6 +89,8 @@ impl FileMetadata {
         FileMetadata {
             title: other.title.clone().or_else(|| self.title.clone()),
             passage: other.passage.clone().or_else(|| self.passage.clone()),
+            speaker: other.speaker.clone().or_else(|| self.speaker.clone()),
+            series: other.series.clone().or_else(|| self.series.clone()),
         }
     }
 }
@@ -458,7 +466,8 @@ impl Project {
     /**
     Sets what's known about sermons by their file ids, field by field (a field left out is kept),
     from JSON like `{"1qUVQV7mkmdh3TxbEwHHtA": {"title": "Encourage One Another", "passage":
-    "1 Thess 5:12-15"}}`. Returns how many ids were given
+    "1 Thess 5:12-15", "speaker": "Paul Washer", "series": "1 Thessalonians"}}`. Returns how many
+    ids were given
     */
     pub fn apply_file_metadata(&mut self, given: BTreeMap<String, FileMetadata>) -> usize {
         let count = given.len();
@@ -680,6 +689,7 @@ mod tests {
         let given = |title: Option<&str>, passage: Option<&str>| FileMetadata {
             title: title.map(Into::into),
             passage: passage.map(Into::into),
+            ..Default::default()
         };
         p.apply_file_metadata([("one".into(), given(None, Some("John 11")))].into());
         assert_eq!(p.source_title(&p.sources[0]), "one");
@@ -694,5 +704,12 @@ mod tests {
         p.identify(&source, Some("xyz"), Some("Jesus Wept"));
         assert_eq!(p.file_metadata(&p.sources[0]), given(Some("Lazarus"), Some("John 11")));
         assert_eq!(p.source_title(&p.sources[0]), "Lazarus");
+
+        // Speaker and series too, from JSON
+        let json = r#"{"xyz": {"speaker": "Sam Renihan", "series": "John"}}"#;
+        p.apply_file_metadata(serde_json::from_str(json).unwrap());
+        let meta = p.file_metadata(&p.sources[0]);
+        assert_eq!((meta.speaker.as_deref(), meta.series.as_deref()), (Some("Sam Renihan"), Some("John")));
+        assert_eq!(meta.title.as_deref(), Some("Lazarus"));
     }
 }

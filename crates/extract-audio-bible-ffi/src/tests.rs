@@ -124,7 +124,7 @@ fn a_project_from_sermon_to_mp3() {
     project.set_file_metadata("later".into(), FileMetadata::default());
     assert_eq!(project.file_metadata("later".into()), FileMetadata::default());
     assert!(matches!(
-        project.apply_file_metadata_json(r#"{"sunday": {"speaker": "x"}}"#.into()),
+        project.apply_file_metadata_json(r#"{"sunday": {"preacher": "x"}}"#.into()),
         Err(ExtractAudioBibleError::Invalid { .. })
     ));
     let chosen = project.choose_best(&bible, 0.75).unwrap();
@@ -337,7 +337,7 @@ fn every_verse_read_in_several_translations() {
             .lines()
             .nth(2)
             .unwrap()
-            .contains(",John 11:36,43,11,36,,WEB,")
+            .contains(",,,John 11:36,43,11,36,,WEB,")
     );
 
     // Searching without a project

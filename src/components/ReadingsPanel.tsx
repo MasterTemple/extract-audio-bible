@@ -13,6 +13,7 @@ import { useApp } from "@/lib/store";
 import { play, usePlayer } from "@/lib/player";
 import { audioPathOf, formatTime, kindLabel, sourceColor } from "@/lib/refs";
 import { kindClass } from "./MatchCard";
+import { MultiSelect } from "./MultiSelect";
 
 /** Past this many sermons, or verses, the list starts folded (by sermon, or by book) */
 const FOLD_SERMONS = 15;
@@ -66,6 +67,8 @@ export function ReadingsPanel() {
   const [filter, setFilter] = useState("");
   const [kind, setKind] = useState<MatchKind | "all">("all");
   const [translation, setTranslation] = useState("all");
+  const [speakers, setSpeakers] = useState<string[]>([]);
+  const [series, setSeries] = useState<string[]>([]);
   // What's folded: sermons (`s:id`), testaments (`t:name`), books (`b:id`), chapters (`c:book.chapter`)
   const [fold, setFold] = useState<Set<string> | null>(() => (project ? folded.get(project.id) ?? null : null));
   const changeFold = (next: Set<string>) => {
@@ -92,13 +95,23 @@ export function ReadingsPanel() {
 
   const kept = useMemo(() => {
     const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
+    const among = (value: string | null, wanted: string[]) => wanted.length === 0 || (!!value && wanted.includes(value.trim()));
     return (rows ?? []).filter(
       (r) =>
         (kind === "all" || r.kind === kind) &&
         (translation === "all" || r.translation === translation) &&
+        among(r.speaker, speakers) &&
+        among(r.series, series) &&
         words.every((w) => r.reference.toLowerCase().includes(w)),
     );
-  }, [rows, filter, kind, translation]);
+  }, [rows, filter, kind, translation, speakers, series]);
+
+  // The speakers and series the readings' sermons have
+  const [speakerList, seriesList] = useMemo(() => {
+    const of = (pick: (r: ReadingRow) => string | null) =>
+      [...new Set((rows ?? []).map(pick).filter((v): v is string => !!v?.trim()).map((v) => v.trim()))].sort((a, b) => a.localeCompare(b));
+    return [of((r) => r.speaker), of((r) => r.series)];
+  }, [rows]);
 
   const bySermon = useMemo(() => {
     const groups = new Map<string, ReadingRow[]>();
@@ -364,6 +377,26 @@ export function ReadingsPanel() {
               </SelectContent>
             </Select>
           )}
+          {speakerList.length > 0 && (
+            <MultiSelect
+              className="w-56"
+              options={speakerList.map((v) => ({ value: v, label: v }))}
+              value={speakers}
+              onChange={setSpeakers}
+              placeholder="Every speaker"
+              searchPlaceholder="Search speakers…"
+            />
+          )}
+          {seriesList.length > 0 && (
+            <MultiSelect
+              className="w-56"
+              options={seriesList.map((v) => ({ value: v, label: v }))}
+              value={series}
+              onChange={setSeries}
+              placeholder="Every series"
+              searchPlaceholder="Search series…"
+            />
+          )}
           {rows && kept.length !== rows.length && (
             <span className="text-xs text-muted-foreground">{kept.length.toLocaleString()} shown</span>
           )}
@@ -396,6 +429,11 @@ export function ReadingsPanel() {
                         <span className="flex items-center gap-2">
                           <span className="size-2.5 shrink-0 rounded-full" style={{ background: sourceColor(project, sourceId) }} />
                           {list[0].sermon}
+                          {(list[0].speaker || list[0].series) && (
+                            <span className="text-xs font-normal text-muted-foreground">
+                              {[list[0].speaker, list[0].series].filter(Boolean).join(" · ")}
+                            </span>
+                          )}
                         </span>
                       }
                     >

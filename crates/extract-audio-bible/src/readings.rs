@@ -20,6 +20,9 @@ pub struct ReadingRow {
     /// The sermon's title (or file's name), and its file id
     pub sermon: String,
     pub sermon_id: String,
+    /// Who preached it, and the series it's in, if known
+    pub speaker: Option<String>,
+    pub series: Option<String>,
     /// "John 11:35", in the names of the project's first translation
     pub reference: String,
     pub book: u8,
@@ -64,6 +67,7 @@ pub fn reading_rows(project: &Project, matches: &MatchSet, bibles: &[&Bible], fi
         found.sort_by_key(|m| m.word_start);
         let transcript = Transcript::open(files, &source.transcript_path).ok();
         let sermon = project.source_title(source);
+        let meta = project.file_metadata(source);
         let name = |book: u8, chapter: u16, verse: u16| {
             let book = names.and_then(|b| b.book(book)).map_or_else(|| book.to_string(), |b| b.name.clone());
             format!("{book} {chapter}:{verse}")
@@ -78,6 +82,8 @@ pub fn reading_rows(project: &Project, matches: &MatchSet, bibles: &[&Bible], fi
                 source_id: source.id.clone(),
                 sermon: sermon.clone(),
                 sermon_id: source.file_id(),
+                speaker: meta.speaker.clone(),
+                series: meta.series.clone(),
                 reference: name(m.book, m.chapter, m.verse),
                 book: m.book,
                 chapter: m.chapter,
@@ -109,7 +115,7 @@ pub fn to_csv(rows: &[ReadingRow]) -> String {
         if s.contains([',', '"', '\n', '\r']) { format!("\"{}\"", s.replace('"', "\"\"")) } else { s.to_string() }
     };
     let mut out = String::from(
-        "sermon,sermon id,reference,book,chapter,verse,also at,translation,also in,start,end,kind,accuracy,coverage,said\n",
+        "sermon,sermon id,speaker,series,reference,book,chapter,verse,also at,translation,also in,start,end,kind,accuracy,coverage,said\n",
     );
     for r in rows {
         let kind = match r.kind {
@@ -120,6 +126,8 @@ pub fn to_csv(rows: &[ReadingRow]) -> String {
         let cells = [
             field(&r.sermon),
             field(&r.sermon_id),
+            field(r.speaker.as_deref().unwrap_or_default()),
+            field(r.series.as_deref().unwrap_or_default()),
             field(&r.reference),
             r.book.to_string(),
             r.chapter.to_string(),

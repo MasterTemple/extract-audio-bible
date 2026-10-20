@@ -149,7 +149,7 @@ export function TranscriptView() {
     }
     let live = true;
     const timer = setTimeout(() => {
-      api.searchTranscripts(p, query, sourceId, 5000).then(
+      api.searchTranscripts(p, query, [sourceId], 5000).then(
         (r) => {
           if (!live) return;
           setHits(r.found);

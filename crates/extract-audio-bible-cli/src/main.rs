@@ -106,8 +106,8 @@ enum Command {
     /// List the project's sermons with their file ids, titles, and passages
     Sermons {
         dir: PathBuf,
-        /// First set titles and passages by file id from JSON, field by field:
-        /// `{"<file id>": {"title": "…", "passage": "1 Thess 5:12-15"}}`
+        /// First set titles, passages, speakers, and series by file id from JSON, field by field:
+        /// `{"<file id>": {"title": "…", "passage": "1 Thess 5:12-15", "speaker": "…", "series": "…"}}`
         #[arg(long)]
         info: Option<PathBuf>,
     },
@@ -133,6 +133,12 @@ enum Command {
         /// The most places to give (0 for all)
         #[arg(long, default_value_t = 0)]
         limit: usize,
+        /// Only sermons by this speaker (as their information names them; again for others)
+        #[arg(long = "speaker")]
+        speakers: Vec<String>,
+        /// Only sermons in this series (again for others)
+        #[arg(long = "series")]
+        series: Vec<String>,
     },
     /// Find every reading of the project's verses in its sermons
     Search { dir: PathBuf },
@@ -478,7 +484,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 let given = read_json(&info)?;
                 let count = p.project.apply_file_metadata(given);
                 p.save()?;
-                out.note(format!("Set {}", plural(count, "sermon's information")));
+                out.note(format!("Set the information of {}", plural(count, "sermon")));
             }
             let sermons: Vec<Sermon> = (p.project.sources.iter())
                 .map(|s| {
@@ -489,6 +495,8 @@ fn run(command: Command, out: &Out) -> Result<()> {
                         label: s.label.clone(),
                         title: meta.title,
                         passage: meta.passage,
+                        speaker: meta.speaker,
+                        series: meta.series,
                         audio_path: p.project.audio_path(s),
                         transcript_path: s.transcript_path.clone(),
                         readings: s.match_count,
@@ -500,8 +508,17 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 for s in &sermons {
                     let title = s.title.as_deref().unwrap_or(&s.label);
                     let passage = s.passage.as_deref().map(|p| format!(" ({p})")).unwrap_or_default();
+                    let by: Vec<&str> = [s.speaker.as_deref(), s.series.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .collect();
+                    let by = if by.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {}", by.join(" · "))
+                    };
                     text += &format!(
-                        "{:<24} {title}{passage}  {}\n",
+                        "{:<24} {title}{passage}{by}  {}\n",
                         s.file_id,
                         plural(s.readings, "reading")
                     );
@@ -569,8 +586,22 @@ fn run(command: Command, out: &Out) -> Result<()> {
             prefix,
             context,
             limit,
+            speakers,
+            series,
         } => {
-            let p = Folder::open(&dir)?;
+            let mut p = Folder::open(&dir)?;
+            // Only the sermons of the speakers and series asked for (ignoring case)
+            let among = |value: Option<String>, wanted: &[String]| {
+                wanted.is_empty() || value.is_some_and(|v| wanted.iter().any(|w| w.eq_ignore_ascii_case(v.trim())))
+            };
+            let kept: Vec<_> = (p.project.sources.iter())
+                .filter(|s| {
+                    let meta = p.project.file_metadata(s);
+                    among(meta.speaker, &speakers) && among(meta.series, &series)
+                })
+                .cloned()
+                .collect();
+            p.project.sources = kept;
             let options = extract_audio_bible::FindOptions { prefix, context, limit };
             let (found, errors) = extract_audio_bible::search_transcripts(&p.project, &Disk, &phrase, &options);
             for (sermon, e) in &errors {
@@ -1036,6 +1067,8 @@ struct Sermon {
     label: String,
     title: Option<String>,
     passage: Option<String>,
+    speaker: Option<String>,
+    series: Option<String>,
     audio_path: String,
     transcript_path: String,
     readings: usize,

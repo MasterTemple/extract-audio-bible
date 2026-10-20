@@ -62,6 +62,19 @@ export function fileMetadataOf(project: Project, source: Source): FileMetadata {
   return project.files?.[fileIdOf(source)] ?? {};
 }
 
+/** The speakers (or series) the project's sermons have, in order, each once */
+export function valuesOf(project: Project, field: "speaker" | "series"): string[] {
+  const values = project.sources.map((s) => fileMetadataOf(project, s)[field]?.trim()).filter((v): v is string => !!v);
+  return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}
+
+/** Whether a sermon is by one of `speakers` and in one of `series` (an empty list allows any) */
+export function sermonMatches(project: Project, source: Source, speakers: string[], series: string[]): boolean {
+  const meta = fileMetadataOf(project, source);
+  const among = (value: string | null | undefined, wanted: string[]) => wanted.length === 0 || (!!value && wanted.includes(value.trim()));
+  return among(meta.speaker, speakers) && among(meta.series, series);
+}
+
 /** A sermon's title, or its file's name when it has none */
 export function sourceTitle(project: Project, source: Source | undefined): string {
   if (!source) return "Missing sermon";

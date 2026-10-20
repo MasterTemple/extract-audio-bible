@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api, errorMessage, type Progress as ProgressEvent } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { ScopeEditor, TranslationPicker } from "./ScopeEditor";
-import { audioPathOf, fileIdOf, fileMetadataOf, fileName, formatTime, sourceColor } from "@/lib/refs";
+import { audioPathOf, fileIdOf, fileMetadataOf, fileName, formatTime, sourceColor, valuesOf } from "@/lib/refs";
 
 export function SourcesPanel() {
   const { project, update, setProject, setMatches, matchSet, flush, setTab, outline, go, setFileMetadata, openTranscript, bibles } =
@@ -112,8 +112,8 @@ export function SourcesPanel() {
                 name (<code className="text-xs">sermon.mp3</code> + <code className="text-xs">sermon.json</code>). Add
                 files, or a folder to pair everything in it. With somewhere to download audio from, a transcript alone is
                 enough. Titles and passages are kept by each sermon's id (its
-                transcript's, once searched), and can be read from JSON:{" "}
-                <code className="text-xs">{'{"<id>": {"title": …, "passage": …}}'}</code>.
+                transcript's, once searched), with their speakers and series, and can be read from JSON:{" "}
+                <code className="text-xs">{'{"<id>": {"title": …, "passage": …, "speaker": …, "series": …}}'}</code>.
               </CardDescription>
             </div>
             <div className="flex shrink-0 gap-2">
@@ -165,6 +165,8 @@ export function SourcesPanel() {
                   <TableRow>
                     <TableHead>Sermon</TableHead>
                     <TableHead>Passage</TableHead>
+                    <TableHead>Speaker</TableHead>
+                    <TableHead>Series</TableHead>
                     <TableHead>Files</TableHead>
                     <TableHead className="text-right">Length</TableHead>
                     <TableHead className="text-right">Words</TableHead>
@@ -203,6 +205,24 @@ export function SourcesPanel() {
                             onChange={(e) => setFileMetadata({ [fileId]: { passage: e.target.value } })}
                           />
                         </TableCell>
+                        <TableCell>
+                          <input
+                            className="w-full min-w-28 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 focus:underline"
+                            value={meta.speaker ?? ""}
+                            placeholder="Add speaker"
+                            list="sermon-speakers"
+                            onChange={(e) => setFileMetadata({ [fileId]: { speaker: e.target.value } })}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <input
+                            className="w-full min-w-28 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 focus:underline"
+                            value={meta.series ?? ""}
+                            placeholder="Add series"
+                            list="sermon-series"
+                            onChange={(e) => setFileMetadata({ [fileId]: { series: e.target.value } })}
+                          />
+                        </TableCell>
                         <TableCell className="max-w-72 text-xs text-muted-foreground">
                           {s.audioPath ? (
                             <div className="flex items-center gap-1 truncate" title={s.audioPath}>
@@ -239,6 +259,17 @@ export function SourcesPanel() {
                 </TableBody>
               </Table>
             )}
+            {/* Names already given, suggested as each is typed */}
+            <datalist id="sermon-speakers">
+              {valuesOf(project, "speaker").map((v) => (
+                <option key={v} value={v} />
+              ))}
+            </datalist>
+            <datalist id="sermon-series">
+              {valuesOf(project, "series").map((v) => (
+                <option key={v} value={v} />
+              ))}
+            </datalist>
           </CardContent>
         </Card>
 

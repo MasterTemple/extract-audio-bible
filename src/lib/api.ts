@@ -50,6 +50,10 @@ export interface FileMetadata {
   title?: string | null;
   /** The passage it preaches ("1 Thessalonians 5:12-15") */
   passage?: string | null;
+  /** Who preached it */
+  speaker?: string | null;
+  /** The series it's part of */
+  series?: string | null;
 }
 
 export interface Selection {
@@ -149,6 +153,9 @@ export interface ReadingRow {
   /** The sermon's title, and its file id */
   sermon: string;
   sermonId: string;
+  /** Who preached it, and its series, if known */
+  speaker: string | null;
+  series: string | null;
   reference: string;
   book: number;
   chapter: number;
@@ -337,9 +344,9 @@ export const api = {
   /** A whole transcript, in paragraphs (where each begins, by word) */
   transcript: (transcriptPath: string) =>
     invoke<{ id: string | null; title: string | null; words: Word[]; paragraphs: number[] }>("transcript", { transcriptPath }),
-  /** Where a phrase was said in the project's sermons (or one), up to `limit` places; its last word may be the start of one */
-  searchTranscripts: (project: Project, phrase: string, sourceId: string | null, limit: number, prefix = true) =>
-    invoke<{ found: Said[]; more: boolean; errors: string[] }>("search_transcripts", { project, phrase, prefix, sourceId, limit }),
+  /** Where a phrase was said in the project's sermons (or some of them), up to `limit` places; its last word may be the start of one */
+  searchTranscripts: (project: Project, phrase: string, sourceIds: string[] | null, limit: number, prefix = true) =>
+    invoke<{ found: Said[]; more: boolean; errors: string[] }>("search_transcripts", { project, phrase, prefix, sourceIds, limit }),
   renderVerse: (project: Project, book: number, chapter: number, verse: number) =>
     invoke<ArrayBuffer>("render_verse", { project, book, chapter, verse }),
   /** When each chosen verse is heard in `renderChapter`'s audio */

@@ -237,6 +237,9 @@ pub struct ReadingRow {
     /// The sermon's title (or file's name), and its file id
     pub sermon: String,
     pub sermon_id: String,
+    /// Who preached it, and its series, if known
+    pub speaker: Option<String>,
+    pub series: Option<String>,
     /// "John 11:35", in the names of the project's first translation
     pub reference: String,
     pub book: u8,
@@ -264,6 +267,8 @@ impl From<eab::ReadingRow> for ReadingRow {
             source_id: r.source_id,
             sermon: r.sermon,
             sermon_id: r.sermon_id,
+            speaker: r.speaker,
+            series: r.series,
             reference: r.reference,
             book: r.book,
             chapter: r.chapter,
@@ -339,8 +344,10 @@ pub struct SourceInfo {
     pub label: String,
     /// Its title, given or from its transcript
     pub title: Option<String>,
-    /// The passage it preaches, if given
+    /// The passage it preaches, who preached it, and its series, if given
     pub passage: Option<String>,
+    pub speaker: Option<String>,
+    pub series: Option<String>,
     /// Its audio file, or (with none) the project's audio URL filled in with its file id; empty
     /// when it has neither
     pub audio_path: String,
@@ -360,6 +367,8 @@ impl SourceInfo {
             label: s.label.clone(),
             title: meta.title,
             passage: meta.passage,
+            speaker: meta.speaker,
+            series: meta.series,
             audio_path: project.audio_path(s),
             transcript_path: s.transcript_path.clone(),
             duration: s.duration,
@@ -440,6 +449,10 @@ pub struct FileMetadata {
     pub title: Option<String>,
     /// The passage it preaches ("1 Thessalonians 5:12-15")
     pub passage: Option<String>,
+    /// Who preached it
+    pub speaker: Option<String>,
+    /// The series it's part of
+    pub series: Option<String>,
 }
 
 impl From<eab::FileMetadata> for FileMetadata {
@@ -447,6 +460,8 @@ impl From<eab::FileMetadata> for FileMetadata {
         FileMetadata {
             title: m.title,
             passage: m.passage,
+            speaker: m.speaker,
+            series: m.series,
         }
     }
 }
@@ -456,6 +471,8 @@ impl From<FileMetadata> for eab::FileMetadata {
         eab::FileMetadata {
             title: m.title,
             passage: m.passage,
+            speaker: m.speaker,
+            series: m.series,
         }
     }
 }
