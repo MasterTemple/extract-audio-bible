@@ -1,4 +1,4 @@
-import { Check, Combine, Link2, Loader2, Play, Square, Rewind, AudioLines } from "lucide-react";
+import { Check, Combine, FileText, Link2, Loader2, Play, Square, Rewind, AudioLines } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -79,7 +79,7 @@ A reading found for a verse. `part` is where it plays among the verse's chosen r
 if chosen; `parts` is how many there are
 */
 export function MatchCard({ match, verseText, part, parts }: { match: Match; verseText: string; part: number | null; parts: number }) {
-  const { project, outline, runById, matchById, select, selectMany, join } = useApp();
+  const { project, outline, runById, matchById, select, selectMany, join, openTranscript } = useApp();
   const selected = part !== null;
   const player = usePlayer();
   const source = project?.sources.find((s) => s.id === match.sourceId);
@@ -173,6 +173,9 @@ export function MatchCard({ match, verseText, part, parts }: { match: Match; ver
         <Button size="sm" variant="ghost" onClick={playContext}>
           {player.loading === contextId ? <Loader2 className="animate-spin" /> : player.id === contextId ? <Square /> : <Rewind />}
           With context
+        </Button>
+        <Button size="sm" variant="ghost" title="Open the whole transcript here" onClick={() => openTranscript(source.id, match.start)}>
+          <FileText /> In transcript
         </Button>
         <div className="ml-auto">
           {selected ? (

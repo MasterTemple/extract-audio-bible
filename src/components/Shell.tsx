@@ -7,6 +7,7 @@ import { versesNeeded } from "@/lib/refs";
 import { SourcesPanel } from "./SourcesPanel";
 import { VersesPanel } from "./VersesPanel";
 import { ExportPanel } from "./ExportPanel";
+import { TranscriptView } from "./TranscriptView";
 
 export function Shell() {
   const { project, bibles, tab, setTab, saving, closeProject, outline } = useApp();
@@ -68,6 +69,7 @@ export function Shell() {
         {tab === "sources" && <SourcesPanel />}
         {tab === "export" && <ExportPanel />}
       </main>
+      <TranscriptView />
     </div>
   );
 }

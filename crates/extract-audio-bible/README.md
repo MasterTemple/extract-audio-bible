@@ -59,7 +59,7 @@ export_to_dir(&project, &bible, &chapters, &Disk, Path::new("audio-bible"), |_| 
 - [`bible`]: Bibles from USFM, USX, OSIS, ThML, GBF (through `logoxide-text`), JSON, CSV/TSV, or
   `John 3:16 text` lines
 - [`transcript`]: WhisperX JSON and Let's Church transcripts; segments without word times have
-  their words spread over their time
+  their words spread over their time, and each transcript keeps where its paragraphs begin
 - [`matcher`]: every reading of every verse, with cut points (verses are found by
   `scripture-quotes`)
 - [`project`]: a project's sermons, chosen readings, settings, and export metadata, as plain data

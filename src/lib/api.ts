@@ -256,6 +256,9 @@ export const api = {
   /** A verse as it will be exported: all its readings, one after another, with its silence */
   /** Titles and passages by file id, from a JSON file (`{"<file id>": {"title": …, "passage": …}}`) */
   readFileMetadata: (path: string) => invoke<Record<string, FileMetadata>>("read_file_metadata", { path }),
+  /** A whole transcript, in paragraphs (where each begins, by word) */
+  transcript: (transcriptPath: string) =>
+    invoke<{ id: string | null; title: string | null; words: Word[]; paragraphs: number[] }>("transcript", { transcriptPath }),
   renderVerse: (project: Project, book: number, chapter: number, verse: number) =>
     invoke<ArrayBuffer>("render_verse", { project, book, chapter, verse }),
   /** When each chosen verse is heard in `renderChapter`'s audio */

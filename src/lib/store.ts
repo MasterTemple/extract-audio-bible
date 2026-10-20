@@ -37,6 +37,8 @@ interface AppState extends Indexed {
   chapter: number | null;
   verse: number | null;
   saving: boolean;
+  /** The transcript open, and the time to show in it */
+  reading: { sourceId: string; at: number | null } | null;
 
   setTab: (tab: Tab) => void;
   refreshLists: () => Promise<void>;
@@ -49,6 +51,8 @@ interface AppState extends Indexed {
   loadBook: (book: number) => Promise<string[][] | undefined>;
   go: (book: number, chapter: number, verse?: number | null) => void;
   setVerse: (verse: number | null) => void;
+  /** Opens a sermon's transcript, at a time in it if given; null closes it */
+  openTranscript: (sourceId: string | null, at?: number | null) => void;
   select: (match: Match) => void;
   selectMany: (matches: Match[]) => void;
   unselect: (key: string) => void;
@@ -146,6 +150,7 @@ export const useApp = create<AppState>((set, get) => {
     chapter: null,
     verse: null,
     saving: false,
+    reading: null,
 
     setTab: (tab) => set({ tab }),
 
@@ -220,6 +225,8 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     setVerse: (verse) => set({ verse }),
+
+    openTranscript: (sourceId, at = null) => set({ reading: sourceId ? { sourceId, at } : null }),
 
     select: (m) => get().selectMany([m]),
 

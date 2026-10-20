@@ -91,6 +91,13 @@ enum Command {
         #[arg(long)]
         info: Option<PathBuf>,
     },
+    /// Print a sermon's whole transcript in paragraphs, with their times and the readings found
+    /// in it marked (`[1Thess 5:15]` where a chosen reading begins, `<…>` where another does)
+    Transcript {
+        dir: PathBuf,
+        /// The sermon: its id or file name (as `sermons` lists them)
+        sermon: String,
+    },
     /// Find every reading of the project's verses in its sermons
     Search { dir: PathBuf },
     /// Choose the best reading for each verse that has none
@@ -392,6 +399,60 @@ fn run(command: Command, out: &Out) -> Result<()> {
                         s.file_id,
                         plural(s.readings, "reading")
                     );
+                }
+                text.trim_end().to_string()
+            })
+        }
+        Command::Transcript { dir, sermon } => {
+            let p = Folder::open(&dir)?;
+            let source = (p.project.sources.iter())
+                .find(|s| s.file_id() == sermon || s.label == sermon || s.id == sermon)
+                .ok_or_else(|| anyhow!("{sermon}: no such sermon (`sermons` lists them)"))?;
+            let t = Transcript::open(&Disk, &source.transcript_path)?;
+            let chosen: std::collections::HashSet<&str> = (p.project.selections.values())
+                .flat_map(|s| std::iter::once(s.match_id.as_str()).chain(s.joined.iter().map(|j| j.match_id.as_str())))
+                .collect();
+            // Where each reading begins, by word
+            let mut begins: std::collections::HashMap<usize, Vec<String>> = Default::default();
+            for m in p.matches.matches.iter().filter(|m| m.source_id == source.id) {
+                let osis = p
+                    .bible
+                    .book(m.book)
+                    .map_or_else(|| m.book.to_string(), |b| b.osis.clone());
+                let (open, close) = if chosen.contains(m.id.as_str()) {
+                    ('[', ']')
+                } else {
+                    ('<', '>')
+                };
+                begins
+                    .entry(m.word_start as usize)
+                    .or_default()
+                    .push(format!("{open}{osis} {}:{}{close}", m.chapter, m.verse));
+            }
+            let paragraphs: Vec<Paragraph> = (t.paragraphs.iter().enumerate())
+                .map(|(k, &from)| {
+                    let to = t.paragraphs.get(k + 1).copied().unwrap_or(t.words.len());
+                    let mut text = String::new();
+                    for i in from..to {
+                        for mark in begins.get(&i).into_iter().flatten() {
+                            text += mark;
+                            text.push(' ');
+                        }
+                        text += &t.words[i].text;
+                        text.push(' ');
+                    }
+                    Paragraph {
+                        start: t.words[from].start,
+                        end: t.words[to - 1].end,
+                        text: text.trim_end().to_string(),
+                    }
+                })
+                .collect();
+            let title = p.project.source_title(source);
+            out.result(&paragraphs, || {
+                let mut text = format!("{title}\n");
+                for para in &paragraphs {
+                    text += &format!("\n[{}] {}\n", clock(para.start), para.text);
                 }
                 text.trim_end().to_string()
             })
@@ -809,6 +870,15 @@ fn search(p: &mut Folder, out: &Out) -> Result<Searched> {
         readings: p.matches.matches.len(),
         errors,
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Paragraph {
+    start: f64,
+    end: f64,
+    /// Its words, with the readings that begin in it marked
+    text: String,
 }
 
 #[derive(Serialize)]

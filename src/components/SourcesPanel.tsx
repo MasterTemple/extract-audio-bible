@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { AudioLines, CloudDownload, FileJson, FilePlus, FolderPlus, Loader2, ScanSearch, Tags, Trash2 } from "lucide-react";
+import { AudioLines, CloudDownload, FileJson, FilePlus, FileText, FolderPlus, Loader2, ScanSearch, Tags, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import { useApp } from "@/lib/store";
 import { audioPathOf, fileIdOf, fileMetadataOf, fileName, formatTime, sourceColor } from "@/lib/refs";
 
 export function SourcesPanel() {
-  const { project, update, setProject, setMatches, matchSet, flush, setTab, outline, go, setFileMetadata } = useApp();
+  const { project, update, setProject, setMatches, matchSet, flush, setTab, outline, go, setFileMetadata, openTranscript } = useApp();
   const [bookChanged, setBookChanged] = useState(false);
   const [unpaired, setUnpaired] = useState<string[]>([]);
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
@@ -223,8 +223,11 @@ export function SourcesPanel() {
                         <TableCell className="text-right tabular-nums">{s.wordCount ? s.wordCount.toLocaleString() : "–"}</TableCell>
                         <TableCell className="text-right tabular-nums">{s.wordCount ? s.matchCount : "–"}</TableCell>
                         <TableCell className="text-right tabular-nums">{used}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="icon-sm" onClick={() => remove(s.id)}>
+                        <TableCell className="text-right whitespace-nowrap">
+                          <Button variant="ghost" size="icon-sm" title="Read its transcript" onClick={() => openTranscript(s.id)}>
+                            <FileText />
+                          </Button>
+                          <Button variant="ghost" size="icon-sm" title="Remove" onClick={() => remove(s.id)}>
                             <Trash2 />
                           </Button>
                         </TableCell>

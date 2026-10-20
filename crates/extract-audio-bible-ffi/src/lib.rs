@@ -348,6 +348,25 @@ impl Transcript {
     pub fn duration(&self) -> f64 {
         self.inner.duration()
     }
+
+    /**
+    Where each paragraph begins, by word: the transcript's segments (a Let's Church transcript's
+    paragraphs), or its long pauses when it has none. Paragraph `k` is words
+    `paragraphStarts()[k]` up to the next one's start
+    */
+    pub fn paragraph_starts(&self) -> Vec<u32> {
+        self.inner.paragraphs.iter().map(|&i| i as u32).collect()
+    }
+
+    /// The id it gives its sermon (a Let's Church transcript's media id), if any
+    pub fn id(&self) -> Option<String> {
+        self.inner.id.clone()
+    }
+
+    /// The title it gives its sermon, if any
+    pub fn title(&self) -> Option<String> {
+        self.inner.title.clone()
+    }
 }
 
 /**

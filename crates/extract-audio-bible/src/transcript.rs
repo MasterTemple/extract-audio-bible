@@ -65,6 +65,10 @@ pub struct Transcript {
     /// The title it gives its sermon, if any
     pub title: Option<String>,
     pub words: Vec<Word>,
+    /// Where each paragraph begins, by word: the transcript's segments (or a Let's Church
+    /// transcript's paragraphs), or, when it has none, its long pauses. Starts with 0 when it has
+    /// words
+    pub paragraphs: Vec<usize>,
     /// The words, ready to be searched for quotations
     pub quotes: scripture_quotes::Transcript,
 }
@@ -88,7 +92,8 @@ impl Transcript {
         let mut words = words;
         fill_times(&mut words);
         let quotes = scripture_quotes::Transcript::from_words(words.iter().map(|w| &w.text));
-        Transcript { id: None, title: None, words, quotes }
+        let paragraphs = at_pauses(&words);
+        Transcript { id: None, title: None, words, paragraphs, quotes }
     }
 
     fn from_raw(raw: RawTranscript) -> Self {
@@ -110,8 +115,12 @@ impl Transcript {
         // WhisperX keeps every word in `word_segments` too; segments are read unless only that
         // has the words (a segment with no word times has its words spread over its time)
         let only_word_segments = !raw.word_segments.is_empty() && raw.segments.iter().all(|s| s.words.is_empty());
+        let mut paragraphs = vec![];
         if !only_word_segments {
             for seg in &raw.segments {
+                if paragraphs.last() != Some(&words.len()) {
+                    paragraphs.push(words.len());
+                }
                 if seg.words.is_empty() {
                     // Not aligned: its words share the segment's time evenly
                     // (with no time of its own, from its neighbors below)
@@ -152,6 +161,11 @@ impl Transcript {
             }
         }
         fill_times(&mut words);
+        // A segment that had no words doesn't start a paragraph
+        paragraphs.retain(|&i| i < words.len());
+        if paragraphs.is_empty() {
+            paragraphs = at_pauses(&words);
+        }
 
         let quotes = scripture_quotes::Transcript::from_words(words.iter().map(|w| &w.text));
         let id = raw.media_id.or(match raw.id {
@@ -160,12 +174,20 @@ impl Transcript {
             _ => None,
         });
         let nonempty = |s: Option<String>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-        Transcript { id: nonempty(id), title: nonempty(raw.title), words, quotes }
+        Transcript { id: nonempty(id), title: nonempty(raw.title), words, paragraphs, quotes }
     }
 
     pub fn duration(&self) -> f64 {
         self.words.last().map(|w| w.end).unwrap_or(0.0)
     }
+}
+
+/// Paragraphs for words with none of their own: a new one after a pause of two seconds or more
+fn at_pauses(words: &[Word]) -> Vec<usize> {
+    if words.is_empty() {
+        return vec![];
+    }
+    std::iter::once(0).chain((1..words.len()).filter(|&i| words[i].start - words[i - 1].end >= 2.0)).collect()
 }
 
 /// Give untimed words times between their timed neighbors, spread evenly
@@ -224,6 +246,7 @@ mod tests {
         assert_eq!(t.words.len(), 6);
         assert_eq!((t.words[1].start, t.words[1].end), (1.0, 2.0));
         assert!(t.words.iter().all(|w| !w.timed));
+        assert_eq!(t.paragraphs, [0, 2]);
     }
 
     #[test]
@@ -239,5 +262,8 @@ mod tests {
         assert_eq!((t.words[1].start, t.words[1].end), (1.0, 2.0));
         assert_eq!(t.words[2].start, 3.0);
         assert_eq!((t.id.as_deref(), t.title.as_deref()), (Some("x"), Some("Jesus Wept")));
+        assert_eq!(t.paragraphs, [0, 2]);
+        let from_words = Transcript::from_words(t.words.clone());
+        assert_eq!(from_words.paragraphs, [0]);
     }
 }

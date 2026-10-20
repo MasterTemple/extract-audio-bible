@@ -56,6 +56,15 @@ fn bible_and_search_without_a_project() {
 
     let t = eab.read_transcript(r#"{"segments": [{"start": 0, "end": 6, "text": "Jesus wept. Then said the Jews, behold how he loved him."}]}"#.into()).unwrap();
     assert_eq!(t.word_count(), 11);
+    assert_eq!((t.paragraph_starts(), t.id(), t.title()), (vec![0], None, None));
+    let lets_church = eab
+        .read_transcript(r#"{"mediaId": "m1", "title": "Lazarus", "paragraphs": [{"start": 0, "end": 1, "text": "Jesus wept."}, {"start": 2, "end": 3, "text": "Amen."}]}"#.into())
+        .unwrap();
+    assert_eq!(lets_church.paragraph_starts(), [0, 2]);
+    assert_eq!(
+        (lets_church.id().as_deref(), lets_church.title().as_deref()),
+        (Some("m1"), Some("Lazarus"))
+    );
     let found = eab
         .searcher(&bible, Some("Jn".into()), 0.85)
         .unwrap()

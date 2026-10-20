@@ -223,6 +223,23 @@ struct WordWindow {
     words: Vec<Word>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FullTranscript {
+    id: Option<String>,
+    title: Option<String>,
+    words: Vec<Word>,
+    /// Where each paragraph begins, by word
+    paragraphs: Vec<usize>,
+}
+
+/// A whole transcript, in paragraphs
+#[tauri::command]
+async fn transcript(state: State<'_, AppState>, transcript_path: String) -> Result<FullTranscript> {
+    let t = state.transcript(&transcript_path)?;
+    Ok(FullTranscript { id: t.id.clone(), title: t.title.clone(), words: t.words.clone(), paragraphs: t.paragraphs.clone() })
+}
+
 /// Words `from` to `to` (inclusive) of a transcript
 #[tauri::command]
 async fn transcript_words(state: State<'_, AppState>, transcript_path: String, from: i64, to: i64) -> Result<WordWindow> {
@@ -422,6 +439,7 @@ pub fn run() {
             analyze,
             get_matches,
             transcript_words,
+            transcript,
             audio_peaks,
             render_clip,
             render_chapter,

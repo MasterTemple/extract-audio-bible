@@ -128,7 +128,9 @@ word times: a segment without them has its words spread over its time). A `searc
 verses read in a transcript, without a project: one book's (any of its names) or, with `null`,
 the whole Bible's, read at least `minAccuracy` faithfully (0.85 is a good start). Each reading has
 its verse, the transcript's words it spans, where to cut (in seconds), and how well it was read;
-verses read one after another are a run.
+verses read one after another are a run. A transcript's `paragraphStarts` say where each of its
+paragraphs (or segments) begins, by word, to show it whole; `id` and `title` are what it says of
+its sermon (a Let's Church transcript's media id and title), if anything.
 
 ```ts
 import { ReadingKind } from "extract-audio-bible";
@@ -137,6 +139,7 @@ const transcript = eab.readTranscript(readFileSync("sermon.json", "utf8"));
 console.log(transcript.wordCount(), transcript.duration().toFixed(1)); // → 72 39.3
 const first = transcript.words()[0];
 console.log(first.text, first.start, first.end, first.timed); // → good 0.8 1.2 true
+console.log(transcript.paragraphStarts().slice(0, 3).join(" "), transcript.id(), transcript.title()); // → 0 12 26 null null
 
 const found = eab.searcher(bsb, "John", 0.85).find(transcript, "sunday");
 for (const r of found.readings) {
@@ -158,6 +161,7 @@ transcript = eab.read_transcript(Path("sermon.json").read_text())
 print(transcript.word_count(), f"{transcript.duration():.1f}")  # → 72 39.3
 first = transcript.words()[0]
 print(first.text, first.start, first.end, first.timed)  # → good 0.8 1.2 True
+print(transcript.paragraph_starts()[:3], transcript.id(), transcript.title())  # → [0, 12, 26] None None
 
 found = eab.searcher(bsb, "John", 0.85).find(transcript, "sunday")
 for r in found.readings:
@@ -583,7 +587,7 @@ Each class, record, and enum <!-- source -->(by their TypeScript names)<!-- /sou
 | `ExtractAudioBible.readProject` | [Saving and opening](#saving-and-opening) |
 | `ExtractAudioBible.importBibleFromPaths`, `openTranscript` | [Reading natively](#reading-natively) |
 | `Bible.id`, `name`, `abbreviation`, `books`, `verse`, `chapter`, `toJson` | [A Bible](#a-bible), [Saving and opening](#saving-and-opening) |
-| `Transcript.words`, `wordCount`, `duration` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
+| `Transcript.words`, `wordCount`, `duration`, `paragraphStarts`, `id`, `title` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `Searcher.find` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `Files.memory`, `add`, `paths` | [A project](#a-project) |
 | `Files.disk`, `downloading`, `has`, `remove` | [Reading natively](#reading-natively) |
