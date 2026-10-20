@@ -49,14 +49,34 @@ enum Command {
         #[arg(long)]
         language: Option<String>,
     },
-    /// Find the verses read in transcripts, with their times (no project needed)
+    /// Find the verses read in transcripts, with their times, in one translation or several (no
+    /// project needed)
     Find {
         /// A Bible's JSON (from `import`), or its files
         #[arg(long, required = true, num_args = 1..)]
         bible: Vec<PathBuf>,
-        /// Only this book ("John", "1 Thess", "43")
+        /// Another translation to search too (a Bible's JSON, or a folder or file of its text);
+        /// each reading is of the translation it fits best
+        #[arg(long = "translation")]
+        translations: Vec<PathBuf>,
+        /// Only these books ("John", "1 Thess"); with genres, they add up
+        #[arg(long = "book")]
+        books: Vec<String>,
+        /// Only these genres, topos's book groups ("Gospels", "Pauline Epistles", "pentateuch")
+        #[arg(long = "genre")]
+        genres: Vec<String>,
+        /// Only this testament (the books and genres given are then within it)
+        #[arg(long = "testament", value_enum)]
+        testaments: Vec<TestamentArg>,
+        #[arg(long = "exclude-book")]
+        exclude_books: Vec<String>,
+        #[arg(long = "exclude-genre")]
+        exclude_genres: Vec<String>,
+        #[arg(long = "exclude-testament", value_enum)]
+        exclude_testaments: Vec<TestamentArg>,
+        /// Print every reading as CSV (sermon, reference, translation, times, kind, words said…)
         #[arg(long)]
-        book: Option<String>,
+        csv: bool,
         /// How faithfully a verse must be read (0–1)
         #[arg(long, default_value_t = 0.85)]
         min_accuracy: f32,
@@ -219,6 +239,21 @@ enum Command {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
+enum TestamentArg {
+    Old,
+    New,
+}
+
+impl From<TestamentArg> for extract_audio_bible::Testament {
+    fn from(t: TestamentArg) -> Self {
+        match t {
+            TestamentArg::Old => extract_audio_bible::Testament::Old,
+            TestamentArg::New => extract_audio_bible::Testament::New,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
 enum Mode {
     Chapter,
     Verse,
@@ -314,41 +349,91 @@ fn run(command: Command, out: &Out) -> Result<()> {
         }
         Command::Find {
             bible,
-            book,
+            translations,
+            books,
+            genres,
+            testaments,
+            exclude_books,
+            exclude_genres,
+            exclude_testaments,
+            csv,
             min_accuracy,
             transcripts,
         } => {
-            let bible = load_bible(&bible)?;
-            let book = book.as_deref().map(|b| book_id(&bible, b)).transpose()?;
-            let engine = matcher::engine(&bible);
-            let searcher = matcher::searcher(&engine, book).map_err(|e| anyhow!("{e}"))?;
-            let options = extract_audio_bible::scripture_quotes::Options {
-                min_accuracy,
-                ..Default::default()
-            };
-            let mut found = vec![];
-            for path in &transcripts {
-                let name = path.to_string_lossy().into_owned();
-                let t = Transcript::open(&Disk, &name)?;
-                let (matches, runs) = matcher::find_matches(&searcher, &t, &stable_id(&name), &options);
-                found.push(Found {
-                    transcript: name,
-                    matches,
-                    runs,
-                });
+            let mut bibles = vec![load_bible(&bible)?];
+            for path in &translations {
+                bibles.push(load_bible(std::slice::from_ref(path))?);
             }
+            let scope = extract_audio_bible::BookScope {
+                testaments: testaments.into_iter().map(Into::into).collect(),
+                genres,
+                books,
+                exclude_testaments: exclude_testaments.into_iter().map(Into::into).collect(),
+                exclude_genres,
+                exclude_books,
+            };
+            // A project of these transcripts alone, searched as the app searches
+            let mut project = Project::readings("find", "", &bibles.iter().collect::<Vec<_>>(), scope)?;
+            project.settings.min_accuracy = min_accuracy;
+            let names: Vec<String> = transcripts.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+            project.add_sources(&names);
+            let engine = matcher::engine_of(&bibles);
+            let analysis = extract_audio_bible::analyze_with(&mut project, &engine, &Disk, &|_, _, _| {})?;
+            if let Some((name, e)) = analysis.errors.into_iter().next() {
+                bail!("{name}: {e}");
+            }
+            let rows = extract_audio_bible::reading_rows(
+                &project,
+                &analysis.matches,
+                &bibles.iter().collect::<Vec<_>>(),
+                &Disk,
+            );
+            if csv {
+                print!("{}", extract_audio_bible::readings::to_csv(&rows));
+                return Ok(());
+            }
+            let found: Vec<Found> = (project.sources.iter())
+                .map(|s| Found {
+                    transcript: s.transcript_path.clone(),
+                    matches: analysis
+                        .matches
+                        .matches
+                        .iter()
+                        .filter(|m| m.source_id == s.id)
+                        .cloned()
+                        .collect(),
+                    runs: analysis
+                        .matches
+                        .runs
+                        .iter()
+                        .filter(|r| r.source_id == s.id)
+                        .cloned()
+                        .collect(),
+                })
+                .collect();
+            let several = bibles.len() > 1;
             out.result(&found, || {
                 let mut text = String::new();
                 for f in &found {
                     text += &format!("{}\n", f.transcript);
-                    for m in &f.matches {
+                    for r in rows.iter().filter(|r| f.matches.iter().any(|m| m.id == r.id)) {
+                        let translation = if several {
+                            let also = if r.also_in.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" (also {})", r.also_in.join(", "))
+                            };
+                            format!("  {}{also}", r.translation)
+                        } else {
+                            String::new()
+                        };
                         text += &format!(
-                            "  {:<24} {:>8}–{:<8} {:<7} {:>3}% accurate\n",
-                            reference(&bible, m.book, m.chapter, Some(m.verse)),
-                            clock(m.start),
-                            clock(m.end),
-                            format!("{:?}", m.kind).to_lowercase(),
-                            (m.accuracy * 100.0).round()
+                            "  {:<24} {:>8}–{:<8} {:<7} {:>3}% accurate{translation}\n",
+                            r.reference,
+                            clock(r.start),
+                            clock(r.end),
+                            format!("{:?}", r.kind).to_lowercase(),
+                            (r.accuracy * 100.0).round()
                         );
                     }
                 }

@@ -452,6 +452,62 @@ for f in exported:
 print(" ".join(map(str, exported[0].missing[:5])))  # → 1 2 3 4 5
 ```
 
+## Every verse read
+
+A project can find every verse read in its sermons instead of building an audio Bible: in any of
+several translations, each reading of the one it fits best (`translation`) and noting the others
+it fits as faithfully (`alsoIn`), in the books of a scope. A scope is topos's filters: included
+testaments limit it, included genres (`genres` lists them) and books add up within them, and what
+it excludes is left out; `scopeBooks` says which books it searches (`null` for every book).
+`translations()` starts a set of translations, `withBible` adds to it, and its `searcher` finds
+verses without a project. A transcript alone is a sermon here; `readingTable` and `readingsCsv`
+give every reading with the words said.
+
+```ts
+import { ProjectKind, Testament, type BookScope } from "extract-audio-bible";
+
+const kjv = eab.importBible([{ path: "kjv-john-11.txt", bytes: readFileSync("kjv-john-11.txt") }], "King James Version", "KJV");
+const both = eab.translations().withBible(bsb).withBible(kjv);
+const gospels: BookScope = { testaments: [], genres: ["Gospels"], books: [], excludeTestaments: [], excludeGenres: [], excludeBooks: ["Mark"] };
+console.log(eab.scopeBooks(gospels)?.join(" "), eab.genres()[0].name); // → 40 42 43 Pentateuch
+console.log(eab.scopeBooks({ ...gospels, testaments: [Testament.New], genres: [], excludeBooks: [] })?.length); // → 27
+
+const everything = eab.newReadingsProject(both, "", gospels);
+console.log(everything.name(), everything.addSources(["sermons/sunday.json"]).added); // → Verses read (BSB, KJV) 1
+console.log(everything.kind() === ProjectKind.Readings, everything.translations().length, both.ids().length); // → true 2 2
+everything.setScope({ ...gospels, excludeBooks: [] });
+console.log(everything.scope().genres.join(), everything.scope().excludeBooks.length); // → Gospels 0
+console.log(everything.searchIn(both, files).readings); // → 5
+for (const r of everything.readingTable(both, files).slice(1, 4)) console.log(r.reference, r.translation, r.alsoIn.join(" "), "|", r.said);
+// → John 11:34 BSB  | “Where have you put him?” He asked. “Come and see, Lord,” they answered.
+// → John 11:35 BSB KJV | Jesus wept.
+// → John 11:36 BSB  | Then the Jews said, “See how He loved him!”
+console.log(everything.readingsCsv(both, files).split("\n")[0]); // → sermon,sermon id,reference,book,chapter,verse,translation,also in,start,end,kind,accuracy,coverage,said
+```
+
+```python
+from extract_audio_bible import BookScope, ProjectKind, Testament
+
+kjv = eab.import_bible([InputFile(path="kjv-john-11.txt", bytes=Path("kjv-john-11.txt").read_bytes())], "King James Version", "KJV")
+both = eab.translations().with_bible(bsb).with_bible(kjv)
+gospels = BookScope(testaments=[], genres=["Gospels"], books=[], exclude_testaments=[], exclude_genres=[], exclude_books=["Mark"])
+print(*eab.scope_books(gospels), eab.genres()[0].name)  # → 40 42 43 Pentateuch
+print(len(eab.scope_books(dataclasses.replace(gospels, testaments=[Testament.NEW], genres=[], exclude_books=[]))))  # → 27
+
+everything = eab.new_readings_project(both, "", gospels)
+print(everything.name(), everything.add_sources(["sermons/sunday.json"]).added)  # → Verses read (BSB, KJV) 1
+print(everything.kind() == ProjectKind.READINGS, len(everything.translations()), len(both.ids()))  # → True 2 2
+everything.set_scope(dataclasses.replace(gospels, exclude_books=[]))
+print(",".join(everything.scope().genres), len(everything.scope().exclude_books))  # → Gospels 0
+print(everything.search_in(both, files).readings)  # → 5
+for r in everything.reading_table(both, files)[1:4]:
+    print(r.reference, r.translation, " ".join(r.also_in), "|", r.said)
+# → John 11:34 BSB  | “Where have you put him?” He asked. “Come and see, Lord,” they answered.
+# → John 11:35 BSB KJV | Jesus wept.
+# → John 11:36 BSB  | Then the Jews said, “See how He loved him!”
+print(everything.readings_csv(both, files).splitlines()[0])  # → sermon,sermon id,reference,book,chapter,verse,translation,also in,start,end,kind,accuracy,coverage,said
+```
+
 ## Saving and opening
 
 A project is saved as two strings: `toJson` (its sermons, choices, settings, and metadata, the same
@@ -604,6 +660,10 @@ Each class, record, and enum <!-- source -->(by their TypeScript names)<!-- /sou
 | `ExtractAudioBible.readTranscript`, `searcher` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `ExtractAudioBible.newProject` | [A project](#a-project) |
 | `ExtractAudioBible.renderClip` | [Listening](#listening) |
+| `ExtractAudioBible.translations`, `genres`, `scopeBooks`, `newReadingsProject` | [Every verse read](#every-verse-read) |
+| `Translations.withBible`, `ids`, `searcher` | [Every verse read](#every-verse-read) |
+| `Project.kind`, `translations`, `scope`, `setScope`, `searchIn`, `readingTable`, `readingsCsv` | [Every verse read](#every-verse-read) |
+| `BookScope`, `Testament`, `GenreInfo`, `ReadingRow`, `ProjectKind` | [Every verse read](#every-verse-read) |
 | `ExtractAudioBible.readProject` | [Saving and opening](#saving-and-opening) |
 | `ExtractAudioBible.importBibleFromPaths`, `openTranscript` | [Reading natively](#reading-natively) |
 | `Bible.id`, `name`, `abbreviation`, `books`, `verse`, `chapter`, `toJson` | [A Bible](#a-bible), [Saving and opening](#saving-and-opening) |

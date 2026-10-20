@@ -15,8 +15,11 @@ use crate::error::{AppError, Result};
 pub struct ProjectSummary {
     pub id: String,
     pub name: String,
+    pub kind: extract_audio_bible::ProjectKind,
     pub bible_id: String,
     pub book: Option<u8>,
+    /// The Bibles searched, by id
+    pub translations: Vec<String>,
     pub updated_at: u64,
     pub source_count: usize,
     pub selection_count: usize,
@@ -93,10 +96,10 @@ impl Store {
         let mut out = vec![];
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "summary") {
-                if let Ok(s) = read_json::<BibleSummary>(&path) {
-                    out.push(s);
-                }
+            if path.extension().is_some_and(|e| e == "summary")
+                && let Ok(s) = read_json::<BibleSummary>(&path)
+            {
+                out.push(s);
             }
         }
         out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -120,8 +123,10 @@ impl Store {
         for entry in std::fs::read_dir(self.root.join("projects")).into_iter().flatten().flatten() {
             if let Ok(p) = read_json::<Project>(&entry.path().join("project.json")) {
                 out.push(ProjectSummary {
+                    translations: p.bibles_searched(),
                     id: p.id,
                     name: p.name,
+                    kind: p.kind,
                     bible_id: p.bible_id,
                     book: p.book,
                     updated_at: p.updated_at,
@@ -130,7 +135,7 @@ impl Store {
                 });
             }
         }
-        out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        out.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
         Ok(out)
     }
 

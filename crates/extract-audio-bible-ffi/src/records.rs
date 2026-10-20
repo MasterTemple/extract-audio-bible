@@ -101,6 +101,10 @@ pub struct Reading {
     pub extra_words: Vec<u32>,
     /// The run it's part of, if verses around it were read straight through
     pub run_id: Option<String>,
+    /// The translation it fits best, by its Bible's id (`verseWordsHeard` is of its text)
+    pub translation: String,
+    /// Other translations it was read from as faithfully, by their Bibles' ids, best first
+    pub also_in: Vec<String>,
 }
 
 impl From<&eab::Match> for Reading {
@@ -127,6 +131,148 @@ impl From<&eab::Match> for Reading {
             verse_words_heard: m.verse_words_heard.clone(),
             extra_words: m.extra_words.clone(),
             run_id: m.run_id.clone(),
+            translation: m.translation.clone(),
+            also_in: m.also_in.clone(),
+        }
+    }
+}
+
+/// What a project is for
+#[data]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectKind {
+    /// Building an audio Bible from the readings chosen for each verse
+    AudioBible,
+    /// Finding every verse read in the sermons, in any of several translations
+    Readings,
+}
+
+/// A testament, for a `BookScope`
+#[data]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Testament {
+    Old,
+    New,
+}
+
+impl From<Testament> for eab::Testament {
+    fn from(t: Testament) -> Self {
+        match t {
+            Testament::Old => eab::Testament::Old,
+            Testament::New => eab::Testament::New,
+        }
+    }
+}
+
+impl From<eab::Testament> for Testament {
+    fn from(t: eab::Testament) -> Self {
+        match t {
+            eab::Testament::Old => Testament::Old,
+            eab::Testament::New => Testament::New,
+        }
+    }
+}
+
+/**
+Which books to search, as topos filters them: included testaments limit the search; included
+genres (topos's book groups: `Gospels`, `Pauline Epistles`, `pentateuch`) and books add up within
+them; what's excluded is always left out. Everything empty is every book
+*/
+#[data]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct BookScope {
+    pub testaments: Vec<Testament>,
+    pub genres: Vec<String>,
+    pub books: Vec<String>,
+    pub exclude_testaments: Vec<Testament>,
+    pub exclude_genres: Vec<String>,
+    pub exclude_books: Vec<String>,
+}
+
+impl From<&BookScope> for eab::BookScope {
+    fn from(s: &BookScope) -> Self {
+        eab::BookScope {
+            testaments: s.testaments.iter().map(|&t| t.into()).collect(),
+            genres: s.genres.clone(),
+            books: s.books.clone(),
+            exclude_testaments: s.exclude_testaments.iter().map(|&t| t.into()).collect(),
+            exclude_genres: s.exclude_genres.clone(),
+            exclude_books: s.exclude_books.clone(),
+        }
+    }
+}
+
+impl From<&eab::BookScope> for BookScope {
+    fn from(s: &eab::BookScope) -> Self {
+        BookScope {
+            testaments: s.testaments.iter().map(|&t| t.into()).collect(),
+            genres: s.genres.clone(),
+            books: s.books.clone(),
+            exclude_testaments: s.exclude_testaments.iter().map(|&t| t.into()).collect(),
+            exclude_genres: s.exclude_genres.clone(),
+            exclude_books: s.exclude_books.clone(),
+        }
+    }
+}
+
+/// A genre: a group of books
+#[data]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenreInfo {
+    pub name: String,
+    /// Its books, 1 for Genesis through 66 for Revelation (numbers, not bytes)
+    pub books: Vec<u32>,
+}
+
+/// A verse read in a sermon, as a row of a table (`Project.readingTable`)
+#[data]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReadingRow {
+    pub id: String,
+    pub source_id: String,
+    /// The sermon's title (or file's name), and its file id
+    pub sermon: String,
+    pub sermon_id: String,
+    /// "John 11:35", in the names of the project's first translation
+    pub reference: String,
+    pub book: u8,
+    pub chapter: u16,
+    pub verse: u16,
+    /// The translation it fits best, and the others it also fits, by abbreviation
+    pub translation: String,
+    pub also_in: Vec<String>,
+    pub start: f64,
+    pub end: f64,
+    pub kind: ReadingKind,
+    pub accuracy: f64,
+    pub coverage: f64,
+    /// The words said
+    pub said: String,
+}
+
+impl From<eab::ReadingRow> for ReadingRow {
+    fn from(r: eab::ReadingRow) -> Self {
+        ReadingRow {
+            id: r.id,
+            source_id: r.source_id,
+            sermon: r.sermon,
+            sermon_id: r.sermon_id,
+            reference: r.reference,
+            book: r.book,
+            chapter: r.chapter,
+            verse: r.verse,
+            translation: r.translation,
+            also_in: r.also_in,
+            start: r.start,
+            end: r.end,
+            kind: match r.kind {
+                eab::MatchKind::Exact => ReadingKind::Exact,
+                eab::MatchKind::Close => ReadingKind::Close,
+                eab::MatchKind::Partial => ReadingKind::Partial,
+            },
+            accuracy: wide(r.accuracy),
+            coverage: wide(r.coverage),
+            said: r.said,
         }
     }
 }

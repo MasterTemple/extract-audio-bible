@@ -16,7 +16,7 @@ import {
 } from "./api";
 import { verseKey } from "./refs";
 
-export type Tab = "verses" | "sources" | "search" | "export" | "bibles";
+export type Tab = "verses" | "readings" | "sources" | "search" | "export" | "bibles";
 
 interface Indexed {
   matchesByVerse: Map<string, Match[]>;
@@ -242,7 +242,7 @@ export const useApp = create<AppState>((set, get) => {
         book: first?.id ?? null,
         chapter: first ? 1 : null,
         verse: null,
-        tab: project.sources.length === 0 ? "sources" : "verses",
+        tab: project.sources.length === 0 ? "sources" : project.kind === "readings" ? "readings" : "verses",
         past: [],
         future: [],
       });

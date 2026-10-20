@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     bible::Bible,
+    error::Result,
     matcher::{Match, Run},
+    scope::BookScope,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -20,10 +22,22 @@ use crate::{
 pub struct Project {
     pub id: String,
     pub name: String,
+    /// What it's for: building an audio Bible, or finding every verse read
+    #[serde(default)]
+    pub kind: ProjectKind,
+    /// The Bible it uses (for finding every verse read, the first of its translations, whose
+    /// names are shown)
     pub bible_id: String,
     /// The book being built (most sermons preach through one book); none for the whole Bible
     #[serde(default)]
     pub book: Option<u8>,
+    /// For finding every verse read: the Bibles searched, by id (each reading is of the one it
+    /// fits best)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub translations: Vec<String>,
+    /// For finding every verse read: the books searched
+    #[serde(default, skip_serializing_if = "BookScope::is_everything")]
+    pub scope: BookScope,
     pub created_at: u64,
     pub updated_at: u64,
     #[serde(default)]
@@ -39,6 +53,17 @@ pub struct Project {
     /// sermons, so it can be given before they're added and outlives their removal
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub files: BTreeMap<String, FileMetadata>,
+}
+
+/// What a project is for
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectKind {
+    /// Building an audio Bible from the readings chosen for each verse
+    #[default]
+    AudioBible,
+    /// Finding every verse read in the sermons, in any of several translations
+    Readings,
 }
 
 /// What's known about a sermon: given by the user, or by its transcript
@@ -356,8 +381,11 @@ impl Project {
                 ("", None) => format!("{} audio Bible", bible.name),
                 (name, _) => name.into(),
             },
+            kind: ProjectKind::AudioBible,
             bible_id: bible.id.clone(),
             book,
+            translations: vec![],
+            scope: BookScope::default(),
             created_at: now(),
             updated_at: now(),
             sources: vec![],
@@ -365,6 +393,42 @@ impl Project {
             settings: Default::default(),
             metadata,
             files: BTreeMap::new(),
+        }
+    }
+
+    /**
+    A project finding every verse read in its sermons, in any of `bibles` (the first's names
+    shown), in the books of `scope`. With no name, it's named after the translations. With no
+    Bibles, it's an error
+    */
+    pub fn readings(id: impl Into<String>, name: &str, bibles: &[&Bible], scope: BookScope) -> Result<Self> {
+        let first = bibles.first().ok_or_else(|| crate::Error::invalid("choose at least one translation"))?;
+        let abbreviations: Vec<&str> =
+            bibles.iter().map(|b| if b.abbreviation.is_empty() { b.name.as_str() } else { b.abbreviation.as_str() }).collect();
+        let mut project = Project::new(id, name, first, None);
+        if name.trim().is_empty() {
+            project.name = format!("Verses read ({})", abbreviations.join(", "));
+        }
+        project.kind = ProjectKind::Readings;
+        project.translations = bibles.iter().map(|b| b.id.clone()).collect();
+        project.scope = scope;
+        Ok(project)
+    }
+
+    /// The Bibles its sermons are searched in, by id
+    pub fn bibles_searched(&self) -> Vec<String> {
+        match self.kind {
+            ProjectKind::Readings if !self.translations.is_empty() => self.translations.clone(),
+            _ => vec![self.bible_id.clone()],
+        }
+    }
+
+    /// The books its sermons are searched for, by number, or none for every book: its book (for
+    /// an audio Bible), or its scope (for finding every verse read)
+    pub fn books_searched(&self) -> Result<Option<std::collections::BTreeSet<u8>>> {
+        match self.kind {
+            ProjectKind::AudioBible => Ok(self.book.map(|b| std::collections::BTreeSet::from([b]))),
+            ProjectKind::Readings => self.scope.books(),
         }
     }
 
@@ -435,13 +499,14 @@ impl Project {
     Adds sermons from file paths: each audio file is paired with the transcript (`.json`) of
     the same name, in the same folder first, then anywhere among the paths. With an audio URL
     ([`Settings::audio_url`]), a transcript without audio is a sermon too, its audio downloaded
-    when it's needed. Sermons already in the project are skipped. Returns how many were added and
+    when it's needed; so it is in a project finding every verse read, which needs no audio. Sermons already in the project are skipped. Returns how many were added and
     the files that had no partner
     */
     pub fn add_sources(&mut self, paths: &[String]) -> Added {
         let mut added = self.pair_sources(paths);
-        // With somewhere to download audio from, a transcript is enough
-        if !self.settings.audio_url.trim().is_empty() {
+        // With somewhere to download audio from, or when finding verses read (which needs no
+        // audio), a transcript is enough
+        if self.kind == ProjectKind::Readings || !self.settings.audio_url.trim().is_empty() {
             let (transcripts, rest): (Vec<String>, Vec<String>) =
                 added.unpaired.drain(..).partition(|f| ext(f) == "json");
             added.unpaired = rest;

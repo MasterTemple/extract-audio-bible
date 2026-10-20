@@ -9,6 +9,7 @@ import { VersesPanel } from "./VersesPanel";
 import { ExportPanel } from "./ExportPanel";
 import { TranscriptView } from "./TranscriptView";
 import { SearchPanel } from "./SearchPanel";
+import { ReadingsPanel } from "./ReadingsPanel";
 
 /** Whether a key press belongs to a text field (which has its own undo) */
 function typing(target: EventTarget | null): boolean {
@@ -18,7 +19,8 @@ function typing(target: EventTarget | null): boolean {
 }
 
 export function Shell() {
-  const { project, bibles, tab, setTab, saving, closeProject, outline, past, future, undo, redo } = useApp();
+  const { project, bibles, tab, setTab, saving, closeProject, outline, past, future, undo, redo, matchSet } = useApp();
+  const readings = project?.kind === "readings";
 
   // Ctrl+Z undoes, Ctrl+Shift+Z and Ctrl+Y redo (⌘ on a Mac), except while typing
   useEffect(() => {
@@ -60,19 +62,31 @@ export function Shell() {
         <div className="min-w-0">
           <div className="truncate text-sm leading-tight font-semibold">{project.name}</div>
           <div className="truncate text-xs leading-tight text-muted-foreground">
-            {project.book !== null ? `${outline.find((b) => b.id === project.book)?.name ?? "Book"} · ` : ""}
-            {bible?.abbreviation || bible?.name || "Translation"} · {progress.done.toLocaleString()} of {progress.total.toLocaleString()} verses
-            chosen
+            {readings ? (
+              <>
+                Every verse read ·{" "}
+                {(project.translations ?? [project.bibleId])
+                  .map((id) => bibles.find((b) => b.id === id)?.abbreviation || bibles.find((b) => b.id === id)?.name || id)
+                  .join(", ")}{" "}
+                · {matchSet.matches.length.toLocaleString()} readings found
+              </>
+            ) : (
+              <>
+                {project.book !== null ? `${outline.find((b) => b.id === project.book)?.name ?? "Book"} · ` : ""}
+                {bible?.abbreviation || bible?.name || "Translation"} · {progress.done.toLocaleString()} of {progress.total.toLocaleString()} verses
+                chosen
+              </>
+            )}
           </div>
         </div>
         <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="mx-auto">
           <TabsList>
-            <TabsTrigger value="verses">Verses</TabsTrigger>
+            {readings ? <TabsTrigger value="readings">Readings</TabsTrigger> : <TabsTrigger value="verses">Verses</TabsTrigger>}
             <TabsTrigger value="sources">
               Sermons <span className="text-muted-foreground">{project.sources.length}</span>
             </TabsTrigger>
             <TabsTrigger value="search">Search</TabsTrigger>
-            <TabsTrigger value="export">Export</TabsTrigger>
+            {!readings && <TabsTrigger value="export">Export</TabsTrigger>}
           </TabsList>
         </Tabs>
         <div className="flex w-56 items-center justify-end gap-1.5 text-xs text-muted-foreground">
@@ -106,10 +120,11 @@ export function Shell() {
         </div>
       </header>
       <main className="min-h-0 flex-1">
-        {tab === "verses" && <VersesPanel />}
+        {tab === "verses" && !readings && <VersesPanel />}
+        {(tab === "readings" || (tab === "verses" && readings)) && <ReadingsPanel />}
         {tab === "sources" && <SourcesPanel />}
         {tab === "search" && <SearchPanel />}
-        {tab === "export" && <ExportPanel />}
+        {tab === "export" && !readings && <ExportPanel />}
       </main>
       <TranscriptView />
     </div>

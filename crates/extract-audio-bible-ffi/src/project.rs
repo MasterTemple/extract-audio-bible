@@ -7,11 +7,11 @@ use boltffi::*;
 use eab::MatchSet;
 
 use crate::{
-    Bible, ExtractAudioBibleError, Files, invalid, not_found,
+    Bible, ExtractAudioBibleError, Files, Translations, invalid, not_found,
     records::{
-        Added, ChapterChoice, ChapterRef, ChapterStatus, ExportMetadata, ExportedFile, FileMetadata, FindOptions,
-        Reading, ReadingRun, Said, SaidInSermons, SearchSummary, Selection, Settings, SourceInfo, VerseTime,
-        WrittenFile,
+        Added, BookScope, ChapterChoice, ChapterRef, ChapterStatus, ExportMetadata, ExportedFile, FileMetadata,
+        FindOptions, ProjectKind, Reading, ReadingRow, ReadingRun, Said, SaidInSermons, SearchSummary, Selection,
+        Settings, SourceInfo, VerseTime, WrittenFile,
     },
 };
 
@@ -196,7 +196,92 @@ impl Project {
     pub fn search(&self, bible: &Bible, files: &Files) -> Result<SearchSummary, ExtractAudioBibleError> {
         let mut s = self.state();
         check_bible(&s, bible)?;
-        let analysis = eab::analyze_with(&mut s.project, &bible.engine(), files, &|_, _, _| {})?;
+        if s.project.bibles_searched().len() > 1 {
+            return Err(invalid("this project searches several translations: use searchIn"));
+        }
+        self.search_with(&mut s, &bible.engine(), files)
+    }
+
+    /**
+    `search`, in a set of translations: for a project finding every verse read, its own (each
+    reading is of the one it fits best). Any of the project's translations missing from the set
+    is an error
+    */
+    pub fn search_in(
+        &self,
+        translations: &Translations,
+        files: &Files,
+    ) -> Result<SearchSummary, ExtractAudioBibleError> {
+        let mut s = self.state();
+        let have = translations.ids();
+        if let Some(missing) = s.project.bibles_searched().into_iter().find(|id| !have.contains(id)) {
+            return Err(invalid(format!(
+                "the project searches Bible {missing}, which these translations don't have"
+            )));
+        }
+        self.search_with(&mut s, &translations.engine(), files)
+    }
+
+    /// Whether it's building an audio Bible or finding every verse read
+    pub fn kind(&self) -> ProjectKind {
+        match self.state().project.kind {
+            eab::ProjectKind::AudioBible => ProjectKind::AudioBible,
+            eab::ProjectKind::Readings => ProjectKind::Readings,
+        }
+    }
+
+    /// The Bibles its sermons are searched in, by id
+    pub fn translations(&self) -> Vec<String> {
+        self.state().project.bibles_searched()
+    }
+
+    /// The books searched, for a project finding every verse read
+    pub fn scope(&self) -> BookScope {
+        BookScope::from(&self.state().project.scope)
+    }
+
+    /// Changes the books searched (an error for a genre or book topos doesn't know, or a scope that
+    /// leaves nothing); search again to find their readings
+    pub fn set_scope(&self, scope: BookScope) -> Result<(), ExtractAudioBibleError> {
+        let scope = eab::BookScope::from(&scope);
+        scope.books()?;
+        self.state().project.scope = scope;
+        Ok(())
+    }
+
+    /**
+    Every reading found, as rows of a table: the sermon, the reference (in the book names of the
+    project's first translation), the translation it fits best and the others it fits (by
+    abbreviation), when, how well, and the words said (from the transcripts, read through
+    `files`). In the sermons' order, then as said
+    */
+    pub fn reading_table(&self, translations: &Translations, files: &Files) -> Vec<ReadingRow> {
+        let s = self.state();
+        (eab::reading_rows(&s.project, &s.matches, &translations.bibles(), files).into_iter())
+            .map(ReadingRow::from)
+            .collect()
+    }
+
+    /// `readingTable` as CSV, with a header row
+    pub fn readings_csv(&self, translations: &Translations, files: &Files) -> String {
+        let s = self.state();
+        eab::readings::to_csv(&eab::reading_rows(
+            &s.project,
+            &s.matches,
+            &translations.bibles(),
+            files,
+        ))
+    }
+}
+
+impl Project {
+    fn search_with(
+        &self,
+        s: &mut State,
+        engine: &eab::scripture_quotes::Engine,
+        files: &Files,
+    ) -> Result<SearchSummary, ExtractAudioBibleError> {
+        let analysis = eab::analyze_with(&mut s.project, engine, files, &|_, _, _| {})?;
         let errors = analysis
             .errors
             .iter()
@@ -209,7 +294,10 @@ impl Project {
             errors,
         })
     }
+}
 
+#[export]
+impl Project {
     /// Every reading found, in sermon order
     pub fn readings(&self) -> Vec<Reading> {
         self.state().matches.matches.iter().map(Reading::from).collect()

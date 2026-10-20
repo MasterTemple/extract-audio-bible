@@ -19,6 +19,22 @@ with `sunday.json`, WhisperX or Let's Church), finds every reading of the book's
 the best for each verse, and exports a tagged MP3 per chapter. With `--project`, the project is
 kept to look at, change, and export again.
 
+## Every verse read
+
+`find` gives every verse read in transcripts, without a project, in one translation or several
+(each reading of the one it fits best, and noting the others it fits), in the books you choose
+by testament, genre (topos's book groups: `Pentateuch`, `Gospels`, `Pauline Epistles`…), and
+book:
+
+```sh
+extract-audio-bible find --bible esv.json --translation nasb.json --translation kjv/ \
+  --testament new --exclude-genre Gospels --csv sermons/*.json > readings.csv
+```
+
+Included testaments limit the search; included genres and books add up within them; what's
+excluded is left out. With `--csv`, each reading is a row: the sermon, the reference, the
+translation, the times, how it was read, and the words said.
+
 ## Audio downloaded by id
 
 A sermon can be a transcript alone, its audio downloaded when it's first needed (rendering or
@@ -56,7 +72,7 @@ extract-audio-bible export 1thess -o audio-bible/
 | Command | What it does |
 |---|---|
 | `import PATHS… -o FILE` | Reads a Bible's text and saves it as JSON |
-| `find --bible BIBLE [--book B] TRANSCRIPTS…` | The verses read in transcripts, with their times (no project) |
+| `find --bible BIBLE [--translation BIBLE]… [--testament T] [--genre G]… [--book B]… [--exclude-…] [--csv] TRANSCRIPTS…` | The verses read in transcripts, with their times and translations (no project) |
 | `init DIR --bible BIBLE [--book B] [--name N]` | Starts a project for a book (or, with no `--book`, the whole Bible) |
 | `add DIR PATHS…` | Adds sermons: audio files with the transcript of the same name, from files or folders (and, with `audioUrl` set, transcripts alone) |
 | `sermons DIR [--info FILE]` | Lists the sermons with their ids, titles, and passages; `--info` first reads titles and passages by id from JSON (`{"<id>": {"title": "…", "passage": "…"}}`), field by field. A sermon's id is the one its transcript gives (a Let's Church media id) once searched, or its file's name |

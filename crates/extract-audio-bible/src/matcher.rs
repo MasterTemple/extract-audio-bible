@@ -52,6 +52,12 @@ pub struct Match {
     /// Words in the reading that aren't the verse's (a comment, a repeated word)
     pub extra_words: Vec<u32>,
     pub run_id: Option<String>,
+    /// The translation it fits best, by its Bible's id (`verse_words_heard` is of its text)
+    #[serde(default)]
+    pub translation: String,
+    /// Other translations it was read from as faithfully as asked, best first, by their Bibles' ids
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also_in: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -71,21 +77,34 @@ pub struct Run {
 
 /// A Bible's text, ready to be searched for
 pub fn engine(bible: &Bible) -> Engine {
-    let mut translation = Translation::new(&bible.abbreviation);
-    for book in &bible.books {
-        for (c, chapter) in book.chapters.iter().enumerate() {
-            for (v, text) in chapter.iter().enumerate() {
-                translation.verse(VerseRef::new(book.id, c as u8 + 1, v as u8 + 1), text);
+    engine_of([bible])
+}
+
+/// Several Bibles' texts, ready to be searched for together: each reading is of the translation
+/// it fits best (named by its Bible's id)
+pub fn engine_of<'b>(bibles: impl IntoIterator<Item = &'b Bible>) -> Engine {
+    Engine::new(bibles.into_iter().map(|bible| {
+        let mut translation = Translation::new(&bible.id);
+        for book in &bible.books {
+            for (c, chapter) in book.chapters.iter().enumerate() {
+                for (v, text) in chapter.iter().enumerate() {
+                    translation.verse(VerseRef::new(book.id, c as u8 + 1, v as u8 + 1), text);
+                }
             }
         }
-    }
-    Engine::new([translation])
+        translation
+    }))
 }
 
 /// Looks for one book's verses, or the whole Bible's
 pub fn searcher(engine: &Engine, book: Option<u8>) -> Result<Searcher<'_>, ScopeError> {
-    match book {
-        Some(book) => engine.scoped(&Scope::default().book(BookId(book))),
+    scoped(engine, book.map(|b| std::collections::BTreeSet::from([b])).as_ref())
+}
+
+/// Looks for some books' verses, or (with none) the whole Bible's
+pub fn scoped<'e>(engine: &'e Engine, books: Option<&std::collections::BTreeSet<u8>>) -> Result<Searcher<'e>, ScopeError> {
+    match books {
+        Some(books) => engine.scoped(&books.iter().fold(Scope::default(), |scope, &b| scope.book(BookId(b)))),
         None => Ok(engine.searcher()),
     }
 }
@@ -99,6 +118,8 @@ pub fn find_matches(
 ) -> (Vec<Match>, Vec<Run>) {
     let found = searcher.search(&transcript.quotes, options);
     let words = &transcript.words;
+    let engine = searcher.engine();
+    let name = |t| engine.translation_name(t).unwrap_or_default().to_string();
     let mut matches: Vec<Match> = found
         .quotations
         .iter()
@@ -132,6 +153,8 @@ pub fn find_matches(
                 verse_words_heard: q.verse_words_heard.clone(),
                 extra_words: q.extra_words.iter().map(|&w| w as u32).collect(),
                 run_id: None,
+                translation: name(q.translation),
+                also_in: q.also_in.iter().map(|a| name(a.translation)).collect(),
             }
         })
         .collect();

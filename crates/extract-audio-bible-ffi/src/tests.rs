@@ -264,6 +264,95 @@ fn audio_from_a_url() {
 }
 
 #[test]
+fn every_verse_read_in_several_translations() {
+    let eab = ExtractAudioBible::new();
+    let kjv = bible(&eab);
+    let web = eab
+        .import_bible(
+            vec![InputFile {
+                path: "web.txt".into(),
+                bytes: b"John 11:35 Jesus wept.\nJohn 11:36 The Jews therefore said, See how much affection he had for him!\nGenesis 1:1 In the beginning, God created the heavens and the earth.".to_vec(),
+            }],
+            "World English Bible".into(),
+            "WEB".into(),
+        )
+        .unwrap();
+    let both = eab.translations().with_bible(&kjv).with_bible(&web).with_bible(&kjv);
+    assert_eq!(both.ids(), [kjv.id(), web.id()]);
+    let new_testament = BookScope {
+        testaments: vec![Testament::New],
+        ..Default::default()
+    };
+    assert_eq!(eab.scope_books(new_testament.clone()).unwrap().unwrap().len(), 27);
+    assert_eq!(eab.scope_books(BookScope::default()).unwrap(), None);
+    assert!(eab.genres().iter().any(|g| g.name == "Gospels"));
+    let nothing = BookScope {
+        testaments: vec![Testament::Old],
+        genres: vec!["Gospels".into()],
+        ..Default::default()
+    };
+    assert!(matches!(
+        eab.scope_books(nothing),
+        Err(ExtractAudioBibleError::Invalid { .. })
+    ));
+
+    let files = Files::memory();
+    files.add(
+        "s.json".into(),
+        br#"{"segments": [{"start": 0, "end": 30, "text": "In the beginning, God created the heavens and the earth. Then Jesus wept. The Jews therefore said, See how much affection he had for him!"}]}"#.to_vec(),
+    );
+    let project = eab.new_readings_project(&both, String::new(), new_testament).unwrap();
+    assert_eq!(project.kind(), ProjectKind::Readings);
+    assert_eq!(project.name(), "Verses read (KJV, WEB)");
+    assert_eq!(
+        project.add_sources(vec!["s.json".into()]).added,
+        1,
+        "a transcript alone is a sermon"
+    );
+    assert!(matches!(
+        project.search(&kjv, &files),
+        Err(ExtractAudioBibleError::Invalid { .. })
+    ));
+    let kjv_only = eab.translations().with_bible(&kjv);
+    assert!(matches!(
+        project.search_in(&kjv_only, &files),
+        Err(ExtractAudioBibleError::Invalid { .. })
+    ));
+    project.search_in(&both, &files).unwrap();
+    let table = project.reading_table(&both, &files);
+    let read: Vec<(&str, &str)> = table
+        .iter()
+        .map(|r| (r.reference.as_str(), r.translation.as_str()))
+        .collect();
+    assert_eq!(read.len(), 2, "Genesis is left out: {read:?}");
+    assert_eq!(read[1], ("John 11:36", "WEB"));
+    assert_eq!(
+        table[1].said,
+        "The Jews therefore said, See how much affection he had for him!"
+    );
+    assert_eq!(project.readings()[1].translation, web.id());
+    assert!(
+        project
+            .readings_csv(&both, &files)
+            .lines()
+            .nth(2)
+            .unwrap()
+            .contains(",John 11:36,43,11,36,WEB,")
+    );
+
+    // Searching without a project
+    let found = both
+        .searcher(BookScope::default(), 0.85)
+        .unwrap()
+        .find(&eab.open_transcript(&files, "s.json".into()).unwrap(), "s".into());
+    assert_eq!(found.readings.len(), 3, "Genesis too");
+    assert!(matches!(
+        eab.translations().searcher(BookScope::default(), 0.85),
+        Err(ExtractAudioBibleError::Invalid { .. })
+    ));
+}
+
+#[test]
 fn settings_from_json() {
     let eab = ExtractAudioBible::new();
     let bible = bible(&eab);

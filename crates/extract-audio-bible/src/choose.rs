@@ -240,6 +240,8 @@ mod tests {
             verse_words_heard: heard.into(),
             extra_words: vec![],
             run_id: None,
+            translation: "b".into(),
+            also_in: vec![],
         }
     }
 

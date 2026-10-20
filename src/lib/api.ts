@@ -122,10 +122,57 @@ export interface Metadata {
   trackNumbering: "chapter" | "sequence";
 }
 
+export type ProjectKind = "audioBible" | "readings";
+export type Testament = "old" | "new";
+
+/** Which books to search: included testaments limit it, included genres and books add up within them, exclusions always win */
+export interface BookScope {
+  testaments?: Testament[];
+  genres?: string[];
+  books?: string[];
+  excludeTestaments?: Testament[];
+  excludeGenres?: string[];
+  excludeBooks?: string[];
+}
+
+/** A group of books (topos's genres: Pentateuch, Gospels…) */
+export interface Genre {
+  name: string;
+  books: number[];
+}
+
+/** A verse read in a sermon, for a table or an export */
+export interface ReadingRow {
+  /** The reading's id, and its sermon's in the project */
+  id: string;
+  sourceId: string;
+  /** The sermon's title, and its file id */
+  sermon: string;
+  sermonId: string;
+  reference: string;
+  book: number;
+  chapter: number;
+  verse: number;
+  translation: string;
+  alsoIn: string[];
+  start: number;
+  end: number;
+  kind: MatchKind;
+  accuracy: number;
+  coverage: number;
+  said: string;
+}
+
 export interface Project {
   id: string;
   name: string;
+  /** Building an audio Bible, or finding every verse read (missing in older projects: an audio Bible) */
+  kind?: ProjectKind;
   bibleId: string;
+  /** For finding every verse read: the Bibles searched, by id */
+  translations?: string[];
+  /** For finding every verse read: the books searched */
+  scope?: BookScope;
   /** The book being built; null for the whole Bible */
   book: number | null;
   createdAt: number;
@@ -141,6 +188,9 @@ export interface Project {
 export interface ProjectSummary {
   id: string;
   name: string;
+  kind: ProjectKind;
+  /** The Bibles searched, by id */
+  translations: string[];
   bibleId: string;
   book: number | null;
   updatedAt: number;
@@ -176,6 +226,10 @@ export interface Match {
   verseWordsHeard: boolean[];
   extraWords: number[];
   runId: string | null;
+  /** The translation it fits best, by its Bible's id (empty from searches before it was kept) */
+  translation?: string;
+  /** Other translations it was read from as faithfully, by their Bibles' ids */
+  alsoIn?: string[];
 }
 
 export interface Run {
@@ -238,6 +292,13 @@ export const api = {
   listProjects: () => invoke<ProjectSummary[]>("list_projects"),
   createProject: (name: string, bibleId: string, book: number | null) =>
     invoke<Project>("create_project", { name, bibleId, book }),
+  createReadingsProject: (name: string, bibleIds: string[], scope: BookScope) =>
+    invoke<Project>("create_readings_project", { name, bibleIds, scope }),
+  genres: () => invoke<Genre[]>("genres"),
+  /** The books a scope searches, or null for every book; an error if it leaves nothing or names something unknown */
+  scopeBooks: (scope: BookScope) => invoke<number[] | null>("scope_books", { scope }),
+  /** Every reading found, as rows, and written to `path` (CSV, or JSON for a .json path) if given */
+  readingRows: (project: Project, path: string | null) => invoke<ReadingRow[]>("reading_rows", { project, path }),
   getProject: (id: string) => invoke<Project>("get_project", { id }),
   saveProject: (project: Project) => invoke<number>("save_project", { project }),
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),

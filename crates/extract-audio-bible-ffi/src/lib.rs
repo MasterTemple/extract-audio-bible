@@ -8,7 +8,10 @@ mod records;
 #[cfg(test)]
 mod tests;
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, OnceLock, RwLock},
+};
 
 use boltffi::*;
 use eab::{MatchSet, scripture_quotes::Engine};
@@ -190,12 +193,70 @@ impl ExtractAudioBible {
     ) -> Result<Searcher, ExtractAudioBibleError> {
         let book = book_named(book)?;
         let engine = bible.engine();
-        eab::matcher::searcher(&engine, book).map_err(|e| invalid(e.to_string()))?;
+        let books = book.map(|b| BTreeSet::from([b]));
+        eab::matcher::scoped(&engine, books.as_ref()).map_err(|e| invalid(e.to_string()))?;
         Ok(Searcher {
             engine,
-            book,
+            books,
             min_accuracy: min_accuracy as f32,
         })
+    }
+
+    /**
+    A set of translations to search together, each reading of the one it fits best: start
+    empty and add with `withBible`.
+
+    ```ts
+    const both = eab.translations().withBible(esv).withBible(nasb);
+    ```
+    */
+    pub fn translations(&self) -> Translations {
+        Translations {
+            bibles: vec![],
+            engine: OnceLock::new(),
+        }
+    }
+
+    /// topos's genres (groups of books: `Pentateuch`, `Gospels`, `Pauline Epistles`…), in order
+    pub fn genres(&self) -> Vec<GenreInfo> {
+        (eab::BookScope::genres().into_iter())
+            .map(|g| GenreInfo {
+                name: g.name,
+                books: g.books.into_iter().map(u32::from).collect(),
+            })
+            .collect()
+    }
+
+    /// The books a scope searches, 1 for Genesis through 66 for Revelation, or none for every book;
+    /// an error for a genre or book topos doesn't know, or a scope that leaves nothing
+    pub fn scope_books(&self, scope: BookScope) -> Result<Option<Vec<u32>>, ExtractAudioBibleError> {
+        Ok(eab::BookScope::from(&scope)
+            .books()?
+            .map(|b| b.into_iter().map(u32::from).collect()))
+    }
+
+    /**
+    A project finding every verse read in its sermons, in any of `translations` (the first's book
+    names shown), in the books of `scope`. With no name, it's named after the translations
+    */
+    pub fn new_readings_project(
+        &self,
+        translations: &Translations,
+        name: String,
+        scope: BookScope,
+    ) -> Result<Project, ExtractAudioBibleError> {
+        let scope = eab::BookScope::from(&scope);
+        scope.books()?;
+        let bibles: Vec<&eab::Bible> = translations.bibles.iter().map(|b| b.as_ref()).collect();
+        let id = eab::project::stable_id(&format!(
+            "{}{name}{}",
+            translations.ids().join("+"),
+            eab::project::now()
+        ));
+        Ok(Project::new(
+            eab::Project::readings(id, &name, &bibles, scope)?,
+            MatchSet::default(),
+        ))
     }
 
     /// `start` to `end` seconds of an audio file as WAV (mono, at the file's own rate unless
@@ -391,8 +452,74 @@ const { readings, runs } = searcher.find(eab.readTranscript(json), "sunday");
 */
 pub struct Searcher {
     engine: Arc<Engine>,
-    book: Option<u8>,
+    books: Option<BTreeSet<u8>>,
     min_accuracy: f32,
+}
+
+/**
+Translations searched together (made by `ExtractAudioBible.translations`): each reading is of the
+translation it fits best, and says which others it fits too.
+
+```ts
+const both = eab.translations().withBible(esv).withBible(nasb);
+const searcher = both.searcher({ ...scope, testaments: [Testament.New] }, 0.85);
+```
+*/
+pub struct Translations {
+    bibles: Vec<Arc<eab::Bible>>,
+    /// Indexed the first time it's needed, then kept
+    engine: OnceLock<Arc<Engine>>,
+}
+
+impl Translations {
+    pub(crate) fn engine(&self) -> Arc<Engine> {
+        self.engine
+            .get_or_init(|| Arc::new(eab::matcher::engine_of(self.bibles.iter().map(|b| b.as_ref()))))
+            .clone()
+    }
+
+    pub(crate) fn bibles(&self) -> Vec<&eab::Bible> {
+        self.bibles.iter().map(|b| b.as_ref()).collect()
+    }
+}
+
+#[export]
+impl Translations {
+    /// These translations and `bible` (once: adding one already here changes nothing)
+    pub fn with_bible(&self, bible: &Bible) -> Translations {
+        let mut bibles = self.bibles.clone();
+        if !bibles.iter().any(|b| b.id == bible.inner.id) {
+            bibles.push(bible.inner.clone());
+        }
+        Translations {
+            bibles,
+            engine: OnceLock::new(),
+        }
+    }
+
+    /// Their Bibles' ids, in the order added
+    pub fn ids(&self) -> Vec<String> {
+        self.bibles.iter().map(|b| b.id.clone()).collect()
+    }
+
+    /**
+    Finds verses in transcripts without a project, in the books of `scope`, read at least
+    `minAccuracy` faithfully (0–1; 0.85 is the default). Indexing the translations takes about a
+    fifth of a second each, the first time
+    */
+    pub fn searcher(&self, scope: BookScope, min_accuracy: f64) -> Result<Searcher, ExtractAudioBibleError> {
+        if self.bibles.is_empty() {
+            return Err(invalid("no translations: add some with withBible"));
+        }
+        let books = eab::BookScope::from(&scope).books()?;
+        let engine = self.engine();
+        eab::matcher::scoped(&engine, books.as_ref()).map_err(|e| invalid(e.to_string()))?;
+        Ok(Searcher {
+            engine,
+            books,
+            min_accuracy: min_accuracy as f32,
+        })
+    }
 }
 
 #[export]
@@ -404,7 +531,7 @@ impl Searcher {
             min_accuracy: self.min_accuracy,
             ..Default::default()
         };
-        let Ok(searcher) = eab::matcher::searcher(&self.engine, self.book) else {
+        let Ok(searcher) = eab::matcher::scoped(&self.engine, self.books.as_ref()) else {
             return Readings {
                 readings: vec![],
                 runs: vec![],

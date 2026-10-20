@@ -84,6 +84,9 @@ fn export_e2e() {
     let mut project = Project {
         id: "p".into(),
         name: "Test".into(),
+        kind: Default::default(),
+        translations: vec![],
+        scope: Default::default(),
         bible_id: "kjv".into(),
         book: Some(43),
         created_at: 0,

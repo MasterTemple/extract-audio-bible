@@ -118,6 +118,59 @@ fn create_project(state: State<AppState>, name: String, bible_id: String, book: 
     Ok(project)
 }
 
+/// A project finding every verse read in its sermons, in any of some translations, in some books
+#[tauri::command]
+fn create_readings_project(
+    state: State<AppState>,
+    name: String,
+    bible_ids: Vec<String>,
+    scope: extract_audio_bible::BookScope,
+) -> Result<Project> {
+    scope.books()?;
+    let bibles = bible_ids.iter().map(|id| state.store.bible(id)).collect::<Result<Vec<_>>>()?;
+    let project = Project::readings(new_id(), &name, &bibles.iter().collect::<Vec<_>>(), scope)?;
+    state.store.save_project(&project)?;
+    Ok(project)
+}
+
+/// topos's genres (groups of books), in order
+#[tauri::command]
+fn genres() -> Vec<extract_audio_bible::Genre> {
+    extract_audio_bible::BookScope::genres()
+}
+
+/// The books a scope searches, by number, or none for every book (an error if it names a genre
+/// or book topos doesn't know, or leaves nothing)
+#[tauri::command]
+fn scope_books(scope: extract_audio_bible::BookScope) -> Result<Option<Vec<u8>>> {
+    Ok(scope.books()?.map(|books| books.into_iter().collect()))
+}
+
+/// Every reading found, as rows, and written to `path` as CSV or JSON if given
+#[tauri::command]
+async fn reading_rows(
+    state: State<'_, AppState>,
+    project: Project,
+    path: Option<String>,
+) -> Result<Vec<extract_audio_bible::ReadingRow>> {
+    let store = state.store.clone();
+    blocking(move || {
+        let matches = store.matches(&project.id)?;
+        let bibles = project.bibles_searched().iter().map(|id| store.bible(id)).collect::<Result<Vec<_>>>()?;
+        let rows = extract_audio_bible::reading_rows(&project, &matches, &bibles.iter().collect::<Vec<_>>(), &Disk);
+        if let Some(path) = path {
+            let text = if path.to_ascii_lowercase().ends_with(".json") {
+                serde_json::to_string_pretty(&rows)?
+            } else {
+                extract_audio_bible::readings::to_csv(&rows)
+            };
+            std::fs::write(&path, text).map_err(|e| AppError::msg(format!("{path}: {e}")))?;
+        }
+        Ok(rows)
+    })
+    .await
+}
+
 #[tauri::command]
 fn get_project(state: State<AppState>, id: String) -> Result<Project> {
     state.store.project(&id)
@@ -185,15 +238,19 @@ async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project: Pro
             let _ = app.emit("analyze-progress", AnalyzeProgress { done, total, message });
         };
         emit(0, "Reading the Bible text".into());
+        // Kept for the next search of the same translations
+        let ids = project.bibles_searched();
+        let key = ids.join("+");
         let engine = match &*cached.lock().unwrap() {
-            Some((id, engine)) if *id == project.bible_id => Some(engine.clone()),
+            Some((k, engine)) if *k == key => Some(engine.clone()),
             _ => None,
         };
         let engine = match engine {
             Some(engine) => engine,
             None => {
-                let engine = Arc::new(matcher::engine(&store.bible(&project.bible_id)?));
-                *cached.lock().unwrap() = Some((project.bible_id.clone(), engine.clone()));
+                let bibles = ids.iter().map(|id| store.bible(id)).collect::<Result<Vec<_>>>()?;
+                let engine = Arc::new(matcher::engine_of(&bibles));
+                *cached.lock().unwrap() = Some((key, engine.clone()));
                 engine
             }
         };
@@ -492,6 +549,10 @@ pub fn run() {
             get_matches,
             transcript_words,
             transcript,
+            create_readings_project,
+            genres,
+            scope_books,
+            reading_rows,
             search_transcripts,
             audio_peaks,
             render_clip,

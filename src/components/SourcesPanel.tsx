@@ -13,10 +13,12 @@ import { Slider } from "@/components/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage, type Progress as ProgressEvent } from "@/lib/api";
 import { useApp } from "@/lib/store";
+import { ScopeEditor, TranslationPicker } from "./ScopeEditor";
 import { audioPathOf, fileIdOf, fileMetadataOf, fileName, formatTime, sourceColor } from "@/lib/refs";
 
 export function SourcesPanel() {
-  const { project, update, setProject, setMatches, matchSet, flush, setTab, outline, go, setFileMetadata, openTranscript } = useApp();
+  const { project, update, setProject, setMatches, matchSet, flush, setTab, outline, go, setFileMetadata, openTranscript, bibles } =
+    useApp();
   const [bookChanged, setBookChanged] = useState(false);
   const [unpaired, setUnpaired] = useState<string[]>([]);
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
@@ -244,11 +246,44 @@ export function SourcesPanel() {
           <CardHeader>
             <CardTitle>Find readings</CardTitle>
             <CardDescription>
-              Searches every sermon for every verse of the book: exact readings, close ones (a word changed, added, or skipped), and
-              partial ones. Your chosen verses are kept when you search again.
+              {project.kind === "readings"
+                ? "Searches every sermon for every verse of the books chosen, in each translation chosen: exact readings, close ones (a word changed, added, or skipped), and partial ones."
+                : "Searches every sermon for every verse of the book: exact readings, close ones (a word changed, added, or skipped), and partial ones. Your chosen verses are kept when you search again."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {project.kind === "readings" ? (
+              <>
+                <div className="flex items-start gap-4">
+                  <div className="w-40 shrink-0 pt-0.5 text-sm">Translations</div>
+                  <div className="flex-1">
+                    <TranslationPicker
+                      bibles={bibles}
+                      value={project.translations?.length ? project.translations : [project.bibleId]}
+                      onChange={(translations) => {
+                        // The first is the one whose names are shown
+                        update((p) => ({ ...p, translations, bibleId: translations.includes(p.bibleId) ? p.bibleId : translations[0] }), "change the translations");
+                        setBookChanged(true);
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-start gap-4">
+                  <div className="w-40 shrink-0 pt-0.5 text-sm">Books</div>
+                  <div className="flex-1">
+                    <ScopeEditor
+                      scope={project.scope ?? {}}
+                      books={outline}
+                      onChange={(scope) => {
+                        update((p) => ({ ...p, scope }), "change the books searched");
+                        setBookChanged(true);
+                      }}
+                    />
+                  </div>
+                </div>
+                {bookChanged && <p className="text-sm text-amber-600">Search again to find readings with these.</p>}
+              </>
+            ) : (
             <div className="flex items-center gap-4">
               <div className="w-40 shrink-0 text-sm">Book</div>
               <Select
@@ -275,6 +310,7 @@ export function SourcesPanel() {
               </Select>
               {bookChanged && <span className="text-sm text-amber-600">Search again to find readings in this book.</span>}
             </div>
+            )}
             <div className="flex items-center gap-4">
               <div className="w-40 shrink-0 text-sm">
                 Minimum accuracy <span className="font-medium tabular-nums">{Math.round(project.settings.minAccuracy * 100)}%</span>
