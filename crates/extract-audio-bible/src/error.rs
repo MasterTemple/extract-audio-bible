@@ -52,6 +52,8 @@ impl Error {
             Error::NotFound(_) => ErrorKind::NotFound,
             Error::Io(e) if e.kind() == std::io::ErrorKind::NotFound => ErrorKind::NotFound,
             Error::Io(_) => ErrorKind::Io,
+            Error::Text(logoxide_text::TextError::NotFound(_)) => ErrorKind::NotFound,
+            Error::Text(logoxide_text::TextError::Files(_)) => ErrorKind::Io,
             Error::Invalid(_) | Error::Json(_) | Error::Text(_) => ErrorKind::Invalid,
             Error::Audio(_) | Error::Tag(_) => ErrorKind::Audio,
             Error::Download { .. } => ErrorKind::Network,
@@ -69,3 +71,26 @@ impl From<symphonia::core::errors::Error> for Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bible_text_errors_keep_their_kind() {
+        use logoxide_text::TextError;
+        assert_eq!(
+            Error::from(TextError::NotFound("JHN".into())).kind(),
+            ErrorKind::NotFound
+        );
+        assert_eq!(
+            Error::from(TextError::Files("text/JHN.usx: unreadable".into())).kind(),
+            ErrorKind::Io
+        );
+        let book = TextError::Book {
+            book: "JHN".into(),
+            message: "no verses".into(),
+        };
+        assert_eq!(Error::from(book).kind(), ErrorKind::Invalid);
+    }
+}
