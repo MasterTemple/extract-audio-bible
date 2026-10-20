@@ -463,6 +463,11 @@ it excludes is left out; `scopeBooks` says which books it searches (`null` for e
 verses without a project. A transcript alone is a sermon here; `readingTable` and `readingsCsv`
 give every reading with the words said.
 
+Words that several verses share are one reading at most. A verse whose chapter the sermon quotes
+elsewhere is the one; otherwise a whole verse worded the same as others (Psalm 14:1 and 53:1), or
+a long enough part of one in rare enough words, is kept once with the others in `alsoAt`, and a
+shorter, commoner phrase ("according to the will of God") isn't a reading at all.
+
 ```ts
 import { ProjectKind, Testament, type BookScope } from "extract-audio-bible";
 
@@ -482,7 +487,7 @@ for (const r of everything.readingTable(both, files).slice(1, 4)) console.log(r.
 // → John 11:34 BSB  | “Where have you put him?” He asked. “Come and see, Lord,” they answered.
 // → John 11:35 BSB KJV | Jesus wept.
 // → John 11:36 BSB  | Then the Jews said, “See how He loved him!”
-console.log(everything.readingsCsv(both, files).split("\n")[0]); // → sermon,sermon id,reference,book,chapter,verse,translation,also in,start,end,kind,accuracy,coverage,said
+console.log(everything.readingsCsv(both, files).split("\n")[0]); // → sermon,sermon id,reference,book,chapter,verse,also at,translation,also in,start,end,kind,accuracy,coverage,said
 ```
 
 ```python
@@ -505,7 +510,7 @@ for r in everything.reading_table(both, files)[1:4]:
 # → John 11:34 BSB  | “Where have you put him?” He asked. “Come and see, Lord,” they answered.
 # → John 11:35 BSB KJV | Jesus wept.
 # → John 11:36 BSB  | Then the Jews said, “See how He loved him!”
-print(everything.readings_csv(both, files).splitlines()[0])  # → sermon,sermon id,reference,book,chapter,verse,translation,also in,start,end,kind,accuracy,coverage,said
+print(everything.readings_csv(both, files).splitlines()[0])  # → sermon,sermon id,reference,book,chapter,verse,also at,translation,also in,start,end,kind,accuracy,coverage,said
 ```
 
 ## Saving and opening

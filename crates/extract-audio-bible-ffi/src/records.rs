@@ -105,6 +105,9 @@ pub struct Reading {
     pub translation: String,
     /// Other translations it was read from as faithfully, by their Bibles' ids, best first
     pub also_in: Vec<String>,
+    /// Other verses worded the same, which it could as well be (`book.chapter.verse`, like
+    /// `19.14.1`), when the sermon doesn't say which
+    pub also_at: Vec<String>,
 }
 
 impl From<&eab::Match> for Reading {
@@ -133,6 +136,7 @@ impl From<&eab::Match> for Reading {
             run_id: m.run_id.clone(),
             translation: m.translation.clone(),
             also_in: m.also_in.clone(),
+            also_at: m.also_at.clone(),
         }
     }
 }
@@ -241,6 +245,9 @@ pub struct ReadingRow {
     /// The translation it fits best, and the others it also fits, by abbreviation
     pub translation: String,
     pub also_in: Vec<String>,
+    /// Other verses worded the same, which it could as well be ("Psalm 14:1"), when the sermon
+    /// doesn't say which
+    pub also_at: Vec<String>,
     pub start: f64,
     pub end: f64,
     pub kind: ReadingKind,
@@ -263,6 +270,7 @@ impl From<eab::ReadingRow> for ReadingRow {
             verse: r.verse,
             translation: r.translation,
             also_in: r.also_in,
+            also_at: r.also_at,
             start: r.start,
             end: r.end,
             kind: match r.kind {

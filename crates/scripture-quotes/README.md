@@ -51,9 +51,18 @@ is quoting it; "and the truth is" isn't). Rarity is measured against the engine'
 it means most with whole translations. `min_coverage` (default 0) asks for that much of the
 verse.
 
+Words that several verses share are a quotation of one verse at most. A verse whose chapter the
+transcript quotes elsewhere is the one (each, if several are). Otherwise a whole verse worded the
+same as others (Judges 17:6 and 21:25), or at least eight words of one rare enough together (28
+bits: "I will pour out my spirit on all flesh", Joel 2:28 or Acts 2:17), is kept once with the
+others in `also_at`; a shorter, commoner phrase ("according to the will of God", "at the right
+hand of the") isn't a quotation. On the 120 sermons searched for in two whole translations, this
+left out 189 of 4,036 quotations, all but three of them parts of verses, and changed no runs.
+
 Each quotation has its `accuracy`, `coverage` (how much of the verse), `precision` (how much of
 what was said is the verse), `information` (how rare its words are, in bits), a `kind` (`Exact`,
-`Close`, `Partial`), which of the verse's words were heard, and the words the speaker added.
+`Close`, `Partial`), which of the verse's words were heard, the words the speaker added, and the
+other verses it could as well be (`also_at`).
 
 ## Translations and scopes
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { Download, FileText, Loader2, Play, Search, Square } from "lucide-react";
+import { ChevronRight, ChevronsDownUp, ChevronsUpDown, Download, FileText, Loader2, Play, Search, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -14,8 +14,47 @@ import { play, usePlayer } from "@/lib/player";
 import { audioPathOf, formatTime, kindLabel, sourceColor } from "@/lib/refs";
 import { kindClass } from "./MatchCard";
 
-/** How many groups are shown before "Show more": sermons (each with many readings), or verses */
-const PAGE = { sermon: 40, verse: 200 };
+/** Past this many sermons, or verses, the list starts folded (by sermon, or by book) */
+const FOLD_SERMONS = 15;
+const FOLD_VERSES = 150;
+
+/** What's folded in each project's views, kept while other tabs are open */
+const folded = new Map<string, Set<string>>();
+
+/** A level of the list that folds: its name, and how much is in it */
+function Fold({
+  open,
+  onToggle,
+  depth,
+  label,
+  rows,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  depth: number;
+  label: React.ReactNode;
+  rows: ReadingRow[];
+  children?: React.ReactNode;
+}) {
+  const verses = new Set(rows.map((r) => `${r.book}.${r.chapter}.${r.verse}`)).size;
+  return (
+    <div className="flex items-center gap-1.5" style={{ paddingLeft: depth * 16 }}>
+      <button className="flex min-w-0 items-center gap-1.5 rounded px-1 py-1 text-left hover:bg-muted" onClick={onToggle}>
+        <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+        <span className={cn("truncate", depth === 0 ? "text-sm font-semibold" : "text-sm font-medium")}>{label}</span>
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+          {rows.length.toLocaleString()} reading{rows.length === 1 ? "" : "s"}
+          {verses !== rows.length && ` · ${verses.toLocaleString()} verse${verses === 1 ? "" : "s"}`}
+        </span>
+      </button>
+      {children}
+    </div>
+  );
+}
+
+const testamentOf = (book: number) => (book <= 39 ? "Old Testament" : book <= 66 ? "New Testament" : "Other books");
+const bookOf = (r: ReadingRow) => r.reference.replace(/ \d+:\d+$/, "");
 
 /** Every verse read in the project's sermons, by sermon or by verse */
 export function ReadingsPanel() {
@@ -27,7 +66,12 @@ export function ReadingsPanel() {
   const [filter, setFilter] = useState("");
   const [kind, setKind] = useState<MatchKind | "all">("all");
   const [translation, setTranslation] = useState("all");
-  const [shown, setShown] = useState(PAGE.sermon);
+  // What's folded: sermons (`s:id`), testaments (`t:name`), books (`b:id`), chapters (`c:book.chapter`)
+  const [fold, setFold] = useState<Set<string> | null>(() => (project ? folded.get(project.id) ?? null : null));
+  const changeFold = (next: Set<string>) => {
+    setFold(next);
+    if (project) folded.set(project.id, next);
+  };
 
   // The rows (with the words said) come from the saved readings and the transcripts
   const sources = project?.sources;
@@ -83,7 +127,58 @@ export function ReadingsPanel() {
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   }, [rows]);
 
-  useEffect(() => setShown(PAGE[view]), [view, filter, kind, translation]);
+  // Testament, then book, then chapter, then each verse's readings
+  const tree = useMemo(() => {
+    const testaments: { name: string; rows: ReadingRow[]; books: { id: number; name: string; rows: ReadingRow[]; chapters: { chapter: number; rows: ReadingRow[]; verses: ReadingRow[][] }[] }[] }[] = [];
+    for (const verse of byVerse) {
+      const r = verse[0];
+      const tName = testamentOf(r.book);
+      let t = testaments[testaments.length - 1];
+      if (t?.name !== tName) testaments.push((t = { name: tName, rows: [], books: [] }));
+      let b = t.books[t.books.length - 1];
+      if (b?.id !== r.book) t.books.push((b = { id: r.book, name: bookOf(r), rows: [], chapters: [] }));
+      let c = b.chapters[b.chapters.length - 1];
+      if (c?.chapter !== r.chapter) b.chapters.push((c = { chapter: r.chapter, rows: [], verses: [] }));
+      c.verses.push(verse);
+      for (const list of [t.rows, b.rows, c.rows]) list.push(...verse);
+    }
+    return testaments;
+  }, [byVerse]);
+
+  // Until something is folded or unfolded, a long list starts folded
+  const shut = useMemo(() => {
+    if (fold) return fold;
+    const start = new Set<string>();
+    if (bySermon.length > FOLD_SERMONS) for (const [id] of bySermon) start.add(`s:${id}`);
+    if (byVerse.length > FOLD_VERSES) for (const t of tree) for (const b of t.books) start.add(`b:${b.id}`);
+    return start;
+  }, [fold, bySermon, byVerse, tree]);
+  // A reference typed in shows everything it finds
+  const searching = filter.trim() !== "";
+  const isOpen = (key: string) => searching || !shut.has(key);
+  const toggle = (key: string) => {
+    const next = new Set(shut);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    changeFold(next);
+  };
+  const foldAll = () => {
+    const next = new Set(shut);
+    if (view === "sermon") for (const [id] of bySermon) next.add(`s:${id}`);
+    else
+      for (const t of tree) {
+        next.add(`t:${t.name}`);
+        for (const b of t.books) {
+          next.add(`b:${b.id}`);
+          for (const c of b.chapters) next.add(`c:${b.id}.${c.chapter}`);
+        }
+      }
+    changeFold(next);
+  };
+  const unfoldAll = () => {
+    const prefixes = view === "sermon" ? ["s:"] : ["t:", "b:", "c:"];
+    changeFold(new Set([...shut].filter((k) => !prefixes.some((p) => k.startsWith(p)))));
+  };
 
   if (!project) return null;
 
@@ -124,10 +219,84 @@ export function ReadingsPanel() {
   const playIcon = (r: ReadingRow) =>
     player.loading === `row:${r.id}` ? <Loader2 className="animate-spin" /> : player.id === `row:${r.id}` ? <Square /> : <Play />;
 
+  /** Other verses a reading could as well be, shown after its reference */
+  const alsoAt = (r: ReadingRow) =>
+    r.alsoAt.length > 0 && (
+      <span className="font-normal text-muted-foreground" title="Worded the same; the sermon doesn't say which">
+        {" "}
+        or {r.alsoAt.join(", ")}
+      </span>
+    );
+
+  const sermonRow = (r: ReadingRow) => (
+    <div key={r.id} className="grid grid-cols-[1.5rem_3.5rem_9rem_1fr] items-start gap-2 rounded px-1 py-0.5 hover:bg-muted/60">
+      <Button size="icon-xs" variant="ghost" title="Listen" onClick={() => listen(r)}>
+        {playIcon(r)}
+      </Button>
+      <button
+        className="pt-0.5 text-left text-xs text-muted-foreground tabular-nums hover:text-foreground"
+        title="Open the transcript here"
+        onClick={() => openTranscript(r.sourceId, r.start)}
+      >
+        {formatTime(r.start)}
+      </button>
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-sm font-medium">
+          {r.reference}
+          {alsoAt(r)}
+        </span>
+        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <span className={cn("rounded px-1 font-medium", kindClass[r.kind])} title={`${Math.round(r.accuracy * 100)}% accurate`}>
+            {kindLabel[r.kind]} {Math.round(r.coverage * 100)}%
+          </span>
+          <span title={r.alsoIn.length ? `Also fits ${r.alsoIn.join(", ")}` : undefined}>
+            {r.translation}
+            {r.alsoIn.length > 0 && ` +${r.alsoIn.length}`}
+          </span>
+        </span>
+      </div>
+      <p className="line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">{r.said}</p>
+    </div>
+  );
+
+  const verseRow = (list: ReadingRow[]) => {
+    const first = list[0];
+    const fits = [...new Set(list.flatMap((r) => [r.translation, ...r.alsoIn]))];
+    return (
+      <div key={first.id} className="grid grid-cols-[10rem_1fr] gap-3 rounded-md border bg-background p-2">
+        <div>
+          <div className="text-sm font-medium">
+            {first.reference}
+            {alsoAt(first)}
+          </div>
+          <div className="text-[11px] text-muted-foreground">
+            {list.length} reading{list.length === 1 ? "" : "s"} · {fits.join(", ")}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {list.map((r) => (
+            <span key={r.id} className="flex items-center rounded-full border text-xs">
+              <Button size="icon-xs" variant="ghost" className="rounded-full" title="Listen" onClick={() => listen(r)}>
+                {playIcon(r)}
+              </Button>
+              <button
+                className="max-w-72 truncate py-0.5 pr-2.5 hover:underline"
+                title={`${r.said}\n\nOpen the transcript here`}
+                onClick={() => openTranscript(r.sourceId, r.start)}
+              >
+                <span className={cn("mr-1 rounded px-1 text-[10px] font-medium", kindClass[r.kind])}>{kindLabel[r.kind]}</span>
+                {r.sermon} <span className="text-muted-foreground tabular-nums">{formatTime(r.start)}</span>
+              </button>
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const verses = new Set((rows ?? []).map((r) => `${r.book}.${r.chapter}.${r.verse}`)).size;
   const books = new Set((rows ?? []).map((r) => r.book)).size;
   const sermons = new Set((rows ?? []).map((r) => r.sourceId)).size;
-  const groups = view === "sermon" ? bySermon.length : byVerse.length;
 
   return (
     <div className="flex h-full flex-col">
@@ -198,92 +367,79 @@ export function ReadingsPanel() {
           {rows && kept.length !== rows.length && (
             <span className="text-xs text-muted-foreground">{kept.length.toLocaleString()} shown</span>
           )}
+          <div className="ml-auto flex items-center gap-1">
+            {searching && <span className="text-xs text-muted-foreground">Showing everything found</span>}
+            <Button size="sm" variant="ghost" disabled={searching} onClick={unfoldAll} title="Open every sermon, or every testament, book, and chapter">
+              <ChevronsUpDown /> Expand all
+            </Button>
+            <Button size="sm" variant="ghost" disabled={searching} onClick={foldAll} title="Fold every sermon, or every testament, book, and chapter">
+              <ChevronsDownUp /> Collapse all
+            </Button>
+          </div>
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl space-y-3 p-6">
+        <div className="mx-auto max-w-5xl space-y-1 p-6">
           {view === "sermon"
-            ? bySermon.slice(0, shown).map(([sourceId, list]) => (
-                <section key={sourceId} className="rounded-lg border bg-background p-3">
-                  <div className="flex items-center gap-2 pb-2">
-                    <span className="size-2.5 shrink-0 rounded-full" style={{ background: sourceColor(project, sourceId) }} />
-                    <span className="min-w-0 truncate text-sm font-medium">{list[0].sermon}</span>
-                    <span className="text-xs text-muted-foreground">{list.length}</span>
-                    <Button size="xs" variant="ghost" className="ml-auto" onClick={() => openTranscript(sourceId)}>
-                      <FileText /> Transcript
-                    </Button>
-                  </div>
-                  <div className="space-y-0.5">
-                    {list.map((r) => (
-                      <div key={r.id} className="grid grid-cols-[1.5rem_3.5rem_9rem_1fr] items-start gap-2 rounded px-1 py-0.5 hover:bg-muted/60">
-                        <Button size="icon-xs" variant="ghost" title="Listen" onClick={() => listen(r)}>
-                          {playIcon(r)}
-                        </Button>
-                        <button
-                          className="pt-0.5 text-left text-xs text-muted-foreground tabular-nums hover:text-foreground"
-                          title="Open the transcript here"
-                          onClick={() => openTranscript(r.sourceId, r.start)}
-                        >
-                          {formatTime(r.start)}
-                        </button>
-                        <div className="flex min-w-0 flex-col gap-0.5">
-                          <span className="truncate text-sm font-medium">{r.reference}</span>
-                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                            <span className={cn("rounded px-1 font-medium", kindClass[r.kind])} title={`${Math.round(r.accuracy * 100)}% accurate`}>
-                              {kindLabel[r.kind]} {Math.round(r.coverage * 100)}%
-                            </span>
-                            <span title={r.alsoIn.length ? `Also fits ${r.alsoIn.join(", ")}` : undefined}>
-                              {r.translation}
-                              {r.alsoIn.length > 0 && ` +${r.alsoIn.length}`}
-                            </span>
-                          </span>
-                        </div>
-                        <p className="line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">{r.said}</p>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ))
-            : byVerse.slice(0, shown).map((list) => {
-                const first = list[0];
-                const fits = [...new Set(list.flatMap((r) => [r.translation, ...r.alsoIn]))];
+            ? bySermon.map(([sourceId, list]) => {
+                const open = isOpen(`s:${sourceId}`);
                 return (
-                  <div key={first.id} className="grid grid-cols-[10rem_1fr] gap-3 rounded-lg border bg-background p-3">
-                    <div>
-                      <div className="text-sm font-medium">{first.reference}</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {list.length} reading{list.length === 1 ? "" : "s"} · {fits.join(", ")}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {list.map((r) => (
-                        <span key={r.id} className="flex items-center rounded-full border text-xs">
-                          <Button size="icon-xs" variant="ghost" className="rounded-full" title="Listen" onClick={() => listen(r)}>
-                            {playIcon(r)}
-                          </Button>
-                          <button
-                            className="max-w-72 truncate py-0.5 pr-2.5 hover:underline"
-                            title={`${r.said}\n\nOpen the transcript here`}
-                            onClick={() => openTranscript(r.sourceId, r.start)}
-                          >
-                            <span className={cn("mr-1 rounded px-1 text-[10px] font-medium", kindClass[r.kind])}>{kindLabel[r.kind]}</span>
-                            {r.sermon} <span className="text-muted-foreground tabular-nums">{formatTime(r.start)}</span>
-                          </button>
+                  <section key={sourceId} className={cn("rounded-lg border bg-background px-2 py-1", open && "pb-2")}>
+                    <Fold
+                      open={open}
+                      onToggle={() => toggle(`s:${sourceId}`)}
+                      depth={0}
+                      rows={list}
+                      label={
+                        <span className="flex items-center gap-2">
+                          <span className="size-2.5 shrink-0 rounded-full" style={{ background: sourceColor(project, sourceId) }} />
+                          {list[0].sermon}
                         </span>
-                      ))}
-                    </div>
-                  </div>
+                      }
+                    >
+                      <Button size="xs" variant="ghost" className="ml-auto" onClick={() => openTranscript(sourceId)}>
+                        <FileText /> Transcript
+                      </Button>
+                    </Fold>
+                    {open && <div className="space-y-0.5 pt-1">{list.map(sermonRow)}</div>}
+                  </section>
+                );
+              })
+            : tree.map((t) => {
+                const tOpen = isOpen(`t:${t.name}`);
+                return (
+                  <section key={t.name} className="rounded-lg border bg-background px-2 py-1">
+                    <Fold open={tOpen} onToggle={() => toggle(`t:${t.name}`)} depth={0} rows={t.rows} label={t.name} />
+                    {tOpen &&
+                      t.books.map((b) => {
+                        const bOpen = isOpen(`b:${b.id}`);
+                        return (
+                          <div key={b.id}>
+                            <Fold open={bOpen} onToggle={() => toggle(`b:${b.id}`)} depth={1} rows={b.rows} label={b.name} />
+                            {bOpen &&
+                              b.chapters.map((c) => {
+                                const cOpen = isOpen(`c:${b.id}.${c.chapter}`);
+                                return (
+                                  <div key={c.chapter}>
+                                    <Fold
+                                      open={cOpen}
+                                      onToggle={() => toggle(`c:${b.id}.${c.chapter}`)}
+                                      depth={2}
+                                      rows={c.rows}
+                                      label={`${b.name} ${c.chapter}`}
+                                    />
+                                    {cOpen && <div className="space-y-1 pt-0.5 pb-1.5 pl-16">{c.verses.map(verseRow)}</div>}
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        );
+                      })}
+                  </section>
                 );
               })}
-          {groups > shown && (
-            <div className="text-center">
-              <Button variant="outline" onClick={() => setShown(shown + PAGE[view])}>
-                Show more ({(groups - shown).toLocaleString()} left)
-              </Button>
-            </div>
-          )}
         </div>
       </div>
     </div>

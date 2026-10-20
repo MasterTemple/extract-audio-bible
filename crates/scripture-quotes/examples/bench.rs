@@ -103,7 +103,7 @@ fn main() {
         for (f, file) in found.iter().zip(&files) {
             for q in &f.quotations {
                 out += &format!(
-                    "{}\t{}\t{:?}\t{:?}\t{:.3}\t{}.{}.{}\n",
+                    "{}\t{}\t{:?}\t{:?}\t{:.3}\t{}.{}.{}\t{:.1}\t{}\n",
                     file.file_name().unwrap().to_string_lossy(),
                     engine.format(&q.reference.passage()),
                     q.words,
@@ -111,7 +111,13 @@ fn main() {
                     q.accuracy,
                     q.reference.book.0,
                     q.reference.chapter,
-                    q.reference.verse
+                    q.reference.verse,
+                    q.information,
+                    q.also_at
+                        .iter()
+                        .map(|r| engine.format(&r.passage()))
+                        .collect::<Vec<_>>()
+                        .join("; ")
                 );
             }
         }

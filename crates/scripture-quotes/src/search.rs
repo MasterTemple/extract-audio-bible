@@ -119,6 +119,10 @@ pub struct Quotation {
     pub extra_words: Vec<usize>,
     /// Other translations it was quoted from as accurately as asked, best first
     pub also_in: Vec<AlsoIn>,
+    /// Other verses worded the same, which it could as well be (`2 Samuel 22:3` and `Psalm
+    /// 18:2`), when nothing in the transcript says which
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also_at: Vec<VerseRef>,
     /// The run it's part of, by index into [`Found::runs`]
     pub run: Option<usize>,
 }
@@ -199,6 +203,11 @@ pub(crate) const WHOLE: f32 = 0.75;
 
 /// Short quotations must be of words rare enough not to be anyone's ("and we are")
 const SHORT_BITS: f32 = 14.0;
+
+/// Part of a verse that other verses share, with nothing to say which it is, counts as a
+/// quotation (of one, noting the others) only with this many of its words, this rare
+const AMBIGUOUS_WORDS: usize = 8;
+const AMBIGUOUS_BITS: f32 = 2.0 * SHORT_BITS;
 
 /// How far insertions and skips may move a reading off the diagonal it was expected on
 const DRIFT: isize = 10;
@@ -490,11 +499,6 @@ impl<'a, 'e> Search<'a, 'e> {
         });
 
         // One quotation per verse per place, with the other translations that fit it
-        struct Draft {
-            slot: u32,
-            reading: usize,
-            also: Vec<(u32, usize)>,
-        }
         let mut drafts: Vec<Draft> = vec![];
         for same_verse in entries.chunk_by(|a, b| a.0 == b.0) {
             let first = drafts.len();
@@ -519,6 +523,7 @@ impl<'a, 'e> Search<'a, 'e> {
                         slot,
                         reading: k,
                         also: vec![],
+                        also_at: vec![],
                     }),
                 }
             }
@@ -567,6 +572,7 @@ impl<'a, 'e> Search<'a, 'e> {
             let r = engine.slots[d.slot as usize].reference;
             readings[d.reading].alone || chapters.contains(&(r.book, r.chapter))
         });
+        let mut kept = self.one_verse_per_place(kept, &readings);
         kept.sort_by_key(|d| {
             (
                 readings[d.reading].tok_start,
@@ -631,6 +637,7 @@ impl<'a, 'e> Search<'a, 'e> {
                             }
                         })
                         .collect(),
+                    also_at: d.also_at.clone(),
                     run: None,
                 }
             })
@@ -642,6 +649,116 @@ impl<'a, 'e> Search<'a, 'e> {
         let runs = runs(&mut quotations, &spans);
         Found { quotations, runs }
     }
+}
+
+impl Search<'_, '_> {
+    /**
+    Words that fit several verses alike (a phrase they share, or verses worded the same) are a
+    quotation of one verse, not one of each. The transcript decides: a verse whose chapter it
+    quotes elsewhere is the one (each, if several are). Otherwise a whole verse, or enough of one
+    in rare enough words to be a quotation ("I will pour out my spirit on all flesh"), is kept
+    once, noting the others it could be; a shorter or commoner part ("according to the will of
+    God") is left out, being more often only a phrase verses share. `kept` is best first, as left
+    by [`Search::quotations`]
+    */
+    fn one_verse_per_place(&self, kept: Vec<Draft>, readings: &[Reading]) -> Vec<Draft> {
+        let engine = self.engine;
+        let span = |d: &Draft| {
+            let r = &readings[d.reading];
+            r.tok_start..r.tok_end
+        };
+        let reference = |d: &Draft| engine.slots[d.slot as usize].reference;
+        // Places: drafts of different verses over mostly the same words (most of the longer's,
+        // so a phrase within a longer quotation isn't one)
+        let same_words = |a: &Range<usize>, b: &Range<usize>| {
+            let shared = a.end.min(b.end).saturating_sub(a.start.max(b.start));
+            shared * 2 > a.len().max(b.len())
+        };
+        let n = kept.len();
+        let mut place: Vec<usize> = (0..n).collect();
+        fn root(place: &mut [usize], mut i: usize) -> usize {
+            while place[i] != i {
+                place[i] = place[place[i]];
+                i = place[i];
+            }
+            i
+        }
+        for a in 0..n {
+            for b in a + 1..n {
+                if reference(&kept[a]) != reference(&kept[b])
+                    && same_words(&span(&kept[a]), &span(&kept[b]))
+                {
+                    let (ra, rb) = (root(&mut place, a), root(&mut place, b));
+                    place[ra.max(rb)] = ra.min(rb);
+                }
+            }
+        }
+        let places: Vec<usize> = (0..n).map(|i| root(&mut place, i)).collect();
+        let mut keep = vec![true; n];
+        let mut noted: Vec<Vec<VerseRef>> = vec![vec![]; n];
+        for p in 0..n {
+            let members: Vec<usize> = (0..n).filter(|&i| places[i] == p).collect();
+            if members.len() < 2 {
+                continue;
+            }
+            // The chapters quoted elsewhere in the transcript
+            let quoted_elsewhere = |i: usize| {
+                let r = reference(&kept[i]);
+                (0..n).any(|e| {
+                    places[e] != p
+                        && (reference(&kept[e]).book, reference(&kept[e]).chapter)
+                            == (r.book, r.chapter)
+                })
+            };
+            let supported: Vec<usize> = members
+                .iter()
+                .copied()
+                .filter(|&i| quoted_elsewhere(i))
+                .collect();
+            for &i in &members {
+                keep[i] = supported.contains(&i);
+            }
+            if !supported.is_empty() {
+                continue;
+            }
+            let quotation = |i: &usize| {
+                let r = &readings[kept[*i].reading];
+                r.coverage >= WHOLE
+                    || r.heard_count >= AMBIGUOUS_WORDS && r.information >= AMBIGUOUS_BITS
+            };
+            let whole = |i: &usize| readings[kept[*i].reading].coverage >= WHOLE;
+            // The verses it could as well be fit as well: whole too, or (when it's part of one)
+            // as much a quotation
+            let alike: Vec<usize> = if members.iter().any(whole) {
+                members.iter().copied().filter(whole).collect()
+            } else {
+                members.iter().copied().filter(quotation).collect()
+            };
+            if let Some((&first, rest)) = alike.split_first() {
+                keep[first] = true;
+                noted[first] = rest.iter().map(|&i| reference(&kept[i])).collect();
+                noted[first].sort();
+                noted[first].dedup();
+            }
+        }
+        let mut out = Vec::with_capacity(n);
+        for ((mut d, k), refs) in kept.into_iter().zip(keep).zip(noted) {
+            if k {
+                d.also_at = refs;
+                out.push(d);
+            }
+        }
+        out
+    }
+}
+
+/// A verse quoted at a place, before it's a [`Quotation`]: its reading, and the other
+/// translations (and verses) it fits
+struct Draft {
+    slot: u32,
+    reading: usize,
+    also: Vec<(u32, usize)>,
+    also_at: Vec<VerseRef>,
 }
 
 /// A verse text read once is one reading: its best alignment

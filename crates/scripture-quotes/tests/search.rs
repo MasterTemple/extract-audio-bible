@@ -271,3 +271,48 @@ fn a_comment_mid_verse_is_one_interruption() {
         found.quotations
     );
 }
+
+#[test]
+fn words_several_verses_share_are_one_verse_or_none() {
+    let mut nasb = Translation::new("NASB");
+    // Judges 17:6 and 21:25 as the ESV words them, alike (the NASB's differ by a word, and the
+    // closer one is the reading)
+    nasb.verse(VerseRef::new(7, 17, 6), "In those days there was no king in Israel. Everyone did what was right in his own eyes.")
+        .verse(VerseRef::new(7, 21, 25), "In those days there was no king in Israel. Everyone did what was right in his own eyes.")
+        .verse(VerseRef::new(ROMANS, 8, 27), "and He who searches the hearts knows what the mind of the Spirit is, because He intercedes for the saints according to the will of God.")
+        .verse(VerseRef::new(ROMANS, 8, 28), "And we know that God causes all things to work together for good to those who love God, to those who are called according to His purpose.")
+        .verse(VerseRef::new(47, 7, 9), "I now rejoice, not that you were made sorrowful, but that you were made sorrowful to the point of repentance; for you were made sorrowful according to the will of God, so that you might not suffer loss in anything through us.")
+        .verse(VerseRef::new(60, 4, 19), "Therefore, those also who suffer according to the will of God shall entrust their souls to a faithful Creator in doing what is right.")
+        .verse(VerseRef::new(JOHN, 11, 35), "Jesus wept.");
+    let engine = Engine::new([nasb]);
+    let search = |text: &str| {
+        engine
+            .searcher()
+            .search(&Transcript::from_text(text), &Options::default())
+    };
+    let verses = |found: &scripture_quotes::Found| {
+        refs(&engine, found)
+            .into_iter()
+            .map(|(r, _)| r)
+            .collect::<Vec<_>>()
+    };
+
+    // A phrase verses share, said in passing, is none of them
+    let found =
+        search("so we should all live our lives according to the will of God and nothing else");
+    assert!(found.quotations.is_empty(), "{:?}", verses(&found));
+
+    // With one's chapter quoted, it's that one
+    let found = search(
+        "and we know that God causes all things to work together for good to those who love God to those who are called according to his purpose. \
+         and so we pray according to the will of God every day",
+    );
+    assert_eq!(verses(&found), ["Romans 8:28", "Romans 8:27"]);
+
+    // Verses worded the same are one quotation, noting the other
+    let found = search(
+        "in those days there was no king in Israel everyone did what was right in his own eyes",
+    );
+    assert_eq!(verses(&found), ["Judges 17:6"]);
+    assert_eq!(found.quotations[0].also_at, [VerseRef::new(7, 21, 25)]);
+}

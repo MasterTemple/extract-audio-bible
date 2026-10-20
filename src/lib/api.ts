@@ -155,6 +155,8 @@ export interface ReadingRow {
   verse: number;
   translation: string;
   alsoIn: string[];
+  /** Other verses worded the same ("Psalm 14:1"), when the sermon doesn't say which */
+  alsoAt: string[];
   start: number;
   end: number;
   kind: MatchKind;
@@ -230,6 +232,8 @@ export interface Match {
   translation?: string;
   /** Other translations it was read from as faithfully, by their Bibles' ids */
   alsoIn?: string[];
+  /** Other verses worded the same (`book.chapter.verse`), when the sermon doesn't say which */
+  alsoAt?: string[];
 }
 
 export interface Run {

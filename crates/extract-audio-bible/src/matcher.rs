@@ -58,6 +58,10 @@ pub struct Match {
     /// Other translations it was read from as faithfully as asked, best first, by their Bibles' ids
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub also_in: Vec<String>,
+    /// Other verses worded the same, which it could as well be (`book.chapter.verse`, like
+    /// `19.14.1`), when the sermon doesn't say which
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also_at: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -155,6 +159,9 @@ pub fn find_matches(
                 run_id: None,
                 translation: name(q.translation),
                 also_in: q.also_in.iter().map(|a| name(a.translation)).collect(),
+                also_at: (q.also_at.iter())
+                    .map(|r| crate::export::verse_key(r.book.0, r.chapter as u16, r.verse as u16))
+                    .collect(),
             }
         })
         .collect();

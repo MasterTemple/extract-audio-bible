@@ -161,7 +161,7 @@ mod tests {
         assert_eq!(rows[1].translation, "WEB");
         assert_eq!(rows[1].said, "The Jews therefore said, See how much affection he had for him!");
         let csv = crate::readings::to_csv(&rows);
-        assert!(csv.lines().nth(2).unwrap().starts_with("s,s,John 11:36,43,11,36,WEB,,"), "{csv}");
+        assert!(csv.lines().nth(2).unwrap().starts_with("s,s,John 11:36,43,11,36,,WEB,,"), "{csv}");
         assert!(csv.contains(r#""The Jews therefore said, See how much affection he had for him!""#));
     }
 }

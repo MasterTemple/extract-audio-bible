@@ -242,6 +242,7 @@ mod tests {
             run_id: None,
             translation: "b".into(),
             also_in: vec![],
+            also_at: vec![],
         }
     }
 

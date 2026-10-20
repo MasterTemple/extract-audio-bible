@@ -428,12 +428,17 @@ fn run(command: Command, out: &Out) -> Result<()> {
                             String::new()
                         };
                         text += &format!(
-                            "  {:<24} {:>8}–{:<8} {:<7} {:>3}% accurate{translation}\n",
+                            "  {:<24} {:>8}–{:<8} {:<7} {:>3}% accurate{translation}{}\n",
                             r.reference,
                             clock(r.start),
                             clock(r.end),
                             format!("{:?}", r.kind).to_lowercase(),
-                            (r.accuracy * 100.0).round()
+                            (r.accuracy * 100.0).round(),
+                            if r.also_at.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  (or {})", r.also_at.join(", "))
+                            }
                         );
                     }
                 }

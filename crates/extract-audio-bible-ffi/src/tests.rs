@@ -337,7 +337,7 @@ fn every_verse_read_in_several_translations() {
             .lines()
             .nth(2)
             .unwrap()
-            .contains(",John 11:36,43,11,36,WEB,")
+            .contains(",John 11:36,43,11,36,,WEB,")
     );
 
     // Searching without a project

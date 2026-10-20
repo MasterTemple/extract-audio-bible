@@ -29,6 +29,9 @@ pub struct ReadingRow {
     pub translation: String,
     /// Other translations it was read from as faithfully, by abbreviation
     pub also_in: Vec<String>,
+    /// Other verses worded the same, which it could as well be ("Psalm 14:1"), when the sermon
+    /// doesn't say which
+    pub also_at: Vec<String>,
     /// When it was read, in seconds
     pub start: f64,
     pub end: f64,
@@ -61,8 +64,11 @@ pub fn reading_rows(project: &Project, matches: &MatchSet, bibles: &[&Bible], fi
         found.sort_by_key(|m| m.word_start);
         let transcript = Transcript::open(files, &source.transcript_path).ok();
         let sermon = project.source_title(source);
+        let name = |book: u8, chapter: u16, verse: u16| {
+            let book = names.and_then(|b| b.book(book)).map_or_else(|| book.to_string(), |b| b.name.clone());
+            format!("{book} {chapter}:{verse}")
+        };
         for m in found {
-            let book = names.and_then(|b| b.book(m.book)).map_or_else(|| m.book.to_string(), |b| b.name.clone());
             let said = (transcript.as_ref())
                 .and_then(|t| t.words.get(m.word_start as usize..=m.word_end as usize))
                 .map(|words| words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "))
@@ -72,12 +78,18 @@ pub fn reading_rows(project: &Project, matches: &MatchSet, bibles: &[&Bible], fi
                 source_id: source.id.clone(),
                 sermon: sermon.clone(),
                 sermon_id: source.file_id(),
-                reference: format!("{book} {}:{}", m.chapter, m.verse),
+                reference: name(m.book, m.chapter, m.verse),
                 book: m.book,
                 chapter: m.chapter,
                 verse: m.verse,
                 translation: abbreviation(&m.translation),
                 also_in: m.also_in.iter().map(|t| abbreviation(t)).collect(),
+                also_at: (m.also_at.iter())
+                    .filter_map(|key| {
+                        let mut parts = key.split('.').map(|p| p.parse::<u16>().ok());
+                        Some(name(parts.next()?? as u8, parts.next()??, parts.next()??))
+                    })
+                    .collect(),
                 start: m.start,
                 end: m.end,
                 kind: m.kind,
@@ -97,7 +109,7 @@ pub fn to_csv(rows: &[ReadingRow]) -> String {
         if s.contains([',', '"', '\n', '\r']) { format!("\"{}\"", s.replace('"', "\"\"")) } else { s.to_string() }
     };
     let mut out = String::from(
-        "sermon,sermon id,reference,book,chapter,verse,translation,also in,start,end,kind,accuracy,coverage,said\n",
+        "sermon,sermon id,reference,book,chapter,verse,also at,translation,also in,start,end,kind,accuracy,coverage,said\n",
     );
     for r in rows {
         let kind = match r.kind {
@@ -112,6 +124,7 @@ pub fn to_csv(rows: &[ReadingRow]) -> String {
             r.book.to_string(),
             r.chapter.to_string(),
             r.verse.to_string(),
+            field(&r.also_at.join("; ")),
             field(&r.translation),
             field(&r.also_in.join(" ")),
             format!("{:.2}", r.start),
