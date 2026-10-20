@@ -314,7 +314,7 @@ export const api = {
   saveProject: (project: Project) => invoke<number>("save_project", { project }),
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),
   addSources: (projectId: string, paths: string[]) =>
-    invoke<{ project: Project; added: number; unpaired: string[] }>("add_sources", { projectId, paths }),
+    invoke<{ project: Project; added: number; unpaired: string[]; skipped: string[] }>("add_sources", { projectId, paths }),
   analyze: (project: Project) =>
     invoke<{ project: Project; matches: MatchSet; errors: string[] }>("analyze", { project }),
   getMatches: (projectId: string) => invoke<MatchSet>("get_matches", { projectId }),

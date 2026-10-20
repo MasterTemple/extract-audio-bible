@@ -193,21 +193,24 @@ fn delete_project(state: State<AppState>, id: String) -> Result<()> {
 struct AddedSources {
     project: Project,
     added: usize,
-    /// Files that had no partner (audio without a transcript, or the reverse)
+    /// Audio files that had no transcript
     unpaired: Vec<String>,
+    /// JSON files that aren't transcripts
+    skipped: Vec<String>,
 }
 
-/// Add sermons from files or folders, pairing each audio file with the WhisperX JSON of the
-/// same name (in the same folder first, then anywhere among what was given)
+/// Add sermons from files or folders, pairing each audio file with the transcript of the same
+/// name (in the same folder first, then anywhere among what was given); a transcript alone is a
+/// sermon too, and JSON that isn't a transcript is skipped
 #[tauri::command]
 fn add_sources(state: State<AppState>, project_id: String, paths: Vec<String>) -> Result<AddedSources> {
     let mut project = state.store.project(&project_id)?;
     let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
     let files: Vec<String> =
         extract_audio_bible::files::gather(&paths)?.into_iter().map(|p| p.to_string_lossy().into_owned()).collect();
-    let added = project.add_sources(&files);
+    let added = project.add_sources_from(&Disk, &files);
     state.store.save_project(&project)?;
-    Ok(AddedSources { project, added: added.added, unpaired: added.unpaired })
+    Ok(AddedSources { project, added: added.added, unpaired: added.unpaired, skipped: added.skipped })
 }
 
 #[derive(Clone, Serialize)]

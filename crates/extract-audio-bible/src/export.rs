@@ -147,6 +147,11 @@ impl<'f> Leveler<'f> {
 
     /// One clip, ready to join others: resampled, its volume set, and faded at its ends
     pub fn render(&self, clip: &Clip, rate: u32) -> Result<Pcm> {
+        if clip.path.is_empty() {
+            return Err(Error::not_found(
+                "a chosen reading's sermon has no audio: add its audio file, or say where to download audio from",
+            ));
+        }
         let pcm = audio::decode_range(self.files, &clip.path, clip.start, clip.end)?;
         let mut pcm = audio::resample(&pcm, rate);
         let mut gain = audio::db_to_gain(clip.gain_db) * self.overall;

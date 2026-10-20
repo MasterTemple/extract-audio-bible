@@ -468,7 +468,10 @@ fn run(command: Command, out: &Out) -> Result<()> {
             let added = add_sermons(&mut p.project, &paths)?;
             p.save()?;
             for f in &added.unpaired {
-                out.note(format!("no partner: {f}"));
+                out.note(format!("no transcript: {f}"));
+            }
+            for f in &added.skipped {
+                out.note(format!("not a transcript: {f}"));
             }
             out.result(&added, || {
                 format!(
@@ -894,7 +897,10 @@ fn run(command: Command, out: &Out) -> Result<()> {
             let added = add_sermons(&mut p.project, &sermons)?;
             out.note(plural(p.project.sources.len(), "sermon"));
             for f in &added.unpaired {
-                out.note(format!("no partner: {f}"));
+                out.note(format!("no transcript: {f}"));
+            }
+            for f in &added.skipped {
+                out.note(format!("not a transcript: {f}"));
             }
             search(&mut p, out)?;
             let all = p.chapters(&[], true)?;
@@ -1164,7 +1170,7 @@ fn add_sermons(project: &mut Project, paths: &[PathBuf]) -> Result<extract_audio
     let files: Vec<String> = (extract_audio_bible::files::gather(paths)?.into_iter())
         .map(|p| std::path::absolute(&p).unwrap_or(p).to_string_lossy().into_owned())
         .collect();
-    Ok(project.add_sources(&files))
+    Ok(project.add_sources_from(&Disk, &files))
 }
 
 /// A Bible from its JSON (one `.json` file that `import` wrote) or its files

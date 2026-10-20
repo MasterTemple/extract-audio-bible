@@ -42,7 +42,7 @@ exporting) into the project's `downloads/` folder:
 
 ```sh
 extract-audio-bible set 1thess 'audioUrl=https://example.com/audio/{id}.mp3'
-extract-audio-bible add 1thess transcripts/          # transcripts without audio are added too
+extract-audio-bible add 1thess transcripts/          # transcripts alone, their audio from the URL
 ```
 
 `{id}` is the sermon's id: the one its transcript gives (a Let's Church media id) once searched,
@@ -74,7 +74,7 @@ extract-audio-bible export 1thess -o audio-bible/
 | `import PATHS… -o FILE` | Reads a Bible's text and saves it as JSON |
 | `find --bible BIBLE [--translation BIBLE]… [--testament T] [--genre G]… [--book B]… [--exclude-…] [--csv] TRANSCRIPTS…` | The verses read in transcripts, with their times and translations (no project) |
 | `init DIR --bible BIBLE [--book B] [--name N]` | Starts a project for a book (or, with no `--book`, the whole Bible) |
-| `add DIR PATHS…` | Adds sermons: audio files with the transcript of the same name, from files or folders (and, with `audioUrl` set, transcripts alone) |
+| `add DIR PATHS…` | Adds sermons from files or folders: audio files with the transcript of the same name, and transcripts alone (to search, or with `audioUrl` set, to download audio for); JSON that isn't a transcript is skipped |
 | `sermons DIR [--info FILE]` | Lists the sermons with their ids, titles, passages, speakers, and series; `--info` first reads them by id from JSON (`{"<id>": {"title": "…", "passage": "…", "speaker": "…", "series": "…"}}`), field by field. A sermon's id is the one its transcript gives (a Let's Church media id) once searched, or its file's name |
 | `transcript DIR SERMON` | A sermon's whole transcript (by its id or file name), in paragraphs with their times, the readings found marked where they begin (`[1Thess 5:15]` chosen, `<…>` not) |
 | `grep DIR PHRASE [--prefix] [--context N] [--limit N] [--speaker S]… [--series S]…` | Where a phrase was said in the sermons (or only those by some speakers, in some series), with its words in order whatever their case, accents, or punctuation, numbers spelled out ("70 times 7" finds "seventy times seven") |

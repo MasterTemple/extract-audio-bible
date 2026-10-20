@@ -506,37 +506,47 @@ impl Project {
 
     /**
     Adds sermons from file paths: each audio file is paired with the transcript (`.json`) of
-    the same name, in the same folder first, then anywhere among the paths. With an audio URL
-    ([`Settings::audio_url`]), a transcript without audio is a sermon too, its audio downloaded
-    when it's needed; so it is in a project finding every verse read, which needs no audio. Sermons already in the project are skipped. Returns how many were added and
-    the files that had no partner
+    the same name, in the same folder first, then anywhere among the paths. A transcript without
+    audio is a sermon too: it can be searched, and its readings found, and its audio is
+    downloaded when it's needed if the project says where from ([`Settings::audio_url`]).
+    Sermons already in the project are skipped. Returns how many were added and the audio files
+    that had no transcript. To leave out JSON files that aren't transcripts, use
+    [`Project::add_sources_from`]
     */
     pub fn add_sources(&mut self, paths: &[String]) -> Added {
         let mut added = self.pair_sources(paths);
-        // With somewhere to download audio from, or when finding verses read (which needs no
-        // audio), a transcript is enough
-        if self.kind == ProjectKind::Readings || !self.settings.audio_url.trim().is_empty() {
-            let (transcripts, rest): (Vec<String>, Vec<String>) =
-                added.unpaired.drain(..).partition(|f| ext(f) == "json");
-            added.unpaired = rest;
-            for transcript in transcripts {
-                if self.sources.iter().any(|s| s.transcript_path == transcript) {
-                    continue;
-                }
-                let base = base_name(&transcript);
-                self.sources.push(Source {
-                    id: stable_id(&transcript),
-                    label: base.clone(),
-                    audio_path: String::new(),
-                    transcript_path: transcript,
-                    duration: None,
-                    word_count: 0,
-                    match_count: 0,
-                    file_id: base,
-                });
-                added.added += 1;
+        let (transcripts, rest): (Vec<String>, Vec<String>) = added.unpaired.drain(..).partition(|f| ext(f) == "json");
+        added.unpaired = rest;
+        for transcript in transcripts {
+            if self.sources.iter().any(|s| s.transcript_path == transcript) {
+                continue;
             }
+            let base = base_name(&transcript);
+            self.sources.push(Source {
+                id: stable_id(&transcript),
+                label: base.clone(),
+                audio_path: String::new(),
+                transcript_path: transcript,
+                duration: None,
+                word_count: 0,
+                match_count: 0,
+                file_id: base,
+            });
+            added.added += 1;
         }
+        added
+    }
+
+    /**
+    [`Project::add_sources`], reading each JSON file through `files` first: one that isn't a
+    transcript (a project's own files, say) isn't added, and is given back in
+    [`Added::skipped`]
+    */
+    pub fn add_sources_from(&mut self, files: &dyn crate::Files, paths: &[String]) -> Added {
+        let (kept, skipped): (Vec<String>, Vec<String>) = (paths.iter().cloned())
+            .partition(|p| ext(p) != "json" || files.read(p).is_ok_and(|bytes| crate::transcript::is_transcript(&bytes)));
+        let mut added = self.add_sources(&kept);
+        added.skipped = skipped;
         added
     }
 
@@ -583,8 +593,11 @@ impl Project {
 #[serde(rename_all = "camelCase")]
 pub struct Added {
     pub added: usize,
-    /// Files that had no partner (audio without a transcript, or the reverse)
+    /// Audio files that had no transcript
     pub unpaired: Vec<String>,
+    /// JSON files that aren't transcripts (from [`Project::add_sources_from`])
+    #[serde(default)]
+    pub skipped: Vec<String>,
 }
 
 /// `text` safe in a URL: letters, digits, and `-._~` as they are, everything else percent-encoded
@@ -639,11 +652,37 @@ mod tests {
             .map(String::from)
             .into();
         let added = p.add_sources(&paths);
-        assert_eq!(added.added, 1);
+        // The pair, and the two transcripts without audio
+        assert_eq!(added.added, 3);
         assert_eq!(p.sources[0].transcript_path, "a/one.json");
-        assert_eq!(added.unpaired, ["a/two.m4a", "b/one.json", "a/three.json"]);
+        assert_eq!(added.unpaired, ["a/two.m4a"]);
         assert_eq!(p.sources[0].id, stable_id("a/one.mp3"));
+        assert_eq!(p.sources.iter().map(|s| s.audio_path.as_str()).collect::<Vec<_>>(), ["a/one.mp3", "", ""]);
         assert_eq!(p.add_sources(&paths).added, 0);
+    }
+
+    #[test]
+    fn json_that_isnt_a_transcript_is_skipped() {
+        let bible = Bible {
+            id: "b".into(),
+            name: "Test".into(),
+            abbreviation: "T".into(),
+            language: None,
+            format: "text".into(),
+            books: vec![],
+        };
+        let mut p = Project::new("p", "", &bible, None);
+        let mut files = crate::Memory::new();
+        files.insert("whisperx.json", br#"{"segments": [{"start": 0, "end": 1, "text": "Jesus wept."}]}"#.to_vec());
+        files.insert("lets-church.json", br#"{"mediaId": "m", "paragraphs": [{"start": 0, "end": 1, "text": "Amen."}]}"#.to_vec());
+        files.insert("words.json", br#"{"word_segments": [{"word": "Amen", "start": 0, "end": 1}]}"#.to_vec());
+        files.insert("project.json", br#"{"id": "p", "sources": []}"#.to_vec());
+        files.insert("broken.json", b"{".to_vec());
+        let paths: Vec<String> =
+            ["whisperx.json", "lets-church.json", "words.json", "project.json", "broken.json", "missing.json"].map(String::from).into();
+        let added = p.add_sources_from(&files, &paths);
+        assert_eq!(added.added, 3);
+        assert_eq!(added.skipped, ["project.json", "broken.json", "missing.json"]);
     }
 
     #[test]
@@ -658,8 +697,10 @@ mod tests {
         };
         let mut p = Project::new("p", "", &bible, None);
         let paths: Vec<String> = ["a/one.mp3", "a/one.json", "b/two words.json"].map(String::from).into();
-        // Without an audio URL, a transcript alone isn't a sermon
-        assert_eq!(p.clone().add_sources(&paths).unpaired, ["b/two words.json"]);
+        // Without an audio URL, a transcript alone is a sermon with no audio
+        let mut without = p.clone();
+        assert_eq!(without.add_sources(&paths).added, 2);
+        assert_eq!(without.audio_path(&without.sources[1]), "");
 
         p.settings.audio_url = "https://example.com/audio/{id}.mp3".into();
         let added = p.add_sources(&paths);

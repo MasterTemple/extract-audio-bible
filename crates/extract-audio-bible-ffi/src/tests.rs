@@ -237,11 +237,12 @@ fn audio_from_a_url() {
     let eab = ExtractAudioBible::new();
     let bible = bible(&eab);
     let project = eab.new_project(&bible, String::new(), Some("John".into())).unwrap();
-    assert_eq!(project.add_sources(vec!["later.json".into()]).unpaired, ["later.json"]);
+    // A transcript alone is a sermon, with no audio until the project says where it's from
+    assert_eq!(project.add_sources(vec!["later.json".into()]).added, 1);
+    assert_eq!(project.sources()[0].audio_path, "");
     project
         .apply_json(r#"{"settings": {"audioUrl": "http://127.0.0.1:9/{id}.mp3"}}"#.into())
         .unwrap();
-    assert_eq!(project.add_sources(vec!["later.json".into()]).added, 1);
     let sermon = &project.sources()[0];
     assert_eq!(sermon.audio_path, "http://127.0.0.1:9/later.mp3");
 

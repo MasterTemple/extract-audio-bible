@@ -190,6 +190,18 @@ fn at_pauses(words: &[Word]) -> Vec<usize> {
     std::iter::once(0).chain((1..words.len()).filter(|&i| words[i].start - words[i - 1].end >= 2.0)).collect()
 }
 
+/// Whether JSON is a transcript: WhisperX's segments or words, or a Let's Church transcript's
+/// paragraphs (read quickly, without keeping them)
+pub fn is_transcript(json: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    struct Probe {
+        #[serde(alias = "paragraphs")]
+        segments: Option<Vec<serde::de::IgnoredAny>>,
+        word_segments: Option<Vec<serde::de::IgnoredAny>>,
+    }
+    serde_json::from_slice::<Probe>(json).is_ok_and(|p| p.segments.is_some() || p.word_segments.is_some())
+}
+
 /// Give untimed words times between their timed neighbors, spread evenly
 fn fill_times(words: &mut [Word]) {
     let n = words.len();

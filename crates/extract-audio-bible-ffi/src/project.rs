@@ -152,15 +152,19 @@ impl Project {
 
     /**
     Adds sermons by their files' paths: each audio file (mp3, m4a, wav, flac, ogg, aac, mp4)
-    with the transcript (`.json`) of the same name, in the same folder first. Audio already in
-    the project is skipped
+    with the transcript (`.json`) of the same name, in the same folder first. A transcript
+    without audio is a sermon too: it can be searched, and its audio downloaded if the project
+    says where from (`audioUrl`). Sermons already in the project are skipped. To leave out JSON
+    files that aren't transcripts, use `addSourcesFrom`
     */
     pub fn add_sources(&self, paths: Vec<String>) -> Added {
-        let added = self.state().project.add_sources(&paths);
-        Added {
-            added: added.added as u32,
-            unpaired: added.unpaired,
-        }
+        self.state().project.add_sources(&paths).into()
+    }
+
+    /// `addSources`, reading each JSON file through `files` first: one that isn't a transcript
+    /// isn't added, and is given back in `skipped`
+    pub fn add_sources_from(&self, files: &Files, paths: Vec<String>) -> Added {
+        self.state().project.add_sources_from(files, &paths).into()
     }
 
     /// Removes a sermon, and the readings chosen from it

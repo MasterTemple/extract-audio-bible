@@ -20,8 +20,8 @@ export function continues(a: Selection | undefined, b: Selection | undefined): b
   return Math.abs(last.end + last.trimEnd - (b.start + b.trimStart)) < 0.6;
 }
 
-/** For each verse without a choice: its best reading, preferring one that carries on from the verse before */
-function autoPick(verses: number[], book: number, chapter: number, selections: Record<string, Selection>, matchesByVerse: Map<string, Match[]>, runLength: (id: string | null) => number, minScore: number) {
+/** For each verse without a choice: its best reading from a sermon with audio, preferring one that carries on from the verse before */
+function autoPick(verses: number[], book: number, chapter: number, selections: Record<string, Selection>, matchesByVerse: Map<string, Match[]>, runLength: (id: string | null) => number, minScore: number, audible: Set<string>) {
   const picks: Match[] = [];
   let previous: { runId: string | null; sourceId: string } | null = null;
   for (const v of verses) {
@@ -34,7 +34,7 @@ function autoPick(verses: number[], book: number, chapter: number, selections: R
       previous = { runId: m?.runId ?? null, sourceId: last.sourceId };
       continue;
     }
-    const candidates = (matchesByVerse.get(key) ?? []).filter((m) => m.score >= minScore);
+    const candidates = (matchesByVerse.get(key) ?? []).filter((m) => m.score >= minScore && audible.has(m.sourceId));
     let best: Match | null = null;
     let bestScore = -1;
     for (const m of candidates) {
@@ -105,7 +105,9 @@ export function ChapterView() {
 
   const runLength = (id: string | null) => (id ? runById.get(id)?.matchIds.length ?? 0 : 0);
   const pick = (minScore: number) => {
-    const picks = autoPick(verses, b.id, chapter, project.selections, matchesByVerse, runLength, minScore);
+    // A transcript alone, with nowhere to download its audio from, can't be part of an audio Bible
+    const audible = new Set(project.sources.filter((s) => audioPathOf(project, s)).map((s) => s.id));
+    const picks = autoPick(verses, b.id, chapter, project.selections, matchesByVerse, runLength, minScore, audible);
     if (picks.length === 0) toast.info("No more readings to choose here");
     else {
       selectMany(picks);

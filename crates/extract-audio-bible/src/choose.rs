@@ -105,12 +105,15 @@ impl Project {
     For each verse of a chapter with no reading chosen, chooses its best reading scoring at
     least `min_score` (0.9: exact readings, 0.75: exact and close, 0: anything), preferring one
     that carries on from the verse before (the same run, then the same sermon) and readings in
-    longer runs. Returns the verses chosen
+    longer runs. Sermons with no audio (a transcript alone, and nowhere to download it from) are
+    passed over. Returns the verses chosen
     */
     pub fn choose_best(&mut self, book: &BibleBook, chapter: u16, matches: &MatchSet, min_score: f32) -> Vec<u16> {
+        let audible: std::collections::HashSet<&str> =
+            self.sources.iter().filter(|s| !self.audio_path(s).is_empty()).map(|s| s.id.as_str()).collect();
         let mut by_verse: HashMap<u16, Vec<&Match>> = HashMap::new();
         for m in &matches.matches {
-            if m.book == book.id && m.chapter == chapter {
+            if m.book == book.id && m.chapter == chapter && audible.contains(m.source_id.as_str()) {
                 by_verse.entry(m.verse).or_default().push(m);
             }
         }
@@ -307,5 +310,32 @@ mod tests {
         assert_eq!(project.selections["43.11.35"].parts().len(), 1);
         assert!(project.unjoin(&first_half));
         assert!(!project.selections.contains_key("43.11.35"));
+    }
+
+    #[test]
+    fn chooses_only_from_sermons_with_audio() {
+        let book = BibleBook {
+            id: 43,
+            name: "John".into(),
+            osis: "John".into(),
+            chapters: (1..=11).map(|c| if c == 11 { vec!["a b c d".into(); 36] } else { vec![] }).collect(),
+        };
+        let bible = Bible {
+            id: "b".into(),
+            name: "Test".into(),
+            abbreviation: "T".into(),
+            language: None,
+            format: "text".into(),
+            books: vec![book],
+        };
+        let mut project = Project::new("p", "", &bible, Some(43));
+        // A transcript alone
+        project.add_sources(&["s.json".into()]);
+        project.sources[0].id = "s".into();
+        let matches = MatchSet { matches: vec![reading("wept", 35, 1.0, 2.0, [true; 4])], ..Default::default() };
+        let john = bible.book(43).unwrap();
+        assert!(project.choose_best(john, 11, &matches, 0.0).is_empty(), "it has no audio");
+        project.settings.audio_url = "https://example.com/{id}.mp3".into();
+        assert_eq!(project.choose_best(john, 11, &matches, 0.0), [35]);
     }
 }

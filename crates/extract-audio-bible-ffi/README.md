@@ -192,8 +192,11 @@ The last reading is the sermon saying "Jesus wept" again after reading the passa
 
 A project builds one book (or, with `null`, the whole Bible) from sermons. `addSources` takes the
 sermons' files by path, pairing each audio file (mp3, m4a, wav, flac, ogg, aac, or mp4) with the
-transcript (`.json`) of the same name; `search` reads their transcripts through `files` and finds
-every reading. Here the files are in memory, by the paths the project names them by.
+transcript (`.json`) of the same name; a transcript without audio is a sermon too, to search and
+find readings in. `addSourcesFrom` does the same reading each JSON file through `files` first,
+leaving out (`skipped`) any that isn't a transcript. `search` reads the transcripts through
+`files` and finds every reading. Here the files are in memory, by the paths the project names
+them by.
 
 Each sermon has a file id: the id its transcript gives (a Let's Church transcript's media id) once
 it's searched, or its file's name. What's known about a sermon (its title, the passage it
@@ -201,9 +204,9 @@ preaches, its speaker, and its series) is kept by file id, apart from the sermon
 not added yet), and `applyFileMetadataJson` for many, field by field. A transcript's own title is
 used when none is given.
 
-A sermon can be a transcript alone, its audio downloaded when it's needed: the setting `audioUrl`
-says where from, with `{id}` for the file id (`https://example.com/audio/{id}.mp3`). With one set,
-`addSources` adds transcripts without audio, and their `audioPath` is the URL. Natively,
+A sermon that's a transcript alone can have its audio downloaded when it's needed: the setting
+`audioUrl` says where from, with `{id}` for the file id (`https://example.com/audio/{id}.mp3`),
+and with one set its `audioPath` is the URL (it's empty without one). Natively,
 `Files.downloading(folder)` downloads it once into a folder (failing with a `Network` error); in
 WebAssembly, fetch it and `add` it to memory files under that URL.
 
@@ -220,8 +223,8 @@ console.log(files.paths().join(", ")); // → sermons/sunday.json, sermons/sunda
 
 const project = eab.newProject(bsb, "", "John");
 console.log(project.name(), project.book()); // → John (BSB) 43
-const added = project.addSources(files.paths());
-console.log(added.added, added.unpaired.length); // → 1 0
+const added = project.addSourcesFrom(files, files.paths());
+console.log(added.added, added.unpaired.length, added.skipped.length); // → 1 0 0
 const summary = project.search(bsb, files);
 console.log(summary.sermons, summary.readings, summary.errors.length); // → 1 5 0
 const sermon = project.sources()[0];
@@ -256,8 +259,8 @@ print(", ".join(files.paths()))  # → sermons/sunday.json, sermons/sunday.mp3
 
 project = eab.new_project(bsb, "", "John")
 print(project.name(), project.book())  # → John (BSB) 43
-added = project.add_sources(files.paths())
-print(added.added, len(added.unpaired))  # → 1 0
+added = project.add_sources_from(files, files.paths())
+print(added.added, len(added.unpaired), len(added.skipped))  # → 1 0 0
 summary = project.search(bsb, files)
 print(summary.sermons, summary.readings, len(summary.errors))  # → 1 5 0
 sermon = project.sources()[0]
@@ -462,7 +465,7 @@ it fits as faithfully (`alsoIn`), in the books of a scope. A scope is topos's fi
 testaments limit it, included genres (`genres` lists them) and books add up within them, and what
 it excludes is left out; `scopeBooks` says which books it searches (`null` for every book).
 `translations()` starts a set of translations, `withBible` adds to it, and its `searcher` finds
-verses without a project. A transcript alone is a sermon here; `readingTable` and `readingsCsv`
+verses without a project. `readingTable` and `readingsCsv`
 give every reading with the words said.
 
 Words that several verses share are one reading at most. A verse whose chapter the sermon quotes
@@ -678,7 +681,7 @@ Each class, record, and enum <!-- source -->(by their TypeScript names)<!-- /sou
 | `Searcher.find` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `Files.memory`, `add`, `paths` | [A project](#a-project) |
 | `Files.disk`, `downloading`, `has`, `remove` | [Reading natively](#reading-natively) |
-| `Project.name`, `book`, `addSources`, `search`, `sources`, `runs`, `readings`, `fileMetadata`, `setFileMetadata`, `applyFileMetadataJson`, `searchTranscripts` | [A project](#a-project) |
+| `Project.name`, `book`, `addSources`, `addSourcesFrom`, `search`, `sources`, `runs`, `readings`, `fileMetadata`, `setFileMetadata`, `applyFileMetadataJson`, `searchTranscripts` | [A project](#a-project) |
 | `Project.chooseBest`, `chooseBestIn`, `status`, `verseReadings`, `selection`, `selections`, `updateSelection`, `select`, `unselect`, `join`, `arrange`, `unjoin` | [Choosing readings](#choosing-readings) |
 | `Project.settings`, `setSettings`, `metadata`, `setMetadata`, `applyJson` | [Settings and metadata](#settings-and-metadata) |
 | `Project.chapterTimeline`, `renderChapter`, `renderVerse` | [Listening](#listening) |

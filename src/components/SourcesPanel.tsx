@@ -20,7 +20,8 @@ export function SourcesPanel() {
   const { project, update, setProject, setMatches, matchSet, flush, setTab, outline, go, setFileMetadata, openTranscript, bibles } =
     useApp();
   const [bookChanged, setBookChanged] = useState(false);
-  const [unpaired, setUnpaired] = useState<string[]>([]);
+  // Files the last add left out: audio without a transcript, and JSON that isn't one
+  const [leftOut, setLeftOut] = useState<{ unpaired: string[]; skipped: string[] }>({ unpaired: [], skipped: [] });
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
 
   useEffect(() => {
@@ -43,7 +44,7 @@ export function SourcesPanel() {
     try {
       const result = await api.addSources(project.id, Array.isArray(picked) ? picked : [picked]);
       setProject(result.project, `add ${result.added} sermon${result.added === 1 ? "" : "s"}`);
-      setUnpaired(result.unpaired);
+      setLeftOut({ unpaired: result.unpaired, skipped: result.skipped });
       toast.success(`Added ${result.added} sermon${result.added === 1 ? "" : "s"}`);
     } catch (e) {
       toast.error(errorMessage(e));
@@ -110,8 +111,8 @@ export function SourcesPanel() {
               <CardDescription>
                 Each sermon is its audio and the transcript made from it (WhisperX or Let's Church JSON), paired by file
                 name (<code className="text-xs">sermon.mp3</code> + <code className="text-xs">sermon.json</code>). Add
-                files, or a folder to pair everything in it. With somewhere to download audio from, a transcript alone is
-                enough. Titles and passages are kept by each sermon's id (its
+                files, or a folder to pair everything in it. A transcript alone is a sermon too: it can be searched, and
+                its audio downloaded from where you say below. Titles and passages are kept by each sermon's id (its
                 transcript's, once searched), with their speakers and series, and can be read from JSON:{" "}
                 <code className="text-xs">{'{"<id>": {"title": …, "passage": …, "speaker": …, "series": …}}'}</code>.
               </CardDescription>
@@ -141,19 +142,29 @@ export function SourcesPanel() {
                 For sermons with only a transcript: <code>{"{id}"}</code> is the sermon's id. It's downloaded when first played.
               </span>
             </div>
-            {unpaired.length > 0 && (
-              <Alert>
-                <AlertTitle>{unpaired.length} files had no partner</AlertTitle>
-                <AlertDescription>
-                  <div className="max-h-24 overflow-auto text-xs">
-                    {unpaired.map((u) => (
-                      <div key={u} className="truncate" title={u}>
-                        {fileName(u)}
+            {(
+              [
+                [leftOut.unpaired, "audio file had no transcript", "audio files had no transcript"],
+                [leftOut.skipped, "JSON file isn't a transcript", "JSON files aren't transcripts"],
+              ] as const
+            ).map(
+              ([files, one, many]) =>
+                files.length > 0 && (
+                  <Alert key={one}>
+                    <AlertTitle>
+                      {files.length} {files.length === 1 ? one : many}
+                    </AlertTitle>
+                    <AlertDescription>
+                      <div className="max-h-24 overflow-auto text-xs">
+                        {files.map((u) => (
+                          <div key={u} className="truncate" title={u}>
+                            {fileName(u)}
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </AlertDescription>
-              </Alert>
+                    </AlertDescription>
+                  </Alert>
+                ),
             )}
             {project.sources.length === 0 ? (
               <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
