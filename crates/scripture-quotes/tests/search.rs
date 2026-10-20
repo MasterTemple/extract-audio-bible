@@ -247,6 +247,55 @@ fn runs_across_chapters() {
     assert_eq!(engine.format(&found.runs[0].passage()), "John 3:36-4:1");
 }
 
+/// John 3:16-19 and 3:36-4:2, with 3:18 a bridge's later verse (no text of its own)
+fn john_3_and_4() -> Translation {
+    let mut t = Translation::new("KJV");
+    t.verse(VerseRef::new(JOHN, 3, 16), "For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.")
+        .verse(VerseRef::new(JOHN, 3, 17), "For God sent not his Son into the world to condemn the world; but that the world through him might be saved.")
+        .verse(VerseRef::new(JOHN, 3, 18), "")
+        .verse(VerseRef::new(JOHN, 3, 19), "And this is the condemnation, that light is come into the world, and men loved darkness rather than light, because their deeds were evil.")
+        .verse(VerseRef::new(JOHN, 3, 35), "The Father loveth the Son, and hath given all things into his hand.")
+        .verse(VerseRef::new(JOHN, 3, 36), "He that believeth on the Son hath everlasting life: and he that believeth not the Son shall not see life; but the wrath of God abideth on him.")
+        .verse(VerseRef::new(JOHN, 4, 1), "When therefore the Lord knew how the Pharisees had heard that Jesus made and baptized more disciples than John,");
+    t
+}
+
+fn runs_of(engine: &Engine, said: &str) -> Vec<String> {
+    let found = engine
+        .searcher()
+        .search(&Transcript::from_text(said), &Options::default());
+    found
+        .runs
+        .iter()
+        .map(|r| engine.format(&r.passage()))
+        .collect()
+}
+
+#[test]
+fn runs_only_of_verses_read() {
+    let engine = Engine::new([john_3_and_4()]);
+    let v16 = "for god so loved the world that he gave his only begotten son that whosoever believeth in him should not perish but have everlasting life.";
+    let v17 = "for god sent not his son into the world to condemn the world but that the world through him might be saved.";
+    let v19 = "and this is the condemnation that light is come into the world and men loved darkness rather than light because their deeds were evil.";
+    let v35 = "the father loveth the son and hath given all things into his hand.";
+    let v4_1 = "when therefore the lord knew how the pharisees had heard that jesus made and baptized more disciples than john";
+    // 3:17 has text and wasn't read, so 3:16 and 3:19 aren't a run
+    assert_eq!(
+        runs_of(&engine, &format!("{v16} {v19}")),
+        Vec::<String>::new()
+    );
+    // 3:18 has no text of its own, so it's read with 3:17
+    assert_eq!(
+        runs_of(&engine, &format!("{v16} {v17} {v19}")),
+        ["John 3:16-19"]
+    );
+    // 3:36 has text and wasn't read, so 3:35 and 4:1 aren't a run
+    assert_eq!(
+        runs_of(&engine, &format!("{v35} {v4_1}")),
+        Vec::<String>::new()
+    );
+}
+
 #[test]
 fn a_comment_mid_verse_is_one_interruption() {
     let mut t = Translation::new("NASB");

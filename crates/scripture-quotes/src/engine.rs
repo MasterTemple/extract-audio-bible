@@ -44,16 +44,6 @@ impl VerseRef {
             .as_segments()
             .with_book(self.book)
     }
-
-    /// Whether `next` is read right after this verse: the next verse, the first of the next
-    /// chapter, or after up to two verses with no text of their own (a bridge, `4-5`)
-    pub fn is_followed_by(&self, next: &VerseRef) -> bool {
-        self.book == next.book
-            && ((self.chapter == next.chapter
-                && next.verse > self.verse
-                && next.verse - self.verse <= 3)
-                || (next.chapter == self.chapter.wrapping_add(1) && next.verse == 1))
-    }
 }
 
 /// A translation's index in its [`Engine`], in the order they were added
@@ -470,14 +460,15 @@ impl Engine {
         &self.word_tokens[start as usize..(start + len) as usize]
     }
 
-    /// The slot read right after this one, in the same translation
+    /// The slot read right after this one, in the same translation: its next verse with text,
+    /// in the same chapter or the next (verses between with no text of their own, like the later
+    /// verses of a bridge, `4-5`, are read with them)
     pub(crate) fn next_slot(&self, slot: u32) -> Option<u32> {
         let (a, b) = (
             &self.slots[slot as usize],
             self.slots.get(slot as usize + 1)?,
         );
-        (a.translation == b.translation && a.reference.is_followed_by(&b.reference))
-            .then_some(slot + 1)
+        (a.translation == b.translation && in_reach(a.reference, b.reference)).then_some(slot + 1)
     }
 
     pub(crate) fn prev_slot(&self, slot: u32) -> Option<u32> {
@@ -485,8 +476,23 @@ impl Engine {
             self.slots.get(slot.checked_sub(1)? as usize)?,
             &self.slots[slot as usize],
         );
-        (a.translation == b.translation && a.reference.is_followed_by(&b.reference))
-            .then_some(slot - 1)
+        (a.translation == b.translation && in_reach(a.reference, b.reference)).then_some(slot - 1)
+    }
+
+    /// Whether `next` is read right after `verse` in a translation: no verse between them has
+    /// text in it, and `next` is in the same chapter or the next. Neither need be one of its own
+    pub(crate) fn follows(
+        &self,
+        translation: TranslationId,
+        verse: VerseRef,
+        next: VerseRef,
+    ) -> bool {
+        if verse >= next || !in_reach(verse, next) {
+            return false;
+        }
+        let slots = &self.slots[self.translation_slots(translation.0)];
+        slots.partition_point(|s| s.reference <= verse)
+            == slots.partition_point(|s| s.reference < next)
     }
 
     /// A verse of a translation
@@ -503,4 +509,10 @@ impl Engine {
         let end = self.slots.partition_point(|s| s.translation <= translation);
         start..end
     }
+}
+
+/// Whether `next` can be read right after `verse` when nothing between them has text: in the same
+/// book, and the same chapter or the next
+fn in_reach(verse: VerseRef, next: VerseRef) -> bool {
+    verse.book == next.book && next.chapter <= verse.chapter.saturating_add(1)
 }

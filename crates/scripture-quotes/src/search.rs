@@ -646,7 +646,7 @@ impl<'a, 'e> Search<'a, 'e> {
             .iter()
             .map(|d| readings[d.reading].tok_start..readings[d.reading].tok_end)
             .collect();
-        let runs = runs(&mut quotations, &spans);
+        let runs = runs(self.engine, &mut quotations, &spans);
         Found { quotations, runs }
     }
 }
@@ -787,16 +787,21 @@ fn best_of_each(mut readings: Vec<Reading>) -> Vec<Reading> {
     kept
 }
 
-/// Each quotation followed closely by the next verse's is a run
-fn runs(quotations: &mut [Quotation], spans: &[Range<usize>]) -> Vec<Run> {
+/// Each quotation followed closely by the next verse's is a run. The next verse is the next one
+/// with text in either quotation's translation (verses between with none, like a bridge's later
+/// verses or verses a translation leaves out, need no reading), so a run claims no verse that has
+/// words and wasn't read
+fn runs(engine: &Engine, quotations: &mut [Quotation], spans: &[Range<usize>]) -> Vec<Run> {
     let mut next_of: FxHashMap<usize, usize> = FxHashMap::default();
     let mut has_prev: FxHashSet<usize> = FxHashSet::default();
+    let follows = |a: &Quotation, b: &Quotation| {
+        engine.follows(a.translation, a.reference, b.reference)
+            || engine.follows(b.translation, a.reference, b.reference)
+    };
     for a in 0..quotations.len() {
         let follower = (0..quotations.len())
             .filter(|&b| {
-                quotations[a]
-                    .reference
-                    .is_followed_by(&quotations[b].reference)
+                follows(&quotations[a], &quotations[b])
                     && !has_prev.contains(&b)
                     && spans[b].start + 3 >= spans[a].end
                     && spans[b].start <= spans[a].end + 12
