@@ -117,6 +117,76 @@ fn a_project_from_sermon_to_mp3() {
 }
 
 #[test]
+fn a_verse_read_in_two_pieces() {
+    let eab = ExtractAudioBible::new();
+    let bible = bible(&eab);
+    let files = Files::memory();
+    // The first half, a few minutes of preaching, then the second half
+    let preaching = "and so we see the love of our lord for his friends ".repeat(30);
+    let said = format!(
+        "when jesus therefore saw her weeping and the jews also weeping which came with her {preaching}he groaned in the spirit and was troubled"
+    );
+    let words: Vec<String> = (said.split(' ').enumerate())
+        .map(|(i, w)| {
+            format!(
+                r#"{{"word": "{w}", "start": {:.2}, "end": {:.2}}}"#,
+                i as f64 * 0.4,
+                i as f64 * 0.4 + 0.3
+            )
+        })
+        .collect();
+    let seconds = (words.len() as f64 * 0.4).ceil() as usize;
+    let json = format!(
+        r#"{{"segments": [{{"start": 0, "end": {seconds}, "text": "", "words": [{}]}}]}}"#,
+        words.join(",")
+    );
+    files.add("sunday.json".into(), json.into_bytes());
+    let samples = (0..44_100 * seconds).map(|i| (i as f32 * 0.03).sin() * 0.3).collect();
+    files.add(
+        "sunday.mp3".into(),
+        eab::audio::mp3(&eab::audio::Pcm { rate: 44_100, samples }, 64).unwrap(),
+    );
+    let project = eab.new_project(&bible, String::new(), Some("John".into())).unwrap();
+    project.add_sources(files.paths());
+    project.search(&bible, &files).unwrap();
+    let mut halves = project.verse_readings(43, 11, 33);
+    assert_eq!(halves.len(), 2, "{halves:?}");
+    halves.sort_by(|a, b| a.start.total_cmp(&b.start));
+
+    // Joined in the verse's order, though the second half was chosen first
+    project.select(halves[1].id.clone()).unwrap();
+    let sel = project.join(halves[0].id.clone()).unwrap();
+    assert_eq!(sel.reading_id, halves[0].id);
+    assert_eq!(sel.joined.len(), 1);
+    assert_eq!(sel.joined[0].reading_id, halves[1].id);
+    let timeline = project.chapter_timeline(&bible, 43, 11).unwrap();
+    let spoken = (halves[0].end - halves[0].start) + (halves[1].end - halves[1].start);
+    assert!(
+        (timeline[0].end - timeline[0].start - spoken).abs() < 1e-6,
+        "{timeline:?}"
+    );
+    let wav = project.render_verse(&files, 43, 11, 33).unwrap().unwrap();
+    assert_eq!(&wav[..4], b"RIFF");
+
+    // Rearranged, then taken apart
+    let sel = project
+        .arrange(43, 11, 33, vec![halves[1].id.clone(), halves[0].id.clone()])
+        .unwrap();
+    assert_eq!(sel.reading_id, halves[1].id);
+    assert!(matches!(
+        project.arrange(43, 11, 33, vec![halves[1].id.clone(), halves[1].id.clone()]),
+        Err(ExtractAudioBibleError::Invalid { .. })
+    ));
+    let left = project.unjoin(halves[1].id.clone()).unwrap().unwrap();
+    assert_eq!(
+        (left.reading_id.as_str(), left.joined.len()),
+        (halves[0].id.as_str(), 0)
+    );
+    assert_eq!(project.unjoin(halves[0].id.clone()).unwrap(), None);
+    assert_eq!(project.render_verse(&files, 43, 11, 33).unwrap(), None);
+}
+
+#[test]
 fn settings_from_json() {
     let eab = ExtractAudioBible::new();
     let bible = bible(&eab);

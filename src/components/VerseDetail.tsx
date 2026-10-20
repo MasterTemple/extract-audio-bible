@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useApp } from "@/lib/store";
+import { partsOf, useApp } from "@/lib/store";
 import { bookName, verseKey, versesNeeded } from "@/lib/refs";
 import { MatchCard } from "./MatchCard";
 import { ClipEditor } from "./ClipEditor";
@@ -13,9 +13,11 @@ export function VerseDetail() {
   const key = verseKey(b.id, chapter, verse);
   const text = bookText[b.id]?.[chapter - 1];
   const sel = project.selections[key];
-  const matches = [...(matchesByVerse.get(key) ?? [])].sort(
-    (x, y) => Number(y.id === sel?.matchId) - Number(x.id === sel?.matchId) || y.score - x.score,
-  );
+  const chosen = sel ? partsOf(sel).map((p) => p.matchId) : [];
+  // Where each plays among the chosen readings, if chosen
+  const part = (id: string) => (chosen.includes(id) ? chosen.indexOf(id) : null);
+  const order = (id: string) => part(id) ?? Infinity;
+  const matches = [...(matchesByVerse.get(key) ?? [])].sort((x, y) => order(x.id) - order(y.id) || y.score - x.score);
   const verses = versesNeeded(b, chapter);
   const i = verses.indexOf(verse);
 
@@ -74,7 +76,7 @@ export function VerseDetail() {
               </p>
             )}
             {matches.map((m) => (
-              <MatchCard key={m.id} match={m} verseText={text?.[verse - 1] ?? ""} selected={sel?.matchId === m.id} />
+              <MatchCard key={m.id} match={m} verseText={text?.[verse - 1] ?? ""} part={part(m.id)} parts={chosen.length} />
             ))}
           </div>
         </div>

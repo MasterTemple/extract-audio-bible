@@ -43,6 +43,18 @@ export interface Selection {
   gainDb: number;
   needsTrim: boolean;
   note: string;
+  /** More readings of the verse, played after this one in order (a verse read in pieces) */
+  joined?: Part[];
+}
+
+/** One reading used for part of a verse, and how it's cut */
+export interface Part {
+  matchId: string;
+  sourceId: string;
+  start: number;
+  end: number;
+  trimStart: number;
+  trimEnd: number;
 }
 
 export interface Settings {
@@ -228,6 +240,9 @@ export const api = {
   }) => invoke<ArrayBuffer>("render_clip", { request }),
   renderChapter: (project: Project, book: number, chapter: number) =>
     invoke<ArrayBuffer>("render_chapter", { project, book, chapter }),
+  /** A verse as it will be exported: all its readings, one after another, with its silence */
+  renderVerse: (project: Project, book: number, chapter: number, verse: number) =>
+    invoke<ArrayBuffer>("render_verse", { project, book, chapter, verse }),
   /** When each chosen verse is heard in `renderChapter`'s audio */
   chapterTimeline: (project: Project, book: number, chapter: number) =>
     invoke<VerseTime[]>("chapter_timeline", { project, book, chapter }),

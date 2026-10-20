@@ -1,7 +1,7 @@
 //! Putting chosen readings together, and writing them as tagged MP3s: a file per chapter, a file
 //! per verse, or both.
 
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
 use id3::{
     Tag, TagLike, Version,
@@ -32,7 +32,7 @@ pub struct Clip<'a> {
 }
 
 /// What a file is made of
-enum Piece<'a> {
+pub(crate) enum Piece<'a> {
     Silence(f64),
     Audio(Clip<'a>),
 }
@@ -47,17 +47,26 @@ pub fn missing_verses(project: &Project, book: &BibleBook, chapter: u16) -> Vec<
         .collect()
 }
 
-/// A chapter's chosen verses, in order, with their clips
-fn chosen<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> Vec<(u16, &'a Selection, Clip<'a>)> {
-    let sources: HashMap<&str, &str> =
-        project.sources.iter().map(|s| (s.id.as_str(), s.audio_path.as_str())).collect();
+/// A chapter's chosen verses, in order, with their clips (more than one for a verse read in
+/// pieces)
+fn chosen<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> Vec<(u16, &'a Selection, Vec<Clip<'a>>)> {
     let count = book.chapters.get(chapter as usize - 1).map_or(0, Vec::len) as u16;
     (1..=count)
         .filter_map(|v| {
             let sel = project.selections.get(&verse_key(book.id, chapter, v))?;
-            let path = sources.get(sel.source_id.as_str())?;
-            let (start, end) = sel.clip();
-            Some((v, sel, Clip { path, start, end, gain_db: sel.gain_db }))
+            let clips = clips(project, sel);
+            (!clips.is_empty()).then_some((v, sel, clips))
+        })
+        .collect()
+}
+
+/// A verse's clips, in the order they're played (leaving out any whose sermon is gone)
+fn clips<'a>(project: &'a Project, sel: &Selection) -> Vec<Clip<'a>> {
+    (sel.parts().iter())
+        .filter_map(|part| {
+            let path = project.sources.iter().find(|s| s.id == part.source_id)?.audio_path.as_str();
+            let (start, end) = part.clip();
+            Some(Clip { path, start, end, gain_db: sel.gain_db })
         })
         .collect()
 }
@@ -72,36 +81,40 @@ pub struct VerseTime {
 }
 
 /// A chapter's audio as pieces, and when each verse is heard in it
-fn chapter_pieces<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> (Vec<Piece<'a>>, Vec<VerseTime>) {
+pub(crate) fn chapter_pieces<'a>(
+    project: &'a Project,
+    book: &BibleBook,
+    chapter: u16,
+) -> (Vec<Piece<'a>>, Vec<VerseTime>) {
     let settings = &project.settings;
     let verses = chosen(project, book, chapter);
     let mut out = vec![Piece::Silence(settings.chapter_lead_in)];
     let mut times = vec![];
     let mut at = settings.chapter_lead_in.max(0.0);
-    for (i, (verse, sel, clip)) in verses.iter().enumerate() {
+    for (i, (verse, sel, clips)) in verses.iter().enumerate() {
         let gap = if i == 0 { 0.0 } else { settings.gap_between_verses };
         let after_last = i.checked_sub(1).map_or(0.0, |p| verses[p].1.pad_after);
         let silence = gap + sel.pad_before + after_last;
-        let length = (clip.end - clip.start).max(0.0);
-        // A verse that starts where the last one ended, in the same sermon at the same volume,
-        // continues it
-        if let (true, Some(Piece::Audio(last))) = (silence <= 0.0, out.last_mut())
-            && last.path == clip.path
-            && last.gain_db == clip.gain_db
-            && (clip.start - last.end).abs() < 0.05
-        {
-            last.end = clip.end;
-            times.push(VerseTime { verse: *verse, start: at, end: at + length });
-            at += length;
-            continue;
-        }
         if silence > 0.0 {
             out.push(Piece::Silence(silence));
             at += silence;
         }
-        out.push(Piece::Audio(*clip));
-        times.push(VerseTime { verse: *verse, start: at, end: at + length });
-        at += length;
+        let start = at;
+        for clip in clips {
+            at += (clip.end - clip.start).max(0.0);
+            // A clip that starts where the last one ended, in the same sermon at the same volume,
+            // continues it
+            if let Some(Piece::Audio(last)) = out.last_mut()
+                && last.path == clip.path
+                && last.gain_db == clip.gain_db
+                && (clip.start - last.end).abs() < 0.05
+            {
+                last.end = clip.end;
+                continue;
+            }
+            out.push(Piece::Audio(*clip));
+        }
+        times.push(VerseTime { verse: *verse, start, end: at });
     }
     if let Some((_, last, _)) = verses.last() {
         out.push(Piece::Silence(last.pad_after));
@@ -214,8 +227,32 @@ fn export_gain(files: &dyn Files, clips: &[Clip], target_db: f64) -> Result<f64>
 /// A chapter as it will be exported, at `rate` (leveled as a whole on its own, when the export
 /// is leveled as a whole)
 pub fn render_chapter(project: &Project, book: &BibleBook, chapter: u16, rate: u32, files: &dyn Files) -> Result<Pcm> {
-    let clips: Vec<Clip> = chosen(project, book, chapter).into_iter().map(|(_, _, c)| c).collect();
+    let clips: Vec<Clip> = chosen(project, book, chapter).into_iter().flat_map(|(_, _, c)| c).collect();
     Leveler::new(project, &clips, files)?.render_pieces(&chapter_pieces(project, book, chapter).0, rate)
+}
+
+/// A verse's pieces: the silence before it, its readings, and the silence after
+fn verse_pieces<'a>(sel: &Selection, clips: &[Clip<'a>]) -> Vec<Piece<'a>> {
+    let mut pieces = vec![Piece::Silence(sel.pad_before)];
+    pieces.extend(clips.iter().map(|c| Piece::Audio(*c)));
+    pieces.push(Piece::Silence(sel.pad_after));
+    pieces
+}
+
+/**
+A verse as it will be exported in a file of its own, at `rate`: its readings one after another,
+with the silence chosen around it (leveled on its own, when the export is leveled as a whole).
+None if no reading is chosen for it
+*/
+pub fn render_verse(project: &Project, key: &str, rate: u32, files: &dyn Files) -> Result<Option<Pcm>> {
+    let Some(sel) = project.selections.get(key) else {
+        return Ok(None);
+    };
+    let clips = clips(project, sel);
+    if clips.is_empty() {
+        return Ok(None);
+    }
+    Leveler::new(project, &clips, files)?.render_pieces(&verse_pieces(sel, &clips), rate).map(Some)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -370,7 +407,7 @@ pub fn export(
         .collect::<Result<_>>()?;
 
     let clips: Vec<Clip> = (chapters.iter().zip(&books))
-        .flat_map(|(c, b)| chosen(project, b, c.chapter).into_iter().map(|(_, _, clip)| clip))
+        .flat_map(|(c, b)| chosen(project, b, c.chapter).into_iter().flat_map(|(_, _, clips)| clips))
         .collect();
     if project.settings.leveling == Leveling::Export {
         progress(ExportProgress { done: 0, total: chapters.len(), current: "Measuring loudness".into() });
@@ -412,9 +449,8 @@ pub fn export(
         if verse_files {
             let dir = join(&book_dir, file_name(&format!("{} {}", book.name, ch.chapter)));
             let count = book.chapters[ch.chapter as usize - 1].len() as u32;
-            for (v, sel, clip) in chosen(project, book, ch.chapter) {
-                let pieces = [Piece::Silence(sel.pad_before), Piece::Audio(clip), Piece::Silence(sel.pad_after)];
-                let pcm = leveler.render_pieces(&pieces, meta.sample_rate)?;
+            for (v, sel, clips) in chosen(project, book, ch.chapter) {
+                let pcm = leveler.render_pieces(&verse_pieces(sel, &clips), meta.sample_rate)?;
                 let path = join(&dir, format!("{}.mp3", file_name(&fill(&meta.verse_filename_template, bible, book, ch.chapter, Some(v)))));
                 let mut bytes = tagger.tag(book, ch.chapter, Some(v), (v as u32, count), ch.chapter as u32)?;
                 bytes.extend(audio::mp3(&pcm, meta.bitrate)?);

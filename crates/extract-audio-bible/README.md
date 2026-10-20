@@ -63,7 +63,9 @@ export_to_dir(&project, &bible, &chapters, &Disk, Path::new("audio-bible"), |_| 
 - [`matcher`]: every reading of every verse, with cut points (verses are found by
   `scripture-quotes`)
 - [`project`]: a project's sermons, chosen readings, settings, and export metadata, as plain data
-  (serde), and [`analyze`] to search its sermons
+  (serde), and [`analyze`] to search its sermons. A verse read in pieces (its first half, then the
+  rest minutes later) is chosen as several readings played one after another
+  ([`Project::join`], [`Selection::set_parts`])
 - [`export`]: a chapter as it will sound (and when each verse is heard in it), and tagged MP3s by
   chapter or by verse; [`audio`] decodes MP3, AAC/M4A, WAV, and more (symphonia) and encodes MP3
   (pure Rust)

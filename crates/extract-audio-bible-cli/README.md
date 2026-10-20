@@ -32,6 +32,8 @@ extract-audio-bible add 1thess sermons/              # audio files with their tr
 extract-audio-bible search 1thess                    # every reading of every verse
 extract-audio-bible choose 1thess --min-score 0.75   # the best for each verse without one
 extract-audio-bible status 1thess                    # each chapter's chosen and missing verses
+extract-audio-bible readings 1thess 5:15             # a verse's readings, numbered
+extract-audio-bible select 1thess 5:15 4 3           # its first half, then the rest read later
 extract-audio-bible set 1thess gapBetweenVerses=0.3 metadata.artist="Grace Church" metadata.exportMode='"both"'
 extract-audio-bible render 1thess --chapter 5 -o 5.wav   # hear a chapter before exporting
 extract-audio-bible export 1thess -o audio-bible/
@@ -46,8 +48,10 @@ extract-audio-bible export 1thess -o audio-bible/
 | `search DIR` | Finds every reading of the project's verses in its sermons |
 | `choose DIR [--chapter C]… [--min-score S] [--replace]` | Chooses the best reading for each verse without one (0.9 exact, 0.75 exact and close, 0 anything) |
 | `status DIR` | Each chapter's chosen and missing verses |
+| `readings DIR VERSE` | A verse's readings (`5:15`, or `"1 Thess 5:15"`), numbered best first, marking those chosen |
+| `select DIR VERSE READING…` | Chooses a verse's reading by number or id, or several to play one after another in the order given: for a verse read in pieces (its first half, then the rest minutes later) |
 | `set DIR KEY=VALUE…` | Changes settings (`minAccuracy=0.8`, `gapBetweenVerses=0.3`) or metadata (`metadata.artist="…"`); values are JSON when they parse as JSON |
-| `render DIR --chapter C -o FILE` | A chapter as it will be exported, as WAV (`--json` gives when each verse is heard) |
+| `render DIR --chapter C [--verse V] -o FILE` | A chapter (or one verse) as it will be exported, as WAV (`--json` gives when each verse is heard) |
 | `clip AUDIO START END -o FILE [--processed]` | A stretch of a sermon as WAV |
 | `export DIR -o FOLDER [--chapter C]… [--mode chapter\|verse\|both]` | Tagged MP3s of the chosen readings |
 | `build --bible BIBLE [--book B] SERMONS… -o FOLDER [--project DIR]` | All of the above at once |

@@ -1,4 +1,4 @@
-import { Check, Link2, Loader2, Play, Square, Rewind, AudioLines } from "lucide-react";
+import { Check, Combine, Link2, Loader2, Play, Square, Rewind, AudioLines } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -74,8 +74,13 @@ export function HeardText({ text, heard }: { text: string; heard: boolean[] }) {
   );
 }
 
-export function MatchCard({ match, verseText, selected }: { match: Match; verseText: string; selected: boolean }) {
-  const { project, outline, runById, matchById, select, selectMany } = useApp();
+/**
+A reading found for a verse. `part` is where it plays among the verse's chosen readings (0 first),
+if chosen; `parts` is how many there are
+*/
+export function MatchCard({ match, verseText, part, parts }: { match: Match; verseText: string; part: number | null; parts: number }) {
+  const { project, outline, runById, matchById, select, selectMany, join } = useApp();
+  const selected = part !== null;
   const player = usePlayer();
   const source = project?.sources.find((s) => s.id === match.sourceId);
   const data = useWords(source?.transcriptPath, match.wordStart - CONTEXT_WORDS, match.wordEnd + CONTEXT_WORDS);
@@ -172,12 +177,24 @@ export function MatchCard({ match, verseText, selected }: { match: Match; verseT
         <div className="ml-auto">
           {selected ? (
             <Badge className="bg-emerald-600">
-              <Check /> Chosen
+              <Check /> {parts > 1 ? `Chosen, part ${part + 1} of ${parts}` : "Chosen"}
             </Badge>
           ) : (
-            <Button size="sm" onClick={() => select(match)}>
-              Use this reading
-            </Button>
+            <span className="flex items-center gap-1.5">
+              {parts > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  title="Play this with the reading chosen, one after the other: for a verse read in pieces (its first half, then the rest later)"
+                  onClick={() => join(match)}
+                >
+                  <Combine /> Join
+                </Button>
+              )}
+              <Button size="sm" onClick={() => select(match)}>
+                {parts > 0 ? "Use instead" : "Use this reading"}
+              </Button>
+            </span>
           )}
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Loader2, Play, Scissors, Sparkles, Square, Trash2, CheckCircle2, Link2, Volume2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Combine, Loader2, Play, Scissors, Sparkles, Square, Trash2, CheckCircle2, Link2, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,14 +8,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { api, type Match, type Selection, type VerseTime } from "@/lib/api";
-import { useApp } from "@/lib/store";
+import { partsOf, useApp } from "@/lib/store";
 import { play, stop, usePlayer } from "@/lib/player";
 import { bookName, chapterStatus, verseKey, versesNeeded, sourceColor, runLabel } from "@/lib/refs";
 
 /** Whether `b` carries on straight from `a` in the same sermon (no cut between them) */
 export function continues(a: Selection | undefined, b: Selection | undefined): boolean {
-  if (!a || !b || a.sourceId !== b.sourceId) return false;
-  return Math.abs(a.end + a.trimEnd - (b.start + b.trimStart)) < 0.6;
+  if (!a || !b) return false;
+  const last = partsOf(a).pop()!;
+  if (last.sourceId !== b.sourceId) return false;
+  return Math.abs(last.end + last.trimEnd - (b.start + b.trimStart)) < 0.6;
 }
 
 /** For each verse without a choice: its best reading, preferring one that carries on from the verse before */
@@ -26,8 +28,10 @@ function autoPick(verses: number[], book: number, chapter: number, selections: R
     const key = verseKey(book, chapter, v);
     const existing = selections[key];
     if (existing) {
-      const m = matchesByVerse.get(key)?.find((x) => x.id === existing.matchId);
-      previous = { runId: m?.runId ?? null, sourceId: existing.sourceId };
+      // What's heard last is what the next verse would carry on from
+      const last = partsOf(existing).pop()!;
+      const m = matchesByVerse.get(key)?.find((x) => x.id === last.matchId);
+      previous = { runId: m?.runId ?? null, sourceId: last.sourceId };
       continue;
     }
     const candidates = (matchesByVerse.get(key) ?? []).filter((m) => m.score >= minScore);
@@ -226,6 +230,17 @@ export function ChapterView() {
                               {sel.gainDb > 0 ? "+" : ""}
                               {sel.gainDb} dB
                             </span>
+                          )}
+                          {sel.joined && sel.joined.length > 0 && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground tabular-nums">
+                                  <Combine className="size-3.5" />
+                                  {sel.joined.length + 1}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>{sel.joined.length + 1} readings joined</TooltipContent>
+                            </Tooltip>
                           )}
                           {sel.needsTrim && (
                             <Tooltip>

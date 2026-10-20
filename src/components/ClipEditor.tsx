@@ -1,14 +1,16 @@
-import { Loader2, Play, RotateCcw, Scissors, Square, Trash2, Volume2, Rewind } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, ChevronUp, Loader2, Play, RotateCcw, Scissors, Square, Trash2, Volume2, Rewind, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { api, type Selection } from "@/lib/api";
-import { useApp } from "@/lib/store";
+import { api, type Part, type Selection } from "@/lib/api";
+import { partsOf, useApp } from "@/lib/store";
 import { usePeaks, useWords } from "@/lib/hooks";
 import { play, sourceTime, usePlayer } from "@/lib/player";
 import { fileName, formatTime, sourceColor } from "@/lib/refs";
+import { cn } from "@/lib/utils";
 import { Waveform } from "./Waveform";
 
 function Nudge({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
@@ -60,29 +62,54 @@ function Seconds({ id, label, value, onChange }: { id: string; label: string; va
   );
 }
 
-/** The chosen reading of a verse: where it's cut, the silence around it, and listening to it */
+/** Where a part is cut, with its trims */
+function cuts(part: Part): [number, number] {
+  const start = Math.max(0, part.start + part.trimStart);
+  return [start, Math.max(start + 0.05, part.end + part.trimEnd)];
+}
+
+/** The chosen reading of a verse (or readings, for a verse read in pieces): where each is cut, their order, the silence around them, and listening to them */
 export function ClipEditor({ verseKey, selection }: { verseKey: string; selection: Selection }) {
-  const { project, matchById, editSelection, unselect } = useApp();
+  const { project, matchById, editSelection, editPart, unselect, unjoin, arrange } = useApp();
   const player = usePlayer();
-  const source = project?.sources.find((s) => s.id === selection.sourceId);
-  const match = matchById.get(selection.matchId);
-  const clipStart = Math.max(0, selection.start + selection.trimStart);
-  const clipEnd = Math.max(clipStart + 0.05, selection.end + selection.trimEnd);
+  const parts = partsOf(selection);
+  const [active, setActive] = useState(0);
+  const index = Math.min(active, parts.length - 1);
+  const part = parts[index];
+  const source = project?.sources.find((s) => s.id === part.sourceId);
+  const match = matchById.get(part.matchId);
+  const [clipStart, clipEnd] = cuts(part);
   // The window moves in whole seconds, so dragging a handle doesn't refetch the waveform
-  const winStart = Math.max(0, Math.floor(Math.min(selection.start, clipStart) - 3));
-  const winEnd = Math.ceil(Math.max(selection.end, clipEnd) + 3);
+  const winStart = Math.max(0, Math.floor(Math.min(part.start, clipStart) - 3));
+  const winEnd = Math.ceil(Math.max(part.end, clipEnd) + 3);
   const { data: peaks, error } = usePeaks(source?.audioPath, winStart, winEnd);
   const words = useWords(source?.transcriptPath, (match?.wordStart ?? 0) - 25, (match?.wordEnd ?? 0) + 25);
   if (!project || !source) return null;
 
   const set = (change: Partial<Selection>) => editSelection(verseKey, change);
+  const setPart = (change: Partial<Part>) => editPart(verseKey, index, change);
   const setEdge = (edge: "start" | "end", time: number) => {
-    if (edge === "start") set({ trimStart: Math.min(time, clipEnd - 0.1) - selection.start });
-    else set({ trimEnd: Math.max(time, clipStart + 0.1) - selection.end });
+    if (edge === "start") setPart({ trimStart: Math.min(time, clipEnd - 0.1) - part.start });
+    else setPart({ trimEnd: Math.max(time, clipStart + 0.1) - part.end });
   };
+  const move = (i: number, by: number) => {
+    const order = [...parts];
+    [order[i], order[i + by]] = [order[i + by], order[i]];
+    arrange(verseKey, order);
+    if (i === index) setActive(i + by);
+    else if (i + by === index) setActive(i);
+  };
+  const remove = (i: number) => {
+    unjoin(verseKey, parts[i].matchId);
+    if (i < index) setActive(index - 1);
+  };
+  const [book, chapter, verse] = verseKey.split(".").map(Number);
+  // How far into the verse's audio this part begins, so the waveform follows it as the verse plays
+  const before = parts.slice(0, index).reduce((sum, p) => sum + (cuts(p)[1] - cuts(p)[0]), 0);
+  const joined = parts.length > 1;
 
-  const rawId = `sel:${verseKey}`;
-  const aroundId = `around:${verseKey}`;
+  const rawId = `sel:${verseKey}:${part.matchId}`;
+  const aroundId = `around:${verseKey}:${part.matchId}`;
   const exportId = `export:${verseKey}`;
   const now = sourceTime(player, rawId) ?? sourceTime(player, aroundId) ?? sourceTime(player, exportId);
   const icon = (id: string, Idle: typeof Play) =>
@@ -93,8 +120,11 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
       <div className="flex items-center gap-2">
         <span className="size-2.5 rounded-full" style={{ background: sourceColor(project, source.id) }} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">Chosen: {source.label}</div>
+          <div className="truncate text-sm font-medium">
+            {joined ? `Chosen: ${parts.length} readings, joined` : `Chosen: ${source.label}`}
+          </div>
           <div className="truncate text-[11px] text-muted-foreground" title={source.audioPath}>
+            {joined && `Part ${index + 1}: `}
             {fileName(source.audioPath)} · {formatTime(clipStart, true)}–{formatTime(clipEnd, true)} ({(clipEnd - clipStart).toFixed(1)}s)
           </div>
         </div>
@@ -102,6 +132,44 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
           <Trash2 />
         </Button>
       </div>
+
+      {joined && (
+        <div className="space-y-1">
+          <div className="text-[11px] text-muted-foreground">Played one after another, in this order. Click one to cut it.</div>
+          {parts.map((p, i) => {
+            const s = project.sources.find((x) => x.id === p.sourceId);
+            const [a, b] = cuts(p);
+            return (
+              <div
+                key={p.matchId}
+                onClick={() => setActive(i)}
+                className={cn(
+                  "flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1 text-xs hover:bg-muted/60",
+                  i === index && "border-emerald-500 bg-emerald-500/5",
+                )}
+              >
+                <span className="w-3 font-semibold text-muted-foreground tabular-nums">{i + 1}</span>
+                <span className="size-2 shrink-0 rounded-full" style={{ background: sourceColor(project, p.sourceId) }} />
+                <span className="min-w-0 flex-1 truncate">
+                  {s?.label ?? "Missing sermon"} · {formatTime(a, true)}–{formatTime(b, true)}{" "}
+                  <span className="text-muted-foreground">({(b - a).toFixed(1)}s)</span>
+                </span>
+                <span className="flex shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <Button size="icon-xs" variant="ghost" title="Play earlier" disabled={i === 0} onClick={() => move(i, -1)}>
+                    <ChevronUp />
+                  </Button>
+                  <Button size="icon-xs" variant="ghost" title="Play later" disabled={i === parts.length - 1} onClick={() => move(i, 1)}>
+                    <ChevronDown />
+                  </Button>
+                  <Button size="icon-xs" variant="ghost" title="Take this reading out" onClick={() => remove(i)}>
+                    <X />
+                  </Button>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {peaks ? (
         <Waveform
@@ -133,8 +201,8 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
       </p>
 
       <div className="flex flex-wrap gap-x-5 gap-y-2">
-        <Nudge label="Start" value={selection.trimStart} onChange={(v) => set({ trimStart: v })} />
-        <Nudge label="End" value={selection.trimEnd} onChange={(v) => set({ trimEnd: v })} />
+        <Nudge label="Start" value={part.trimStart} onChange={(v) => setPart({ trimStart: v })} />
+        <Nudge label="End" value={part.trimEnd} onChange={(v) => setPart({ trimEnd: v })} />
       </div>
       <div className="flex flex-wrap items-end gap-x-5 gap-y-2">
         <Seconds id="padb" label="Silence before" value={selection.padBefore} onChange={(v) => set({ padBefore: v })} />
@@ -191,7 +259,7 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
             )
           }
         >
-          {icon(rawId, Play)} Clip
+          {icon(rawId, Play)} {joined ? `Part ${index + 1}` : "Clip"}
         </Button>
         <Button
           size="sm"
@@ -207,30 +275,13 @@ export function ClipEditor({ verseKey, selection }: { verseKey: string; selectio
         <Button
           size="sm"
           variant="ghost"
-          title="With its volume, leveling, fades, and silence, as the export will be (leveling of the whole export is applied when exporting)"
-          onClick={() =>
-            play(
-              exportId,
-              () =>
-                api.renderClip({
-                  audioPath: source.audioPath,
-                  start: clipStart,
-                  end: clipEnd,
-                  padBefore: selection.padBefore,
-                  padAfter: selection.padAfter,
-                  processed: true,
-                  targetDb: project.settings.leveling === "each" ? project.settings.targetDb : null,
-                  gainDb: selection.gainDb + project.settings.outputGainDb,
-                }),
-              clipStart,
-              selection.padBefore,
-            )
-          }
+          title={`${joined ? "Every part, one after another, with" : "With"} its volume, leveling, fades, and silence, as the export will be`}
+          onClick={() => play(exportId, () => api.renderVerse(project, book, chapter, verse), clipStart, selection.padBefore + before)}
         >
           {icon(exportId, Volume2)} As exported
         </Button>
-        {(selection.trimStart !== 0 || selection.trimEnd !== 0) && (
-          <Button size="sm" variant="ghost" className="ml-auto" onClick={() => set({ trimStart: 0, trimEnd: 0 })}>
+        {(part.trimStart !== 0 || part.trimEnd !== 0) && (
+          <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setPart({ trimStart: 0, trimEnd: 0 })}>
             <RotateCcw /> Reset cuts
           </Button>
         )}

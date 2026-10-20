@@ -221,17 +221,68 @@ impl Project {
     /// Chooses a reading for its verse (keeping the verse's volume, silence, and note)
     pub fn select(&self, reading_id: String) -> Result<Selection, ExtractAudioBibleError> {
         let mut s = self.state();
-        let m = (s.matches.matches.iter())
-            .find(|m| m.id == reading_id)
-            .cloned()
-            .ok_or_else(|| not_found(format!("no reading {reading_id}: search first")))?;
+        let m = reading(&s, &reading_id)?;
         s.project.select(&m);
-        let key = eab::export::verse_key(m.book, m.chapter, m.verse);
-        s.project
-            .selections
-            .get(&key)
-            .and_then(|sel| Selection::from_core(&key, sel))
-            .ok_or_else(|| not_found(key))
+        selection_of(&s.project, eab::export::verse_key(m.book, m.chapter, m.verse))
+    }
+
+    /**
+    Adds a reading to its verse's choice, to be played with it: for a verse read in pieces (its
+    first half, then the rest minutes later). It goes before any part that begins later in the
+    verse, so the pieces play in order; `arrange` reorders them. With nothing chosen for the
+    verse, it's chosen. Returns the verse's choice
+    */
+    pub fn join(&self, reading_id: String) -> Result<Selection, ExtractAudioBibleError> {
+        let mut s = self.state();
+        let m = reading(&s, &reading_id)?;
+        let State { project, matches } = &mut *s;
+        project.join(&m, matches);
+        selection_of(project, eab::export::verse_key(m.book, m.chapter, m.verse))
+    }
+
+    /// Takes a reading out of its verse's choice, leaving its other parts (taking the only one
+    /// unchooses the verse). Returns what's left, if anything
+    pub fn unjoin(&self, reading_id: String) -> Result<Option<Selection>, ExtractAudioBibleError> {
+        let mut s = self.state();
+        let m = reading(&s, &reading_id)?;
+        s.project.unjoin(&m);
+        Ok(selection_of(&s.project, eab::export::verse_key(m.book, m.chapter, m.verse)).ok())
+    }
+
+    /**
+    Puts a verse's readings in the order given (each one of its parts, each once), keeping how
+    each is cut. Returns the verse's choice
+    */
+    pub fn arrange(
+        &self,
+        book: u8,
+        chapter: u16,
+        verse: u16,
+        reading_ids: Vec<String>,
+    ) -> Result<Selection, ExtractAudioBibleError> {
+        let key = eab::export::verse_key(book, chapter, verse);
+        let mut s = self.state();
+        let sel = (s.project.selections.get_mut(&key)).ok_or_else(|| not_found(format!("nothing chosen for {key}")))?;
+        let parts = sel.parts();
+        if reading_ids.len() != parts.len() {
+            return Err(invalid(format!(
+                "{key} has {} parts, not {}",
+                parts.len(),
+                reading_ids.len()
+            )));
+        }
+        let mut arranged = vec![];
+        for id in &reading_ids {
+            let part = (parts.iter())
+                .find(|p| &p.match_id == id)
+                .ok_or_else(|| invalid(format!("{id} isn't one of {key}'s readings")))?;
+            if arranged.contains(part) {
+                return Err(invalid(format!("{id} is given twice")));
+            }
+            arranged.push(part.clone());
+        }
+        sel.set_parts(arranged);
+        selection_of(&s.project, key)
     }
 
     /// Unchooses a verse's reading
@@ -377,6 +428,21 @@ impl Project {
         Ok(eab::audio::wav(&pcm))
     }
 
+    /// A verse as it will be exported in a file of its own, as WAV: its readings one after
+    /// another, with the silence chosen around it. Null if nothing is chosen for it
+    pub fn render_verse(
+        &self,
+        files: &Files,
+        book: u8,
+        chapter: u16,
+        verse: u16,
+    ) -> Result<Option<Vec<u8>>, ExtractAudioBibleError> {
+        let project = self.state().project.clone();
+        let key = eab::export::verse_key(book, chapter, verse);
+        let pcm = eab::render_verse(&project, &key, project.metadata.sample_rate, files)?;
+        Ok(pcm.map(|pcm| eab::audio::wav(&pcm)))
+    }
+
     /**
     Exports tagged MP3s (by chapter, verse, or both, as the metadata says) of the given
     chapters, or every chapter with a chosen verse, and returns them with their bytes. About a
@@ -467,4 +533,19 @@ fn export_to_folder(
     Err(ExtractAudioBibleError::Io {
         message: "no file access in WebAssembly: use export and save the bytes".into(),
     })
+}
+
+/// A reading found by the last search
+fn reading(s: &State, id: &str) -> Result<eab::Match, ExtractAudioBibleError> {
+    (s.matches.matches.iter())
+        .find(|m| m.id == id)
+        .cloned()
+        .ok_or_else(|| not_found(format!("no reading {id}: search first")))
+}
+
+/// The choice for a verse, by its key
+fn selection_of(project: &eab::Project, key: String) -> Result<Selection, ExtractAudioBibleError> {
+    (project.selections.get(&key))
+        .and_then(|sel| Selection::from_core(&key, sel))
+        .ok_or_else(|| not_found(format!("nothing chosen for {key}")))
 }

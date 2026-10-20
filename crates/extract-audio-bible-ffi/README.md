@@ -226,6 +226,12 @@ before; `chooseBestIn` does one chapter. `select` chooses a reading by id, and `
 changes a verse's trims (seconds added to each cut), silence around it, volume, or note. `status`
 says how far along each chapter is.
 
+A verse read in pieces (its first half, then the rest minutes later) is chosen as several
+readings, played one after another: `join` adds a reading to its verse's choice (before any part
+that begins later in the verse), `arrange` puts them in another order, and `unjoin` takes one out.
+The parts after the first are the choice's `joined`. Here the sermon's second "Jesus wept" shows
+how.
+
 ```ts
 const choices = project.chooseBest(bsb, 0.75);
 console.log(choices.map((c) => `${c.chapter}: ${c.verses.join(" ")}`).join("; ")); // → 11: 33 34 35 36
@@ -242,6 +248,12 @@ console.log(project.selection(43, 11, 35)!.padBefore); // → 0.5
 console.log(project.unselect(43, 11, 36), project.selections().length); // → true 3
 console.log(project.select(project.verseReadings(43, 11, 36)[0].id).verse); // → 36
 console.log(project.chooseBestIn(bsb, 43, 11, 0.75).length); // → 0
+
+const again = project.verseReadings(43, 11, 35)[1];
+const joined = project.join(again.id);
+console.log(joined.joined.length, joined.joined[0].start.toFixed(2)); // → 1 34.54
+console.log(project.arrange(43, 11, 35, [again.id, best.id]).readingId === again.id); // → true
+console.log(project.unjoin(again.id)?.joined.length); // → 0
 ```
 
 ```python
@@ -262,6 +274,12 @@ print(project.selection(43, 11, 35).pad_before)  # → 0.5
 print(project.unselect(43, 11, 36), len(project.selections()))  # → True 3
 print(project.select(project.verse_readings(43, 11, 36)[0].id).verse)  # → 36
 print(len(project.choose_best_in(bsb, 43, 11, 0.75)))  # → 0
+
+again = project.verse_readings(43, 11, 35)[1]
+joined = project.join(again.id)
+print(len(joined.joined), f"{joined.joined[0].start:.2f}")  # → 1 34.54
+print(project.arrange(43, 11, 35, [again.id, best.id]).reading_id == again.id)  # → True
+print(len(project.unjoin(again.id).joined))  # → 0
 ```
 
 ## Settings and metadata
@@ -307,7 +325,8 @@ print(project.metadata().year, project.settings().chapter_tail)  # → 2026 2.0
 
 `renderClip` gives a stretch of a sermon as WAV (mono, at the file's own rate, unless `processed`
 levels and fades it as an export will). `renderChapter` gives a chapter as it will be exported,
-and `chapterTimeline` when each verse is heard in it, to follow along.
+and `chapterTimeline` when each verse is heard in it, to follow along; `renderVerse` gives a verse
+as its own file will be (every part of it, with its silence), or `null` if nothing is chosen.
 
 ```ts
 import type { ClipOptions } from "extract-audio-bible";
@@ -323,6 +342,7 @@ for (const t of project.chapterTimeline(bsb, 43, 11)) console.log(t.verse, t.sta
 // → 36 22.81 27.36
 const wav = project.renderChapter(bsb, files, 43, 11);
 console.log(new TextDecoder().decode(wav.slice(0, 4))); // → RIFF
+console.log(new TextDecoder().decode(project.renderVerse(files, 43, 11, 35)!.slice(0, 4))); // → RIFF
 ```
 
 ```python
@@ -340,6 +360,7 @@ for t in project.chapter_timeline(bsb, 43, 11):
 # → 36 22.81 27.36
 wav = project.render_chapter(bsb, files, 43, 11)
 print(wav[:4].decode())  # → RIFF
+print(project.render_verse(files, 43, 11, 35)[:4].decode())  # → RIFF
 ```
 
 ## Exporting
@@ -526,16 +547,16 @@ Each class, record, and enum <!-- source -->(by their TypeScript names)<!-- /sou
 | `Files.memory`, `add`, `paths` | [A project](#a-project) |
 | `Files.disk`, `has`, `remove` | [Reading natively](#reading-natively) |
 | `Project.name`, `book`, `addSources`, `search`, `sources`, `runs`, `readings` | [A project](#a-project) |
-| `Project.chooseBest`, `chooseBestIn`, `status`, `verseReadings`, `selection`, `selections`, `updateSelection`, `select`, `unselect` | [Choosing readings](#choosing-readings) |
+| `Project.chooseBest`, `chooseBestIn`, `status`, `verseReadings`, `selection`, `selections`, `updateSelection`, `select`, `unselect`, `join`, `arrange`, `unjoin` | [Choosing readings](#choosing-readings) |
 | `Project.settings`, `setSettings`, `metadata`, `setMetadata`, `applyJson` | [Settings and metadata](#settings-and-metadata) |
-| `Project.chapterTimeline`, `renderChapter` | [Listening](#listening) |
+| `Project.chapterTimeline`, `renderChapter`, `renderVerse` | [Listening](#listening) |
 | `Project.chaptersToExport`, `export` | [Exporting](#exporting) |
 | `Project.exportToFolder` | [Reading natively](#reading-natively) |
 | `Project.toJson`, `readingsJson`, `id`, `bibleId`, `rename`, `removeSource` | [Saving and opening](#saving-and-opening) |
 | `InputFile`, `BookInfo` | [A Bible](#a-bible) |
 | `Word`, `Readings`, `Reading`, `ReadingRun`, `ReadingKind` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `SourceInfo`, `Added`, `SearchSummary` | [A project](#a-project) |
-| `ChapterChoice`, `ChapterStatus`, `Selection` | [Choosing readings](#choosing-readings) |
+| `ChapterChoice`, `ChapterStatus`, `Selection`, `SelectionPart` | [Choosing readings](#choosing-readings) |
 | `Settings`, `Leveling`, `ExportMetadata`, `ExportMode`, `TrackNumbering` | [Settings and metadata](#settings-and-metadata) |
 | `ClipOptions`, `VerseTime` | [Listening](#listening) |
 | `ChapterRef`, `ExportedFile` | [Exporting](#exporting) |

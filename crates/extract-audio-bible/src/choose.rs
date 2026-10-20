@@ -6,7 +6,7 @@ use crate::{
     bible::BibleBook,
     export::verse_key,
     matcher::Match,
-    project::{MatchSet, Project, Selection},
+    project::{MatchSet, Part, Project, Selection},
 };
 
 impl Selection {
@@ -25,8 +25,28 @@ impl Selection {
             gain_db: previous.map_or(0.0, |p| p.gain_db),
             needs_trim: false,
             note: previous.map(|p| p.note.clone()).unwrap_or_default(),
+            joined: vec![],
         }
     }
+}
+
+impl Part {
+    /// A reading, uncut
+    pub fn of(m: &Match) -> Self {
+        Part {
+            match_id: m.id.clone(),
+            source_id: m.source_id.clone(),
+            start: m.start,
+            end: m.end,
+            trim_start: 0.0,
+            trim_end: 0.0,
+        }
+    }
+}
+
+/// Where in its verse a reading begins: the first of the verse's words heard
+fn begins(m: &Match) -> usize {
+    m.verse_words_heard.iter().position(|&h| h).unwrap_or(usize::MAX)
 }
 
 impl Project {
@@ -35,6 +55,50 @@ impl Project {
         let key = verse_key(m.book, m.chapter, m.verse);
         let selection = Selection::of(m, self.selections.get(&key));
         self.selections.insert(key, selection);
+    }
+
+    /**
+    Adds `m` to the reading chosen for its verse, to be played with it: for a verse read in
+    pieces. It goes before the first part that begins later in the verse (by the words each
+    has, looked up in `matches`), so the halves play in order; [`Selection::set_parts`]
+    rearranges them. With nothing chosen for the verse, it's chosen. Returns false if it was
+    already used
+    */
+    pub fn join(&mut self, m: &Match, matches: &MatchSet) -> bool {
+        let key = verse_key(m.book, m.chapter, m.verse);
+        let Some(selection) = self.selections.get_mut(&key) else {
+            self.select(m);
+            return true;
+        };
+        if selection.uses(&m.id) {
+            return false;
+        }
+        let mut parts = selection.parts();
+        let at = (parts.iter())
+            .position(|p| matches.matches.iter().find(|x| x.id == p.match_id).is_some_and(|x| begins(x) > begins(m)))
+            .unwrap_or(parts.len());
+        parts.insert(at, Part::of(m));
+        selection.set_parts(parts);
+        true
+    }
+
+    /**
+    Takes a reading out of its verse's choice, leaving the other parts; taking the only one
+    unchooses the verse. Returns false if it wasn't used
+    */
+    pub fn unjoin(&mut self, m: &Match) -> bool {
+        let key = verse_key(m.book, m.chapter, m.verse);
+        let Some(selection) = self.selections.get_mut(&key) else { return false };
+        if !selection.uses(&m.id) {
+            return false;
+        }
+        let parts: Vec<Part> = selection.parts().into_iter().filter(|p| p.match_id != m.id).collect();
+        if parts.is_empty() {
+            self.selections.remove(&key);
+        } else {
+            selection.set_parts(parts);
+        }
+        true
     }
 
     /**
@@ -66,8 +130,11 @@ impl Project {
             }
             let verse = i as u16 + 1;
             if let Some(existing) = self.selections.get(&verse_key(book.id, chapter, verse)) {
-                let run = by_id.get(existing.match_id.as_str()).and_then(|m| m.run_id.clone());
-                previous = Some((run, existing.source_id.clone()));
+                // What's heard last is what the next verse would carry on from
+                let last = (existing.joined.last())
+                    .map_or((&existing.match_id, &existing.source_id), |p| (&p.match_id, &p.source_id));
+                let run = by_id.get(last.0.as_str()).and_then(|m| m.run_id.clone());
+                previous = Some((run, last.1.clone()));
                 continue;
             }
             let best = (by_verse.get(&verse).into_iter().flatten())
@@ -141,5 +208,100 @@ impl Project {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        Bible, BibleBook,
+        matcher::MatchKind,
+        project::{Project, Source},
+    };
+
+    /// A reading of John 11:35–36 that heard the verse's words `heard` (of four)
+    fn reading(id: &str, verse: u16, start: f64, end: f64, heard: [bool; 4]) -> Match {
+        Match {
+            id: id.into(),
+            source_id: "s".into(),
+            book: 43,
+            chapter: 11,
+            verse,
+            word_start: 0,
+            word_end: 0,
+            start,
+            end,
+            score: 0.5,
+            accuracy: 1.0,
+            coverage: 0.5,
+            precision: 1.0,
+            kind: MatchKind::Partial,
+            verse_words_heard: heard.into(),
+            extra_words: vec![],
+            run_id: None,
+        }
+    }
+
+    #[test]
+    fn joins_a_verse_read_in_pieces() {
+        let book = BibleBook {
+            id: 43,
+            name: "John".into(),
+            osis: "John".into(),
+            chapters: (1..=11).map(|c| if c == 11 { vec!["a b c d".into(); 36] } else { vec![] }).collect(),
+        };
+        let bible = Bible {
+            id: "b".into(),
+            name: "Test".into(),
+            abbreviation: "T".into(),
+            language: None,
+            format: "text".into(),
+            books: vec![book],
+        };
+        let mut project = Project::new("p", "", &bible, Some(43));
+        project.sources.push(Source {
+            id: "s".into(),
+            label: "s".into(),
+            audio_path: "s.mp3".into(),
+            transcript_path: "s.json".into(),
+            duration: None,
+            word_count: 0,
+            match_count: 0,
+        });
+        project.settings.chapter_lead_in = 0.0;
+        let second_half = reading("late", 35, 100.0, 102.0, [false, false, true, true]);
+        let first_half = reading("early", 35, 10.0, 11.0, [true, true, false, false]);
+        let next = reading("next", 36, 102.0, 105.0, [true; 4]);
+        let matches =
+            MatchSet { matches: vec![second_half.clone(), first_half.clone(), next.clone()], ..Default::default() };
+
+        project.select(&second_half);
+        // The first half goes first, though it was added second
+        assert!(project.join(&first_half, &matches));
+        assert!(!project.join(&first_half, &matches));
+        let sel = &project.selections["43.11.35"];
+        assert_eq!(sel.parts().iter().map(|p| p.match_id.as_str()).collect::<Vec<_>>(), ["early", "late"]);
+
+        // Heard one after the other, and verse 36 carries straight on from the second half
+        project.select(&next);
+        let book = bible.book(43).unwrap();
+        let times = crate::chapter_timeline(&project, book, 11);
+        assert_eq!((times[0].start, times[0].end), (0.0, 3.0));
+        assert_eq!((times[1].start, times[1].end), (3.0, 6.0));
+        let (pieces, _) = crate::export::chapter_pieces(&project, book, 11);
+        let audio = pieces.iter().filter(|p| matches!(p, crate::export::Piece::Audio(_))).count();
+        assert_eq!(audio, 2);
+
+        // Rearranged, then taken apart
+        let sel = project.selections.get_mut("43.11.35").unwrap();
+        let mut parts = sel.parts();
+        parts.reverse();
+        sel.set_parts(parts);
+        assert_eq!(project.selections["43.11.35"].match_id, "late");
+        assert!(project.unjoin(&second_half));
+        assert_eq!(project.selections["43.11.35"].parts().len(), 1);
+        assert!(project.unjoin(&first_half));
+        assert!(!project.selections.contains_key("43.11.35"));
     }
 }

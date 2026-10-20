@@ -71,20 +71,82 @@ pub struct Selection {
     pub pad_before: f64,
     #[serde(default)]
     pub pad_after: f64,
-    /// Chosen, but still to be trimmed
     /// Volume change for this verse, in dB
     #[serde(default)]
     pub gain_db: f64,
+    /// Chosen, but still to be trimmed
     #[serde(default)]
     pub needs_trim: bool,
     #[serde(default)]
     pub note: String,
+    /// More readings of the verse, played after this one in order: the rest of a verse that was
+    /// read in pieces (its first half, then its second minutes later)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joined: Vec<Part>,
 }
 
-impl Selection {
+/// One reading used for part of a verse, and how it's cut
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Part {
+    pub match_id: String,
+    pub source_id: String,
+    pub start: f64,
+    pub end: f64,
+    #[serde(default)]
+    pub trim_start: f64,
+    #[serde(default)]
+    pub trim_end: f64,
+}
+
+impl Part {
+    /// Where it's cut, in seconds, with its trims
     pub fn clip(&self) -> (f64, f64) {
         let s = (self.start + self.trim_start).max(0.0);
         (s, (self.end + self.trim_end).max(s + 0.05))
+    }
+}
+
+impl Selection {
+    /// Where the first reading is cut, in seconds, with its trims
+    pub fn clip(&self) -> (f64, f64) {
+        self.first().clip()
+    }
+
+    /// The first reading
+    pub fn first(&self) -> Part {
+        Part {
+            match_id: self.match_id.clone(),
+            source_id: self.source_id.clone(),
+            start: self.start,
+            end: self.end,
+            trim_start: self.trim_start,
+            trim_end: self.trim_end,
+        }
+    }
+
+    /// Every reading of the verse, in the order they're played
+    pub fn parts(&self) -> Vec<Part> {
+        std::iter::once(self.first()).chain(self.joined.iter().cloned()).collect()
+    }
+
+    /// Plays these readings, in this order (the first becomes the selection's own); none leaves it
+    /// as it was
+    pub fn set_parts(&mut self, parts: Vec<Part>) {
+        let mut parts = parts.into_iter();
+        let Some(first) = parts.next() else { return };
+        self.match_id = first.match_id;
+        self.source_id = first.source_id;
+        self.start = first.start;
+        self.end = first.end;
+        self.trim_start = first.trim_start;
+        self.trim_end = first.trim_end;
+        self.joined = parts.collect();
+    }
+
+    /// Whether a reading is one of its parts
+    pub fn uses(&self, match_id: &str) -> bool {
+        self.match_id == match_id || self.joined.iter().any(|p| p.match_id == match_id)
     }
 }
 

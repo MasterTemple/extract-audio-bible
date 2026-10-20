@@ -333,6 +333,18 @@ async fn render_chapter(state: State<'_, AppState>, project: Project, book: u8, 
     .await
 }
 
+/// A verse as it will be exported (all its readings, one after another), as WAV
+#[tauri::command]
+async fn render_verse(project: Project, book: u8, chapter: u16, verse: u16) -> Result<Response> {
+    blocking(move || {
+        let key = export::verse_key(book, chapter, verse);
+        let pcm = extract_audio_bible::render_verse(&project, &key, 44_100, &Disk)?
+            .ok_or_else(|| AppError::msg("No reading is chosen for this verse"))?;
+        Ok(Response::new(audio::wav(&pcm)))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn chapters_to_export(state: State<'_, AppState>, project: Project) -> Result<Vec<ChapterRef>> {
     let store = state.store.clone();
@@ -396,6 +408,7 @@ pub fn run() {
             audio_peaks,
             render_clip,
             render_chapter,
+            render_verse,
             chapter_timeline,
             chapters_to_export,
             export_chapters,

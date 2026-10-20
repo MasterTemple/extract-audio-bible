@@ -243,6 +243,47 @@ pub struct Selection {
     /// Chosen, but still to be trimmed
     pub needs_trim: bool,
     pub note: String,
+    /// More readings of the verse, played after this one in order: the rest of a verse read in
+    /// pieces
+    pub joined: Vec<SelectionPart>,
+}
+
+/// Another reading used for part of a verse, and how it's cut
+#[data]
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelectionPart {
+    pub reading_id: String,
+    pub source_id: String,
+    pub start: f64,
+    pub end: f64,
+    pub trim_start: f64,
+    pub trim_end: f64,
+}
+
+impl From<&eab::Part> for SelectionPart {
+    fn from(p: &eab::Part) -> Self {
+        SelectionPart {
+            reading_id: p.match_id.clone(),
+            source_id: p.source_id.clone(),
+            start: p.start,
+            end: p.end,
+            trim_start: p.trim_start,
+            trim_end: p.trim_end,
+        }
+    }
+}
+
+impl From<&SelectionPart> for eab::Part {
+    fn from(p: &SelectionPart) -> Self {
+        eab::Part {
+            match_id: p.reading_id.clone(),
+            source_id: p.source_id.clone(),
+            start: p.start,
+            end: p.end,
+            trim_start: p.trim_start,
+            trim_end: p.trim_end,
+        }
+    }
 }
 
 impl Selection {
@@ -264,6 +305,7 @@ impl Selection {
             gain_db: s.gain_db,
             needs_trim: s.needs_trim,
             note: s.note.clone(),
+            joined: s.joined.iter().map(SelectionPart::from).collect(),
         })
     }
 
@@ -282,6 +324,7 @@ impl Selection {
                 gain_db: self.gain_db,
                 needs_trim: self.needs_trim,
                 note: self.note.clone(),
+                joined: self.joined.iter().map(eab::Part::from).collect(),
             },
         )
     }

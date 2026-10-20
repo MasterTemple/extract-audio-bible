@@ -9,6 +9,7 @@ import {
   type MatchSet,
   type Project,
   type ProjectSummary,
+  type Part,
   type Run,
   type Selection,
 } from "./api";
@@ -51,6 +52,14 @@ interface AppState extends Indexed {
   selectMany: (matches: Match[]) => void;
   unselect: (key: string) => void;
   editSelection: (key: string, change: Partial<Selection>) => void;
+  /** Adds a reading to its verse's choice, played with it (a verse read in pieces), in the verse's order */
+  join: (match: Match) => void;
+  /** Takes a reading out of its verse's choice (the only one unchooses the verse) */
+  unjoin: (key: string, matchId: string) => void;
+  /** Plays a verse's readings in this order */
+  arrange: (key: string, parts: Part[]) => void;
+  /** Changes how one of a verse's readings is cut */
+  editPart: (key: string, index: number, change: Partial<Part>) => void;
   flush: () => Promise<void>;
 }
 
@@ -82,6 +91,25 @@ export function selectionFor(m: Match, previous?: Selection): Selection {
     needsTrim: false,
     note: previous?.note ?? "",
   };
+}
+
+/** Every reading of a verse's choice, in the order they're played */
+export function partsOf(sel: Selection): Part[] {
+  const { matchId, sourceId, start, end, trimStart, trimEnd } = sel;
+  return [{ matchId, sourceId, start, end, trimStart, trimEnd }, ...(sel.joined ?? [])];
+}
+
+/** The choice playing these readings in this order (the first becomes its own) */
+export function withParts(sel: Selection, parts: Part[]): Selection {
+  const [first, ...joined] = parts;
+  if (!first) return sel;
+  return { ...sel, ...first, joined };
+}
+
+/** Where in its verse a reading begins: the first of the verse's words heard */
+function begins(m: Match): number {
+  const i = m.verseWordsHeard.indexOf(true);
+  return i < 0 ? Infinity : i;
 }
 
 const LAST_PROJECT = "cab:lastProject";
@@ -214,6 +242,51 @@ export const useApp = create<AppState>((set, get) => {
         const current = p.selections[key];
         if (!current) return p;
         return { ...p, selections: { ...p.selections, [key]: { ...current, ...change } } };
+      }),
+
+    join: (m) =>
+      get().update((p) => {
+        const key = verseKey(m.book, m.chapter, m.verse);
+        const current = p.selections[key];
+        if (!current) return { ...p, selections: { ...p.selections, [key]: selectionFor(m) } };
+        const parts = partsOf(current);
+        if (parts.some((x) => x.matchId === m.id)) return p;
+        const { matchById } = get();
+        const later = parts.findIndex((x) => {
+          const other = matchById.get(x.matchId);
+          return other !== undefined && begins(other) > begins(m);
+        });
+        const part: Part = { matchId: m.id, sourceId: m.sourceId, start: m.start, end: m.end, trimStart: 0, trimEnd: 0 };
+        parts.splice(later < 0 ? parts.length : later, 0, part);
+        return { ...p, selections: { ...p.selections, [key]: withParts(current, parts) } };
+      }),
+
+    unjoin: (key, matchId) =>
+      get().update((p) => {
+        const current = p.selections[key];
+        if (!current) return p;
+        const parts = partsOf(current).filter((x) => x.matchId !== matchId);
+        const selections = { ...p.selections };
+        if (parts.length === 0) delete selections[key];
+        else selections[key] = withParts(current, parts);
+        return { ...p, selections };
+      }),
+
+    arrange: (key, parts) =>
+      get().update((p) => {
+        const current = p.selections[key];
+        if (!current || parts.length === 0) return p;
+        return { ...p, selections: { ...p.selections, [key]: withParts(current, parts) } };
+      }),
+
+    editPart: (key, index, change) =>
+      get().update((p) => {
+        const current = p.selections[key];
+        if (!current) return p;
+        const parts = partsOf(current);
+        if (!parts[index]) return p;
+        parts[index] = { ...parts[index], ...change };
+        return { ...p, selections: { ...p.selections, [key]: withParts(current, parts) } };
       }),
 
     flush: async () => {

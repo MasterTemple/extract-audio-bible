@@ -99,6 +99,22 @@ enum Command {
     },
     /// Show each chapter's chosen and missing verses
     Status { dir: PathBuf },
+    /// List a verse's readings, numbered best first, marking those chosen
+    Readings {
+        dir: PathBuf,
+        /// The verse ("5:3", or "1 Thess 5:3")
+        verse: String,
+    },
+    /// Choose a verse's reading, or several to play one after another in the order given (a
+    /// verse read in pieces: its first half, then the rest minutes later)
+    Select {
+        dir: PathBuf,
+        /// The verse ("5:3", or "1 Thess 5:3")
+        verse: String,
+        /// Readings by their number in `readings`, or their id
+        #[arg(required = true)]
+        readings: Vec<String>,
+    },
     /// Change settings: `minAccuracy=0.8`, `metadata.artist="Grace Church"`, `settings.gapBetweenVerses=0.3`
     Set {
         dir: PathBuf,
@@ -107,12 +123,15 @@ enum Command {
         #[arg(required = true)]
         changes: Vec<String>,
     },
-    /// Render a chapter as it will be exported, as WAV
+    /// Render a chapter (or one verse) as it will be exported, as WAV
     Render {
         dir: PathBuf,
         /// The chapter ("5", or "1 Thess 5")
         #[arg(long)]
         chapter: String,
+        /// Only this verse of it, as its own file will be (every reading joined for it)
+        #[arg(long)]
+        verse: Option<u16>,
         #[arg(short, long)]
         output: PathBuf,
     },
@@ -375,6 +394,88 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 text.trim_end().to_string()
             })
         }
+        Command::Readings { dir, verse } => {
+            let p = Folder::open(&dir)?;
+            let (c, v) = p.verse(&verse)?;
+            let key = export::verse_key(c.book, c.chapter, v);
+            let chosen = p.project.selections.get(&key).map(|s| s.parts()).unwrap_or_default();
+            let listed: Vec<Listed> = (p.readings(&c, v).into_iter().enumerate())
+                .map(|(i, reading)| Listed {
+                    number: i + 1,
+                    chosen: chosen
+                        .iter()
+                        .position(|part| part.match_id == reading.id)
+                        .map(|n| n + 1),
+                    reading: reading.clone(),
+                })
+                .collect();
+            out.result(&listed, || {
+                let mut text = reference(&p.bible, c.book, c.chapter, Some(v));
+                if listed.is_empty() {
+                    text += ": no readings found";
+                }
+                for l in &listed {
+                    let r = &l.reading;
+                    let sermon = p
+                        .project
+                        .sources
+                        .iter()
+                        .find(|s| s.id == r.source_id)
+                        .map_or("?", |s| &s.label);
+                    let mark = l.chosen.map_or(String::new(), |n| {
+                        if chosen.len() > 1 {
+                            format!("chosen ({n} of {})", chosen.len())
+                        } else {
+                            "chosen".into()
+                        }
+                    });
+                    text += &format!(
+                        "\n{:>3}  {:<8} {:>3}% of the verse, {:>3}%  {}–{}  {sermon}  {mark}",
+                        l.number,
+                        format!("{:?}", r.kind).to_lowercase(),
+                        (r.coverage * 100.0).round(),
+                        (r.score * 100.0).round(),
+                        clock(r.start),
+                        clock(r.end),
+                    );
+                }
+                text
+            })
+        }
+        Command::Select { dir, verse, readings } => {
+            let mut p = Folder::open(&dir)?;
+            let (c, v) = p.verse(&verse)?;
+            let listed = p.readings(&c, v);
+            let mut picked: Vec<extract_audio_bible::Match> = vec![];
+            for name in &readings {
+                let m = match name.parse::<usize>() {
+                    Ok(n) => listed
+                        .get(n.wrapping_sub(1))
+                        .ok_or_else(|| anyhow!("{name}: the verse has {}", plural(listed.len(), "reading")))?,
+                    Err(_) => listed
+                        .iter()
+                        .find(|m| &m.id == name)
+                        .ok_or_else(|| anyhow!("{name}: not a reading of this verse"))?,
+                };
+                if picked.iter().any(|x| x.id == m.id) {
+                    bail!("{name} is given twice");
+                }
+                picked.push((*m).clone());
+            }
+            let key = export::verse_key(c.book, c.chapter, v);
+            p.project.select(&picked[0]);
+            let selection = p.project.selections.get_mut(&key).expect("just chosen");
+            selection.set_parts(picked.iter().map(extract_audio_bible::Part::of).collect());
+            let selection = selection.clone();
+            p.save()?;
+            out.result(&selection, || {
+                format!(
+                    "Chose {} for {}",
+                    plural(picked.len(), "reading"),
+                    reference(&p.bible, c.book, c.chapter, Some(v))
+                )
+            })
+        }
         Command::Set { dir, changes } => {
             let mut p = Folder::open(&dir)?;
             let mut value = serde_json::to_value(&p.project)?;
@@ -399,13 +500,39 @@ fn run(command: Command, out: &Out) -> Result<()> {
             p.save()?;
             out.result(&p.project.settings, || format!("Changed {}", changes.len()))
         }
-        Command::Render { dir, chapter, output } => {
+        Command::Render {
+            dir,
+            chapter,
+            verse,
+            output,
+        } => {
             let p = Folder::open(&dir)?;
             let c = p.chapters(&[chapter], false)?.remove(0);
             let book = p.bible.book(c.book).ok_or_else(|| anyhow!("no book {}", c.book))?;
-            let pcm = export::render_chapter(&p.project, book, c.chapter, p.project.metadata.sample_rate, &Disk)?;
+            let rate = p.project.metadata.sample_rate;
+            let (pcm, timeline) = match verse {
+                Some(v) => {
+                    let key = export::verse_key(c.book, c.chapter, v);
+                    let pcm = export::render_verse(&p.project, &key, rate, &Disk)?.ok_or_else(|| {
+                        anyhow!(
+                            "nothing is chosen for {}",
+                            reference(&p.bible, c.book, c.chapter, Some(v))
+                        )
+                    })?;
+                    let sel = &p.project.selections[&key];
+                    let heard = export::VerseTime {
+                        verse: v,
+                        start: sel.pad_before,
+                        end: pcm.seconds() - sel.pad_after,
+                    };
+                    (pcm, vec![heard])
+                }
+                None => (
+                    export::render_chapter(&p.project, book, c.chapter, rate, &Disk)?,
+                    export::chapter_timeline(&p.project, book, c.chapter),
+                ),
+            };
             std::fs::write(&output, audio::wav(&pcm))?;
-            let timeline = export::chapter_timeline(&p.project, book, c.chapter);
             out.result(&timeline, || {
                 format!("{:.1} seconds → {}", pcm.seconds(), output.display())
             })
@@ -552,6 +679,32 @@ impl Folder {
         names.iter().map(|name| self.chapter(name)).collect()
     }
 
+    /// A verse named like "5:3" (in the project's book) or "1 Thess 5:3"
+    fn verse(&self, name: &str) -> Result<(ChapterRef, u16)> {
+        let (chapter, verse) = name
+            .trim()
+            .rsplit_once(':')
+            .ok_or_else(|| anyhow!("{name}: not a verse (\"5:3\")"))?;
+        let c = self.chapter(chapter)?;
+        let count = self
+            .bible
+            .book(c.book)
+            .map_or(0, |b| b.chapters[c.chapter as usize - 1].len());
+        match verse.parse::<u16>() {
+            Ok(v) if v >= 1 && v as usize <= count => Ok((c, v)),
+            _ => bail!("{name}: the chapter has {count} verses"),
+        }
+    }
+
+    /// A verse's readings, best first
+    fn readings(&self, c: &ChapterRef, verse: u16) -> Vec<&extract_audio_bible::Match> {
+        let mut found: Vec<_> = (self.matches.matches.iter())
+            .filter(|m| (m.book, m.chapter, m.verse) == (c.book, c.chapter, verse))
+            .collect();
+        found.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.start.total_cmp(&b.start)));
+        found
+    }
+
     fn chapter(&self, name: &str) -> Result<ChapterRef> {
         let name = name.trim();
         let (book, number) = match name.rsplit_once([' ', ':']) {
@@ -606,6 +759,15 @@ fn search(p: &mut Folder, out: &Out) -> Result<Searched> {
         readings: p.matches.matches.len(),
         errors,
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Listed {
+    number: usize,
+    /// Where it's played among the verse's chosen readings (1 first), if chosen
+    chosen: Option<usize>,
+    reading: extract_audio_bible::Match,
 }
 
 #[derive(Serialize)]

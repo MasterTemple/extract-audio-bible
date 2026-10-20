@@ -76,20 +76,26 @@ pub fn analyze_with(
             Err(e) => analysis.errors.push((source.label.clone(), e)),
         }
     }
-    // Selections follow their reading to its new id, if the analysis changed it
+    // Selections follow their readings to their new ids, if the analysis changed them
     let set = &analysis.matches;
-    for sel in project.selections.values_mut() {
-        if set.matches.iter().any(|m| m.id == sel.match_id) {
-            continue;
+    let follow = |match_id: &mut String, source_id: &str, start: f64, end: f64| {
+        if set.matches.iter().any(|m| &m.id == match_id) {
+            return;
         }
         let found = set.matches.iter().find(|m| {
-            m.source_id == sel.source_id
-                && m.start < sel.end
-                && m.end > sel.start
-                && sel.match_id.contains(&format!(":{}.{}.{}@", m.book, m.chapter, m.verse))
+            m.source_id == source_id
+                && m.start < end
+                && m.end > start
+                && match_id.contains(&format!(":{}.{}.{}@", m.book, m.chapter, m.verse))
         });
         if let Some(m) = found {
-            sel.match_id = m.id.clone();
+            *match_id = m.id.clone();
+        }
+    };
+    for sel in project.selections.values_mut() {
+        follow(&mut sel.match_id, &sel.source_id, sel.start, sel.end);
+        for part in &mut sel.joined {
+            follow(&mut part.match_id, &part.source_id, part.start, part.end);
         }
     }
     project.updated_at = now();
