@@ -299,6 +299,17 @@ fn import_markup(files: Vec<(String, Vec<u8>)>) -> Result<(Vec<BibleBook>, Strin
         };
         // Flat, so every file is in the one folder a source reads; the index keeps names apart
         let name = Path::new(&path).file_name().and_then(|n| n.to_str()).unwrap_or("file");
+        // logoxide-text reads USX only from `.usx` files, and some come as `.xml`
+        let renamed;
+        let name = if format == TextFormat::Usx && ext(name) != "usx" {
+            renamed = format!(
+                "{}.usx",
+                Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or("file")
+            );
+            renamed.as_str()
+        } else {
+            name
+        };
         let name = if by_format.values().flatten().any(|(n, _)| n == name) {
             format!("{i}-{name}")
         } else {
@@ -577,5 +588,14 @@ mod tests {
         assert_eq!(ch[16], "For God sent not.");
         assert_eq!(ch[17], "");
         assert_eq!(ch[18], "And this is.");
+    }
+
+    #[test]
+    fn usx_named_xml() {
+        let usx = r#"<?xml version="1.0" encoding="utf-8"?>
+<usx version="3.0"><book code="JHN" style="id"/><chapter number="11" style="c" sid="JHN 11"/><para style="p"><verse number="35" style="v" sid="JHN 11:35"/>Jesus wept.<verse eid="JHN 11:35"/></para><chapter eid="JHN 11"/></usx>"#;
+        let imported = import(vec![("JHN.xml".into(), usx.as_bytes().to_vec())]).unwrap();
+        assert_eq!(imported.format, "usx");
+        assert_eq!(imported.books[0].chapters[10][34], "Jesus wept.");
     }
 }
