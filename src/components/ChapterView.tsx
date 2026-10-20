@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { ChevronLeft, ChevronRight, Loader2, Play, Scissors, Sparkles, Square, Trash2, CheckCircle2, Link2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Loader2, Play, Scissors, Sparkles, Square, Trash2, CheckCircle2, Link2, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { api, type Match, type Selection } from "@/lib/api";
+import { api, type Match, type Selection, type VerseTime } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { play, stop, usePlayer } from "@/lib/player";
 import { bookName, chapterStatus, verseKey, versesNeeded, sourceColor, runLabel } from "@/lib/refs";
@@ -53,9 +53,17 @@ export function ChapterView() {
   const text = book ? bookText[book]?.[chapter! - 1] : undefined;
 
   const verses = useMemo(() => (b && chapter ? versesNeeded(b, chapter) : []), [b, chapter]);
+  const playId = `chapter:${book}.${chapter}`;
+  // The verse being heard while the chapter plays
+  const [timeline, setTimeline] = useState<{ id: string; times: VerseTime[] } | null>(null);
+  const playing = player.id === playId && timeline?.id === playId ? timeline.times : null;
+  const hearing = playing ? (playing.filter((t) => t.start <= player.time).pop()?.verse ?? null) : null;
+  const rows = useRef(new Map<number, HTMLElement>());
+  useEffect(() => {
+    if (hearing !== null) rows.current.get(hearing)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [hearing]);
   if (!project || !b || !chapter) return null;
   const status = chapterStatus(project, b, chapter, matchesByVerse);
-  const playId = `chapter:${book}.${chapter}`;
 
   const nav = (delta: number) => {
     const idx = outline.findIndex((x) => x.id === b.id);
@@ -94,7 +102,14 @@ export function ChapterView() {
 
   const preview = async () => {
     await flush();
-    void play(playId, () => api.renderChapter(useApp.getState().project!, b.id, chapter));
+    const p = useApp.getState().project!;
+    if (player.id !== playId) {
+      api.chapterTimeline(p, b.id, chapter).then(
+        (times) => setTimeline({ id: playId, times }),
+        () => setTimeline(null),
+      );
+    }
+    void play(playId, () => api.renderChapter(p, b.id, chapter));
   };
 
   return (
@@ -172,7 +187,13 @@ export function ChapterView() {
               const counts = { exact: 0, close: 0, partial: 0 };
               for (const m of matches) counts[m.kind]++;
               return (
-                <div key={v}>
+                <div
+                  key={v}
+                  ref={(el) => {
+                    if (el) rows.current.set(v, el);
+                    else rows.current.delete(v);
+                  }}
+                >
                   {sel && !joinUp && joinDown && (
                     <div className="mt-2 mb-0.5 ml-6 flex items-center gap-1.5 text-[11px] font-medium" style={{ color }}>
                       <Link2 className="size-3" /> Read straight through · {source?.label}
@@ -184,13 +205,16 @@ export function ChapterView() {
                     className={cn(
                       "group grid w-full grid-cols-[6px_2rem_1fr_auto] items-start gap-x-2 rounded-md py-1.5 pr-2 text-left hover:bg-muted/60",
                       verse === v && "bg-muted",
+                      hearing === v && "bg-primary/10 ring-1 ring-primary/30",
                     )}
                   >
                     <span
                       className={cn("w-1.5 self-stretch", !joinUp && "mt-1 rounded-t-full", !joinDown && "mb-1 rounded-b-full", joinUp && "-mt-1.5", joinDown && "-mb-1.5")}
                       style={{ background: color ?? "transparent" }}
                     />
-                    <span className="pt-0.5 text-right text-xs font-semibold text-muted-foreground tabular-nums">{v}</span>
+                    <span className="pt-0.5 text-right text-xs font-semibold text-muted-foreground tabular-nums">
+                      {hearing === v ? <Volume2 className="ml-auto size-3.5 text-primary" /> : v}
+                    </span>
                     <span className={cn("text-[15px] leading-relaxed", !sel && matches.length === 0 && "text-muted-foreground")}>
                       {text[v - 1]}
                     </span>

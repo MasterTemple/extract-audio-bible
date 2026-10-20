@@ -23,24 +23,53 @@ export const usePlayer = create<PlayerState>(() => ({
   duration: 0,
 }));
 
-const audio = new Audio();
-let url: string | null = null;
+/*
+Audio is decoded whole and played from memory (Web Audio), not streamed through an <audio>
+element: WebKitGTK streams a blob through GStreamer, which played a long clip (a chapter) out of
+order, starting with a stretch from its middle.
+*/
+let context: AudioContext | null = null;
+let source: AudioBufferSourceNode | null = null;
+let buffer: AudioBuffer | null = null;
+/** The context's time when the audio's start would have played */
+let startedAt = 0;
 let frame = 0;
 
-function tick() {
-  usePlayer.setState({ time: audio.currentTime });
-  if (!audio.paused) frame = requestAnimationFrame(tick);
+function now() {
+  return context && buffer ? Math.min(context.currentTime - startedAt, buffer.duration) : 0;
 }
 
-audio.addEventListener("play", () => {
+function tick() {
+  usePlayer.setState({ time: now() });
+  if (source) frame = requestAnimationFrame(tick);
+}
+
+/** Plays `buffer` from `at` seconds */
+function start(at: number) {
+  if (!context || !buffer) return;
+  if (source) {
+    source.onended = null;
+    source.stop();
+  }
+  const node = context.createBufferSource();
+  node.buffer = buffer;
+  node.connect(context.destination);
+  node.onended = () => {
+    if (source === node) stop();
+  };
+  startedAt = context.currentTime - at;
+  node.start(0, Math.max(0, at));
+  source = node;
   cancelAnimationFrame(frame);
   frame = requestAnimationFrame(tick);
-});
-audio.addEventListener("ended", () => stop());
-audio.addEventListener("loadedmetadata", () => usePlayer.setState({ duration: audio.duration }));
+}
 
 export function stop() {
-  audio.pause();
+  if (source) {
+    source.onended = null;
+    source.stop();
+    source = null;
+  }
   cancelAnimationFrame(frame);
   usePlayer.setState({ id: null, loading: null, time: 0 });
 }
@@ -54,13 +83,15 @@ export async function play(id: string, render: () => Promise<ArrayBuffer>, offse
   stop();
   usePlayer.setState({ loading: id });
   try {
+    context ??= new AudioContext();
+    await context.resume();
     const bytes = await render();
     if (usePlayer.getState().loading !== id) return;
-    if (url) URL.revokeObjectURL(url);
-    url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
-    audio.src = url;
-    usePlayer.setState({ id, loading: null, offset, lead, time: 0 });
-    await audio.play();
+    const decoded = await context.decodeAudioData(bytes);
+    if (usePlayer.getState().loading !== id) return;
+    buffer = decoded;
+    usePlayer.setState({ id, loading: null, offset, lead, time: 0, duration: decoded.duration });
+    start(0);
   } catch (e) {
     usePlayer.setState({ loading: null, id: null });
     toast.error(`Couldn't play: ${errorMessage(e)}`);
@@ -68,7 +99,7 @@ export async function play(id: string, render: () => Promise<ArrayBuffer>, offse
 }
 
 export function seek(seconds: number) {
-  audio.currentTime = Math.max(0, seconds);
+  if (source && buffer) start(Math.min(Math.max(0, seconds), buffer.duration));
 }
 
 /** The sermon time being heard, if `id` is playing */

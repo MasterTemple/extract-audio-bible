@@ -439,6 +439,23 @@ async fn render_clip(request: ClipRequest) -> Result<Response> {
     .await
 }
 
+/// When each chosen verse is heard in a chapter's audio (as `render_chapter` makes it)
+#[tauri::command]
+async fn chapter_timeline(
+    state: State<'_, AppState>,
+    project: Project,
+    book: u8,
+    chapter: u16,
+) -> Result<Vec<export::VerseTime>> {
+    let store = state.store.clone();
+    blocking(move || {
+        let bible = store.bible(&project.bible_id)?;
+        let book = bible.book(book).ok_or_else(|| AppError::msg("No such book"))?;
+        Ok(export::chapter_timeline(&project, book, chapter))
+    })
+    .await
+}
+
 /// A chapter as it will be exported, as WAV
 #[tauri::command]
 async fn render_chapter(state: State<'_, AppState>, project: Project, book: u8, chapter: u16) -> Result<Response> {
@@ -512,6 +529,7 @@ pub fn run() {
             audio_peaks,
             render_clip,
             render_chapter,
+            chapter_timeline,
             chapters_to_export,
             export_chapters,
         ])

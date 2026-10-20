@@ -112,6 +112,13 @@ export interface ProjectSummary {
 
 export type MatchKind = "exact" | "close" | "partial";
 
+/** Where a verse is heard in a chapter's audio, in seconds */
+export interface VerseTime {
+  verse: number;
+  start: number;
+  end: number;
+}
+
 export interface Match {
   id: string;
   sourceId: string;
@@ -221,6 +228,9 @@ export const api = {
   }) => invoke<ArrayBuffer>("render_clip", { request }),
   renderChapter: (project: Project, book: number, chapter: number) =>
     invoke<ArrayBuffer>("render_chapter", { project, book, chapter }),
+  /** When each chosen verse is heard in `renderChapter`'s audio */
+  chapterTimeline: (project: Project, book: number, chapter: number) =>
+    invoke<VerseTime[]>("chapter_timeline", { project, book, chapter }),
   chaptersToExport: (project: Project) => invoke<ChapterRef[]>("chapters_to_export", { project }),
   exportChapters: (project: Project, chapters: ChapterRef[] | null) =>
     invoke<ExportedFile[]>("export_chapters", { project, chapters }),

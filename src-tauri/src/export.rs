@@ -61,32 +61,55 @@ fn chosen<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> Vec<(u16,
         .collect()
 }
 
-fn chapter_pieces<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> Vec<Piece<'a>> {
+/// Where a verse is heard in a chapter's audio, in seconds
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerseTime {
+    pub verse: u16,
+    pub start: f64,
+    pub end: f64,
+}
+
+/// A chapter's audio as pieces, and when each verse is heard in it
+fn chapter_pieces<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> (Vec<Piece<'a>>, Vec<VerseTime>) {
     let settings = &project.settings;
     let verses = chosen(project, book, chapter);
     let mut out = vec![Piece::Silence(settings.chapter_lead_in)];
-    for (i, (_, sel, clip)) in verses.iter().enumerate() {
+    let mut times = vec![];
+    let mut at = settings.chapter_lead_in.max(0.0);
+    for (i, (verse, sel, clip)) in verses.iter().enumerate() {
         let gap = if i == 0 { 0.0 } else { settings.gap_between_verses };
         let after_last = i.checked_sub(1).map_or(0.0, |p| verses[p].1.pad_after);
         let silence = gap + sel.pad_before + after_last;
+        let length = (clip.end - clip.start).max(0.0);
         // A verse that starts where the last one ended, in the same sermon at the same volume,
         // continues it
         if let (true, Some(Piece::Audio(last))) = (silence <= 0.0, out.last_mut()) {
             if last.path == clip.path && last.gain_db == clip.gain_db && (clip.start - last.end).abs() < 0.05 {
                 last.end = clip.end;
+                times.push(VerseTime { verse: *verse, start: at, end: at + length });
+                at += length;
                 continue;
             }
         }
         if silence > 0.0 {
             out.push(Piece::Silence(silence));
+            at += silence;
         }
         out.push(Piece::Audio(*clip));
+        times.push(VerseTime { verse: *verse, start: at, end: at + length });
+        at += length;
     }
     if let Some((_, last, _)) = verses.last() {
         out.push(Piece::Silence(last.pad_after));
     }
     out.push(Piece::Silence(settings.chapter_tail));
-    out
+    (out, times)
+}
+
+/// When each chosen verse is heard in a chapter's audio
+pub fn chapter_timeline(project: &Project, book: &BibleBook, chapter: u16) -> Vec<VerseTime> {
+    chapter_pieces(project, book, chapter).1
 }
 
 /// How each clip's volume is set
@@ -153,7 +176,7 @@ fn export_gain(clips: &[Clip], target_db: f64) -> Result<f64> {
 /// is leveled as a whole)
 pub fn render_chapter(project: &Project, book: &BibleBook, chapter: u16, rate: u32) -> Result<Pcm> {
     let clips: Vec<Clip> = chosen(project, book, chapter).into_iter().map(|(_, _, c)| c).collect();
-    Leveler::new(project, &clips)?.render_pieces(&chapter_pieces(project, book, chapter), rate)
+    Leveler::new(project, &clips)?.render_pieces(&chapter_pieces(project, book, chapter).0, rate)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -321,7 +344,7 @@ pub fn export(
         };
         let missing = missing_verses(project, book, ch.chapter);
         if chapter_files {
-            let pcm = leveler.render_pieces(&chapter_pieces(project, book, ch.chapter), meta.sample_rate)?;
+            let pcm = leveler.render_pieces(&chapter_pieces(project, book, ch.chapter).0, meta.sample_rate)?;
             std::fs::create_dir_all(&book_dir)?;
             let path = book_dir.join(format!("{}.mp3", file_name(&fill(&meta.filename_template, bible, book, ch.chapter, None))));
             audio::write_mp3(&pcm, meta.bitrate, &path)?;
