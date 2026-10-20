@@ -11,7 +11,10 @@ use scripture_quotes::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{bible::Bible, transcript::Transcript};
+use crate::{
+    bible::{Bible, bible_data},
+    transcript::Transcript,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -85,9 +88,11 @@ pub fn engine(bible: &Bible) -> Engine {
 }
 
 /// Several Bibles' texts, ready to be searched for together: each reading is of the translation
-/// it fits best (named by its Bible's id)
+/// it fits best (named by its Bible's id). References are read with [`bible_data`], as the Bibles
+/// were imported, so a deuterocanonical book is named and scoped like any other
 pub fn engine_of<'b>(bibles: impl IntoIterator<Item = &'b Bible>) -> Engine {
-    Engine::new(bibles.into_iter().map(|bible| {
+    let mut builder = Engine::builder().data(bible_data().clone());
+    for bible in bibles {
         let mut translation = Translation::new(&bible.id);
         for book in &bible.books {
             for (c, chapter) in book.chapters.iter().enumerate() {
@@ -96,8 +101,9 @@ pub fn engine_of<'b>(bibles: impl IntoIterator<Item = &'b Bible>) -> Engine {
                 }
             }
         }
-        translation
-    }))
+        builder.add(translation);
+    }
+    builder.build()
 }
 
 /// Looks for one book's verses, or the whole Bible's
@@ -213,7 +219,7 @@ pub fn find_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bible::BibleBook;
+    use crate::{bible::BibleBook, scope::BookScope};
 
     fn bible() -> Bible {
         Bible {
@@ -300,5 +306,34 @@ mod tests {
         let (a, b) = (&matches[0], &matches[1]);
         assert_eq!(a.run_id, b.run_id);
         assert_eq!(a.end, b.start);
+    }
+
+    #[test]
+    fn deuterocanonical_books_are_named_and_scoped() {
+        let mut b = bible();
+        b.books = vec![BibleBook {
+            id: 67,
+            name: "Tobit".into(),
+            osis: "Tob".into(),
+            chapters: vec![vec![
+                "I Tobit have walked all the days of my life in the ways of truth and justice".into(),
+            ]],
+        }];
+        let engine = engine(&b);
+        let tobit = scoped(
+            &engine,
+            BookScope {
+                books: vec!["Tobit".into()],
+                ..Default::default()
+            }
+            .books()
+            .unwrap()
+            .as_ref(),
+        )
+        .unwrap();
+        let t = transcript("he says i tobit have walked all the days of my life in the ways of truth and justice");
+        let (matches, _) = find_matches(&tobit, &t, "s", &Options::default());
+        assert_eq!(matches.len(), 1, "{matches:?}");
+        assert_eq!(engine.format(&VerseRef::new(67, 1, 1).passage()), "Tobit 1:1");
     }
 }

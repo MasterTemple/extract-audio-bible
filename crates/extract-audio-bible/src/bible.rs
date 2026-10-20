@@ -12,7 +12,10 @@ use logoxide_text::{
     hash::{HashRule, verse_text},
     markup::verses::slice,
     source,
-    topos_bible::data::books::{BookId, Books},
+    topos_bible::data::{
+        BibleData,
+        books::{BookId, Books},
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -130,8 +133,15 @@ impl Bible {
     }
 }
 
+/// The book names, numbers, and groups the library reads and searches with, the same everywhere:
+/// logoxide-text's, which has the deuterocanonical books (Tobit is 67), so whatever an import finds
+/// can be scoped, searched for, and named
+pub fn bible_data() -> &'static BibleData {
+    logoxide_text::bible_data()
+}
+
 fn books() -> &'static Books {
-    logoxide_text::bible_data().books()
+    bible_data().books()
 }
 
 /// A book named any way people name them: a USFM code (`JHN`), an OSIS id (`John`), a name or

@@ -3,12 +3,9 @@
 
 use std::collections::BTreeSet;
 
-use scripture_quotes::topos_bible::{
-    data::bible_data::BibleData,
-    filter::{
-        BibleFilter, Operation,
-        filters::{book::BookFilter, genre::GenreFilter, testament::TestamentFilter},
-    },
+use scripture_quotes::topos_bible::filter::{
+    BibleFilter, Operation,
+    filters::{book::BookFilter, genre::GenreFilter, testament::TestamentFilter},
 };
 use serde::{Deserialize, Serialize};
 
@@ -70,7 +67,7 @@ impl BookScope {
         if self.is_everything() {
             return Ok(None);
         }
-        let mut filter = BibleFilter::new(BibleData::default());
+        let mut filter = BibleFilter::new(crate::bible::bible_data().clone());
         let testament = |t: &Testament| match t {
             Testament::Old => TestamentFilter::Old,
             Testament::New => TestamentFilter::New,
@@ -102,7 +99,7 @@ impl BookScope {
 
     /// Every genre topos knows, in its order
     pub fn genres() -> Vec<Genre> {
-        (BibleData::default().genres().iter())
+        (crate::bible::bible_data().genres().iter())
             .map(|g| Genre {
                 name: g.name().to_string(),
                 books: g.books().iter().map(|b| b.0).collect(),
@@ -164,5 +161,11 @@ mod tests {
                 .iter()
                 .any(|g| g.name == "Gospels" && g.books == [40, 41, 42, 43])
         );
+    }
+
+    #[test]
+    fn deuterocanonical_books_as_imported() {
+        let tobit = scope(|s| s.books = vec!["Tobit".into()]).books().unwrap().unwrap();
+        assert_eq!(tobit.into_iter().collect::<Vec<_>>(), [67]);
     }
 }
