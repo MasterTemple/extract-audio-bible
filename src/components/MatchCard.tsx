@@ -7,7 +7,7 @@ import { api, type Match, type Word } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { useWords } from "@/lib/hooks";
 import { play, sourceTime, usePlayer } from "@/lib/player";
-import { fileName, formatTime, kindLabel, runLabel, sourceColor, verseKey } from "@/lib/refs";
+import { fileName, formatTime, kindLabel, runLabel, sourceColor, sourceTitle, verseKey } from "@/lib/refs";
 
 const CONTEXT_WORDS = 30;
 const CONTEXT_SECONDS = 4;
@@ -108,7 +108,7 @@ export function MatchCard({ match, verseText, part, parts }: { match: Match; ver
         <span className="size-2.5 shrink-0 rounded-full" style={{ background: sourceColor(project, source.id) }} />
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="min-w-0 truncate text-sm font-medium">{source.label}</span>
+            <span className="min-w-0 truncate text-sm font-medium">{sourceTitle(project, source)}</span>
           </TooltipTrigger>
           <TooltipContent>
             <div className="flex items-center gap-1">

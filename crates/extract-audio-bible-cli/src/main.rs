@@ -82,6 +82,14 @@ enum Command {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
+    /// List the project's sermons with their file ids, titles, and passages
+    Sermons {
+        dir: PathBuf,
+        /// First set titles and passages by file id from JSON, field by field:
+        /// `{"<file id>": {"title": "…", "passage": "1 Thess 5:12-15"}}`
+        #[arg(long)]
+        info: Option<PathBuf>,
+    },
     /// Find every reading of the project's verses in its sermons
     Search { dir: PathBuf },
     /// Choose the best reading for each verse that has none
@@ -350,6 +358,43 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 )
             })
         }
+        Command::Sermons { dir, info } => {
+            let mut p = Folder::open(&dir)?;
+            if let Some(info) = info {
+                let given = read_json(&info)?;
+                let count = p.project.apply_file_metadata(given);
+                p.save()?;
+                out.note(format!("Set {}", plural(count, "sermon's information")));
+            }
+            let sermons: Vec<Sermon> = (p.project.sources.iter())
+                .map(|s| {
+                    let meta = p.project.file_metadata(s);
+                    Sermon {
+                        id: s.id.clone(),
+                        file_id: s.file_id(),
+                        label: s.label.clone(),
+                        title: meta.title,
+                        passage: meta.passage,
+                        audio_path: s.audio_path.clone(),
+                        transcript_path: s.transcript_path.clone(),
+                        readings: s.match_count,
+                    }
+                })
+                .collect();
+            out.result(&sermons, || {
+                let mut text = String::new();
+                for s in &sermons {
+                    let title = s.title.as_deref().unwrap_or(&s.label);
+                    let passage = s.passage.as_deref().map(|p| format!(" ({p})")).unwrap_or_default();
+                    text += &format!(
+                        "{:<24} {title}{passage}  {}\n",
+                        s.file_id,
+                        plural(s.readings, "reading")
+                    );
+                }
+                text.trim_end().to_string()
+            })
+        }
         Command::Search { dir } => {
             let mut p = Folder::open(&dir)?;
             let summary = search(&mut p, out)?;
@@ -416,12 +461,9 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 }
                 for l in &listed {
                     let r = &l.reading;
-                    let sermon = p
-                        .project
-                        .sources
-                        .iter()
+                    let sermon = (p.project.sources.iter())
                         .find(|s| s.id == r.source_id)
-                        .map_or("?", |s| &s.label);
+                        .map_or_else(|| "?".to_string(), |s| p.project.source_title(s));
                     let mark = l.chosen.map_or(String::new(), |n| {
                         if chosen.len() > 1 {
                             format!("chosen ({n} of {})", chosen.len())
@@ -759,6 +801,19 @@ fn search(p: &mut Folder, out: &Out) -> Result<Searched> {
         readings: p.matches.matches.len(),
         errors,
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sermon {
+    id: String,
+    file_id: String,
+    label: String,
+    title: Option<String>,
+    passage: Option<String>,
+    audio_path: String,
+    transcript_path: String,
+    readings: usize,
 }
 
 #[derive(Serialize)]

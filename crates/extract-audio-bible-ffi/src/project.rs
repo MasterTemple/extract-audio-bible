@@ -9,8 +9,8 @@ use eab::MatchSet;
 use crate::{
     Bible, ExtractAudioBibleError, Files, invalid, not_found,
     records::{
-        Added, ChapterChoice, ChapterRef, ChapterStatus, ExportMetadata, ExportedFile, Reading, ReadingRun,
-        SearchSummary, Selection, Settings, SourceInfo, VerseTime, WrittenFile,
+        Added, ChapterChoice, ChapterRef, ChapterStatus, ExportMetadata, ExportedFile, FileMetadata, Reading,
+        ReadingRun, SearchSummary, Selection, Settings, SourceInfo, VerseTime, WrittenFile,
     },
 };
 
@@ -102,7 +102,51 @@ impl Project {
     }
 
     pub fn sources(&self) -> Vec<SourceInfo> {
-        self.state().project.sources.iter().map(SourceInfo::from).collect()
+        let s = self.state();
+        s.project
+            .sources
+            .iter()
+            .map(|src| SourceInfo::of(&s.project, src))
+            .collect()
+    }
+
+    /// What's known about a sermon by its file id (`SourceInfo.fileId`); empty if nothing is
+    pub fn file_metadata(&self, file_id: String) -> FileMetadata {
+        self.state()
+            .project
+            .files
+            .get(&file_id)
+            .cloned()
+            .unwrap_or_default()
+            .into()
+    }
+
+    /**
+    Sets what's known about a sermon by its file id (`SourceInfo.fileId`), which may be one not
+    added yet: it's kept apart from the sermons, and outlives their removal
+    */
+    pub fn set_file_metadata(&self, file_id: String, metadata: FileMetadata) {
+        let mut s = self.state();
+        let metadata = eab::FileMetadata::from(metadata);
+        if metadata == eab::FileMetadata::default() {
+            s.project.files.remove(&file_id);
+        } else {
+            s.project.files.insert(file_id, metadata);
+        }
+    }
+
+    /**
+    Sets what's known about sermons from JSON by file id, field by field (a field left out is
+    kept): `{"1qUVQV7mkmdh3TxbEwHHtA": {"title": "Encourage One Another", "passage":
+    "1 Thess 5:12-15"}}`. Returns how many ids it gave
+    */
+    pub fn apply_file_metadata_json(&self, json: String) -> Result<u32, ExtractAudioBibleError> {
+        let given = serde_json::from_str(&json).map_err(|e| {
+            invalid(format!(
+                "expected {{\"file id\": {{\"title\": …, \"passage\": …}}}}: {e}"
+            ))
+        })?;
+        Ok(self.state().project.apply_file_metadata(given) as u32)
     }
 
     /**

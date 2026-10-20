@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { api, type Match, type Project, type Selection, type VerseTime } from "@/lib/api";
 import { partsOf, useApp } from "@/lib/store";
 import { play, stop, usePlayer } from "@/lib/player";
-import { bookName, chapterStatus, verseKey, versesNeeded, sourceColor, runLabel } from "@/lib/refs";
+import { bookName, chapterStatus, verseKey, versesNeeded, sourceColor, sourceTitle, runLabel } from "@/lib/refs";
 
 /** Whether `b` carries on straight from `a` in the same sermon (no cut between them) */
 export function continues(a: Selection | undefined, b: Selection | undefined): boolean {
@@ -217,7 +217,7 @@ export function ChapterView() {
                 >
                   {sel && !joinUp && joinDown && (
                     <div className="mt-2 mb-0.5 ml-6 flex items-center gap-1.5 text-[11px] font-medium" style={{ color }}>
-                      <Link2 className="size-3" /> Read straight through · {source?.label}
+                      <Link2 className="size-3" /> Read straight through · {sourceTitle(project, source)}
                       {run && <span className="font-normal text-muted-foreground">({runLabel(outline, run)} in this sermon)</span>}
                     </div>
                   )}

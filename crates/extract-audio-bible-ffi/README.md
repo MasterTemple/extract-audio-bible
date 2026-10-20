@@ -180,6 +180,12 @@ sermons' files by path, pairing each audio file (mp3, m4a, wav, flac, ogg, aac, 
 transcript (`.json`) of the same name; `search` reads their transcripts through `files` and finds
 every reading. Here the files are in memory, by the paths the project names them by.
 
+Each sermon has a file id: the id its transcript gives (a Let's Church transcript's media id) once
+it's searched, or its file's name. What's known about a sermon, its title and the passage it
+preaches, is kept by file id, apart from the sermons: `setFileMetadata` sets it for one (even one
+not added yet), and `applyFileMetadataJson` for many, field by field. A transcript's own title is
+used when none is given.
+
 ```ts
 import { Files } from "extract-audio-bible";
 
@@ -197,9 +203,17 @@ console.log(summary.sermons, summary.readings, summary.errors.length); // → 1 
 const sermon = project.sources()[0];
 console.log(sermon.label, sermon.wordCount, sermon.readingCount); // → sunday 72 5
 console.log(project.runs().length, project.readings().length); // → 1 5
+
+project.applyFileMetadataJson('{"sunday": {"title": "Jesus Wept", "passage": "John 11:33-36"}}');
+const info = project.sources()[0];
+console.log(info.fileId, info.title, info.passage); // → sunday Jesus Wept John 11:33-36
+project.setFileMetadata("sunday", { ...project.fileMetadata("sunday"), title: null });
+console.log(project.sources()[0].title, project.fileMetadata("sunday").passage); // → null John 11:33-36
 ```
 
 ```python
+import dataclasses
+
 from extract_audio_bible import Files
 
 files = Files.memory()
@@ -216,6 +230,12 @@ print(summary.sermons, summary.readings, len(summary.errors))  # → 1 5 0
 sermon = project.sources()[0]
 print(sermon.label, sermon.word_count, sermon.reading_count)  # → sunday 72 5
 print(len(project.runs()), len(project.readings()))  # → 1 5
+
+project.apply_file_metadata_json('{"sunday": {"title": "Jesus Wept", "passage": "John 11:33-36"}}')
+info = project.sources()[0]
+print(info.file_id, info.title, info.passage)  # → sunday Jesus Wept John 11:33-36
+project.set_file_metadata("sunday", dataclasses.replace(project.file_metadata("sunday"), title=None))
+print(project.sources()[0].title, project.file_metadata("sunday").passage)  # → None John 11:33-36
 ```
 
 ## Choosing readings
@@ -257,8 +277,6 @@ console.log(project.unjoin(again.id)?.joined.length); // → 0
 ```
 
 ```python
-import dataclasses
-
 choices = project.choose_best(bsb, 0.75)
 print("; ".join(f"{c.chapter}: {' '.join(map(str, c.verses))}" for c in choices))  # → 11: 33 34 35 36
 
@@ -546,7 +564,7 @@ Each class, record, and enum <!-- source -->(by their TypeScript names)<!-- /sou
 | `Searcher.find` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `Files.memory`, `add`, `paths` | [A project](#a-project) |
 | `Files.disk`, `has`, `remove` | [Reading natively](#reading-natively) |
-| `Project.name`, `book`, `addSources`, `search`, `sources`, `runs`, `readings` | [A project](#a-project) |
+| `Project.name`, `book`, `addSources`, `search`, `sources`, `runs`, `readings`, `fileMetadata`, `setFileMetadata`, `applyFileMetadataJson` | [A project](#a-project) |
 | `Project.chooseBest`, `chooseBestIn`, `status`, `verseReadings`, `selection`, `selections`, `updateSelection`, `select`, `unselect`, `join`, `arrange`, `unjoin` | [Choosing readings](#choosing-readings) |
 | `Project.settings`, `setSettings`, `metadata`, `setMetadata`, `applyJson` | [Settings and metadata](#settings-and-metadata) |
 | `Project.chapterTimeline`, `renderChapter`, `renderVerse` | [Listening](#listening) |
@@ -555,7 +573,7 @@ Each class, record, and enum <!-- source -->(by their TypeScript names)<!-- /sou
 | `Project.toJson`, `readingsJson`, `id`, `bibleId`, `rename`, `removeSource` | [Saving and opening](#saving-and-opening) |
 | `InputFile`, `BookInfo` | [A Bible](#a-bible) |
 | `Word`, `Readings`, `Reading`, `ReadingRun`, `ReadingKind` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
-| `SourceInfo`, `Added`, `SearchSummary` | [A project](#a-project) |
+| `SourceInfo`, `FileMetadata`, `Added`, `SearchSummary` | [A project](#a-project) |
 | `ChapterChoice`, `ChapterStatus`, `Selection`, `SelectionPart` | [Choosing readings](#choosing-readings) |
 | `Settings`, `Leveling`, `ExportMetadata`, `ExportMode`, `TrackNumbering` | [Settings and metadata](#settings-and-metadata) |
 | `ClipOptions`, `VerseTime` | [Listening](#listening) |

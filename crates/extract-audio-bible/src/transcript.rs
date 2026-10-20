@@ -16,6 +16,11 @@ struct RawTranscript {
     segments: Vec<RawSegment>,
     #[serde(default)]
     word_segments: Vec<RawWord>,
+    /// A Let's Church transcript's media id (or another transcript's `id`)
+    #[serde(rename = "mediaId")]
+    media_id: Option<String>,
+    id: Option<serde_json::Value>,
+    title: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -55,6 +60,10 @@ pub struct Word {
 
 #[derive(Clone, Debug)]
 pub struct Transcript {
+    /// The id it gives its sermon (a Let's Church transcript's media id), if any
+    pub id: Option<String>,
+    /// The title it gives its sermon, if any
+    pub title: Option<String>,
     pub words: Vec<Word>,
     /// The words, ready to be searched for quotations
     pub quotes: scripture_quotes::Transcript,
@@ -79,7 +88,7 @@ impl Transcript {
         let mut words = words;
         fill_times(&mut words);
         let quotes = scripture_quotes::Transcript::from_words(words.iter().map(|w| &w.text));
-        Transcript { words, quotes }
+        Transcript { id: None, title: None, words, quotes }
     }
 
     fn from_raw(raw: RawTranscript) -> Self {
@@ -145,7 +154,13 @@ impl Transcript {
         fill_times(&mut words);
 
         let quotes = scripture_quotes::Transcript::from_words(words.iter().map(|w| &w.text));
-        Transcript { words, quotes }
+        let id = raw.media_id.or(match raw.id {
+            Some(serde_json::Value::String(s)) => Some(s),
+            Some(serde_json::Value::Number(n)) => Some(n.to_string()),
+            _ => None,
+        });
+        let nonempty = |s: Option<String>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        Transcript { id: nonempty(id), title: nonempty(raw.title), words, quotes }
     }
 
     pub fn duration(&self) -> f64 {
@@ -213,7 +228,7 @@ mod tests {
 
     #[test]
     fn paragraphs_without_word_times() {
-        let json = r#"{"mediaId": "x", "duration": 20, "paragraphs": [
+        let json = r#"{"mediaId": "x", "title": "Jesus Wept", "duration": 20, "paragraphs": [
             {"start": 0.0, "end": 2.0, "speaker": null, "text": "Jesus wept."},
             {"start": 3.0, "end": 6.0, "speaker": null, "text": "Then said the Jews,", "words": [
                 {"word": "Then", "start": 3.0, "end": 3.5}, {"word": "said", "start": 3.6, "end": 4.0},
@@ -223,5 +238,6 @@ mod tests {
         assert_eq!(t.words.len(), 6);
         assert_eq!((t.words[1].start, t.words[1].end), (1.0, 2.0));
         assert_eq!(t.words[2].start, 3.0);
+        assert_eq!((t.id.as_deref(), t.title.as_deref()), (Some("x"), Some("Jesus Wept")));
     }
 }

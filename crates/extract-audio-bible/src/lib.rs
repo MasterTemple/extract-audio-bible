@@ -23,6 +23,6 @@ pub use export::{
 };
 pub use files::{Disk, Files, Memory};
 pub use matcher::{Match, MatchKind, Run};
-pub use project::{Added, ExportMode, Leveling, MatchSet, Metadata, Part, Project, Selection, Settings, Source};
+pub use project::{Added, ExportMode, Leveling, FileMetadata, MatchSet, Metadata, Part, Project, Selection, Settings, Source};
 pub use scripture_quotes;
 pub use transcript::{Transcript, Word};

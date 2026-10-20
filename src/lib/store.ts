@@ -5,6 +5,7 @@ import {
   errorMessage,
   type BibleSummary,
   type BookOutline,
+  type FileMetadata,
   type Match,
   type MatchSet,
   type Project,
@@ -52,6 +53,8 @@ interface AppState extends Indexed {
   selectMany: (matches: Match[]) => void;
   unselect: (key: string) => void;
   editSelection: (key: string, change: Partial<Selection>) => void;
+  /** Changes what's known about sermons by their file ids, field by field (an empty field is dropped) */
+  setFileMetadata: (given: Record<string, FileMetadata>) => void;
   /** Adds a reading to its verse's choice, played with it (a verse read in pieces), in the verse's order */
   join: (match: Match) => void;
   /** Takes a reading out of its verse's choice (the only one unchooses the verse) */
@@ -242,6 +245,18 @@ export const useApp = create<AppState>((set, get) => {
         const current = p.selections[key];
         if (!current) return p;
         return { ...p, selections: { ...p.selections, [key]: { ...current, ...change } } };
+      }),
+
+    setFileMetadata: (given) =>
+      get().update((p) => {
+        const files = { ...p.files };
+        for (const [id, change] of Object.entries(given)) {
+          const merged: FileMetadata = { ...files[id], ...change };
+          for (const key of ["title", "passage"] as const) if (!merged[key]?.trim()) delete merged[key];
+          if (Object.keys(merged).length === 0) delete files[id];
+          else files[id] = merged;
+        }
+        return { ...p, files };
       }),
 
     join: (m) =>

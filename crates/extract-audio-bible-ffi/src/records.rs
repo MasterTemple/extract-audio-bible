@@ -178,7 +178,15 @@ pub struct Readings {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceInfo {
     pub id: String,
+    /// Its id for metadata: the one its transcript gives (a Let's Church media id) once
+    /// searched, or its file's name
+    pub file_id: String,
+    /// Its file's name
     pub label: String,
+    /// Its title, given or from its transcript
+    pub title: Option<String>,
+    /// The passage it preaches, if given
+    pub passage: Option<String>,
     pub audio_path: String,
     pub transcript_path: String,
     /// Seconds, once searched
@@ -187,16 +195,47 @@ pub struct SourceInfo {
     pub reading_count: u32,
 }
 
-impl From<&eab::Source> for SourceInfo {
-    fn from(s: &eab::Source) -> Self {
+impl SourceInfo {
+    pub(crate) fn of(project: &eab::Project, s: &eab::Source) -> Self {
+        let meta = project.file_metadata(s);
         SourceInfo {
             id: s.id.clone(),
+            file_id: s.file_id(),
             label: s.label.clone(),
+            title: meta.title,
+            passage: meta.passage,
             audio_path: s.audio_path.clone(),
             transcript_path: s.transcript_path.clone(),
             duration: s.duration,
             word_count: s.word_count as u32,
             reading_count: s.match_count as u32,
+        }
+    }
+}
+
+/// What's known about a sermon, by its file id
+#[data]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct FileMetadata {
+    pub title: Option<String>,
+    /// The passage it preaches ("1 Thessalonians 5:12-15")
+    pub passage: Option<String>,
+}
+
+impl From<eab::FileMetadata> for FileMetadata {
+    fn from(m: eab::FileMetadata) -> Self {
+        FileMetadata {
+            title: m.title,
+            passage: m.passage,
+        }
+    }
+}
+
+impl From<FileMetadata> for eab::FileMetadata {
+    fn from(m: FileMetadata) -> Self {
+        eab::FileMetadata {
+            title: m.title,
+            passage: m.passage,
         }
     }
 }

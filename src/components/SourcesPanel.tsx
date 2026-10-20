@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { AudioLines, FileJson, FilePlus, FolderPlus, Loader2, ScanSearch, Trash2 } from "lucide-react";
+import { AudioLines, FileJson, FilePlus, FolderPlus, Loader2, ScanSearch, Tags, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -12,10 +12,10 @@ import { Slider } from "@/components/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage, type Progress as ProgressEvent } from "@/lib/api";
 import { useApp } from "@/lib/store";
-import { fileName, formatTime, sourceColor } from "@/lib/refs";
+import { fileIdOf, fileMetadataOf, fileName, formatTime, sourceColor } from "@/lib/refs";
 
 export function SourcesPanel() {
-  const { project, update, setProject, setMatches, matchSet, flush, setTab, outline, go } = useApp();
+  const { project, update, setProject, setMatches, matchSet, flush, setTab, outline, go, setFileMetadata } = useApp();
   const [bookChanged, setBookChanged] = useState(false);
   const [unpaired, setUnpaired] = useState<string[]>([]);
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
@@ -42,6 +42,20 @@ export function SourcesPanel() {
       setProject(result.project);
       setUnpaired(result.unpaired);
       toast.success(`Added ${result.added} sermon${result.added === 1 ? "" : "s"}`);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+
+  const importInfo = async () => {
+    const path = await open({ filters: [{ name: "Titles and passages (JSON)", extensions: ["json"] }] });
+    if (typeof path !== "string") return;
+    try {
+      const given = await api.readFileMetadata(path);
+      setFileMetadata(given);
+      const ids = new Set(project.sources.map(fileIdOf));
+      const matched = Object.keys(given).filter((id) => ids.has(id)).length;
+      toast.success(`Read ${Object.keys(given).length} sermons' information (${matched} in this project)`);
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -93,10 +107,15 @@ export function SourcesPanel() {
               <CardDescription>
                 Each sermon is its audio and the WhisperX JSON transcribed from it, paired by file name (
                 <code className="text-xs">sermon.mp3</code> + <code className="text-xs">sermon.json</code>). Add
-                files, or a folder to pair everything in it.
+                files, or a folder to pair everything in it. Titles and passages are kept by each sermon's id (its
+                transcript's, once searched), and can be read from JSON:{" "}
+                <code className="text-xs">{'{"<id>": {"title": …, "passage": …}}'}</code>.
               </CardDescription>
             </div>
             <div className="flex shrink-0 gap-2">
+              <Button variant="outline" size="sm" onClick={importInfo} title="Read titles and passages by sermon id from a JSON file">
+                <Tags /> Import titles
+              </Button>
               <Button variant="outline" size="sm" onClick={() => add(false)}>
                 <FilePlus /> Add files
               </Button>
@@ -129,6 +148,7 @@ export function SourcesPanel() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Sermon</TableHead>
+                    <TableHead>Passage</TableHead>
                     <TableHead>Files</TableHead>
                     <TableHead className="text-right">Length</TableHead>
                     <TableHead className="text-right">Words</TableHead>
@@ -140,22 +160,32 @@ export function SourcesPanel() {
                 <TableBody>
                   {project.sources.map((s) => {
                     const used = Object.values(project.selections).filter((x) => x.sourceId === s.id).length;
+                    const fileId = fileIdOf(s);
+                    const meta = fileMetadataOf(project, s);
                     return (
                       <TableRow key={s.id}>
                         <TableCell>
                           <div className="flex items-center gap-2 font-medium">
                             <span className="size-2.5 shrink-0 rounded-full" style={{ background: sourceColor(project, s.id) }} />
                             <input
-                              className="w-full min-w-40 bg-transparent outline-none focus:underline"
-                              value={s.label}
-                              onChange={(e) =>
-                                update((p) => ({
-                                  ...p,
-                                  sources: p.sources.map((x) => (x.id === s.id ? { ...x, label: e.target.value } : x)),
-                                }))
-                              }
+                              className="w-full min-w-40 bg-transparent outline-none placeholder:text-foreground/70 focus:underline"
+                              value={meta.title ?? ""}
+                              placeholder={s.label}
+                              title="Its title (its file's name if none is given)"
+                              onChange={(e) => setFileMetadata({ [fileId]: { title: e.target.value } })}
                             />
                           </div>
+                          <div className="ml-4.5 truncate text-[11px] text-muted-foreground" title="The id its title and passage are kept by">
+                            {fileId}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <input
+                            className="w-full min-w-32 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 focus:underline"
+                            value={meta.passage ?? ""}
+                            placeholder="Add passage"
+                            onChange={(e) => setFileMetadata({ [fileId]: { passage: e.target.value } })}
+                          />
                         </TableCell>
                         <TableCell className="max-w-72 text-xs text-muted-foreground">
                           <div className="flex items-center gap-1 truncate" title={s.audioPath}>

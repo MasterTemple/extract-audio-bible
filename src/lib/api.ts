@@ -28,6 +28,15 @@ export interface Source {
   duration: number | null;
   wordCount: number;
   matchCount: number;
+  /** Its id for metadata: the one its transcript gives once searched, or its file's name (empty in older projects) */
+  fileId?: string;
+}
+
+/** What's known about a sermon, by its file id */
+export interface FileMetadata {
+  title?: string | null;
+  /** The passage it preaches ("1 Thessalonians 5:12-15") */
+  passage?: string | null;
 }
 
 export interface Selection {
@@ -110,6 +119,8 @@ export interface Project {
   selections: Record<string, Selection>;
   settings: Settings;
   metadata: Metadata;
+  /** What's known about each sermon, by its file id, kept apart from the sermons */
+  files?: Record<string, FileMetadata>;
 }
 
 export interface ProjectSummary {
@@ -241,6 +252,8 @@ export const api = {
   renderChapter: (project: Project, book: number, chapter: number) =>
     invoke<ArrayBuffer>("render_chapter", { project, book, chapter }),
   /** A verse as it will be exported: all its readings, one after another, with its silence */
+  /** Titles and passages by file id, from a JSON file (`{"<file id>": {"title": …, "passage": …}}`) */
+  readFileMetadata: (path: string) => invoke<Record<string, FileMetadata>>("read_file_metadata", { path }),
   renderVerse: (project: Project, book: number, chapter: number, verse: number) =>
     invoke<ArrayBuffer>("render_verse", { project, book, chapter, verse }),
   /** When each chosen verse is heard in `renderChapter`'s audio */

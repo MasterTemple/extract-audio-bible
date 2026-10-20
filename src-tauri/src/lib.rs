@@ -333,6 +333,14 @@ async fn render_chapter(state: State<'_, AppState>, project: Project, book: u8, 
     .await
 }
 
+/// Titles and passages by file id, from a JSON file (`{"<file id>": {"title": …, "passage": …}}`)
+#[tauri::command]
+fn read_file_metadata(path: String) -> Result<std::collections::BTreeMap<String, extract_audio_bible::FileMetadata>> {
+    let bytes = std::fs::read(&path).map_err(|e| AppError::msg(format!("{path}: {e}")))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::msg(format!("{path}: expected {{\"file id\": {{\"title\": …, \"passage\": …}}}}: {e}")))
+}
+
 /// A verse as it will be exported (all its readings, one after another), as WAV
 #[tauri::command]
 async fn render_verse(project: Project, book: u8, chapter: u16, verse: u16) -> Result<Response> {
@@ -409,6 +417,7 @@ pub fn run() {
             render_clip,
             render_chapter,
             render_verse,
+            read_file_metadata,
             chapter_timeline,
             chapters_to_export,
             export_chapters,

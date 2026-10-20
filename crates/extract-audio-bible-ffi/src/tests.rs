@@ -81,6 +81,32 @@ fn a_project_from_sermon_to_mp3() {
     let summary = project.search(&bible, &files).unwrap();
     assert!(summary.errors.is_empty(), "{:?}", summary.errors);
     assert!(summary.readings >= 3, "{summary:?}");
+
+    // What's known about the sermon, by its file id
+    assert_eq!(project.sources()[0].file_id, "sunday");
+    project
+        .apply_file_metadata_json(
+            r#"{"sunday": {"passage": "John 11:34-36"}, "later": {"title": "Not added yet"}}"#.into(),
+        )
+        .unwrap();
+    project
+        .apply_file_metadata_json(r#"{"sunday": {"title": "Jesus Wept"}}"#.into())
+        .unwrap();
+    let info = &project.sources()[0];
+    assert_eq!(
+        (info.title.as_deref(), info.passage.as_deref()),
+        (Some("Jesus Wept"), Some("John 11:34-36"))
+    );
+    assert_eq!(
+        project.file_metadata("later".into()).title.as_deref(),
+        Some("Not added yet")
+    );
+    project.set_file_metadata("later".into(), FileMetadata::default());
+    assert_eq!(project.file_metadata("later".into()), FileMetadata::default());
+    assert!(matches!(
+        project.apply_file_metadata_json(r#"{"sunday": {"speaker": "x"}}"#.into()),
+        Err(ExtractAudioBibleError::Invalid { .. })
+    ));
     let chosen = project.choose_best(&bible, 0.75).unwrap();
     assert_eq!(chosen[0].verses, [34, 35, 36]);
     let status = project.status(&bible);

@@ -35,6 +35,31 @@ pub struct Project {
     pub settings: Settings,
     #[serde(default)]
     pub metadata: Metadata,
+    /// What's known about each sermon, by its file id ([`Source::file_id`]); kept apart from the
+    /// sermons, so it can be given before they're added and outlives their removal
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub files: BTreeMap<String, FileMetadata>,
+}
+
+/// What's known about a sermon: given by the user, or by its transcript
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct FileMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The passage it preaches ("1 Thessalonians 5:12-15")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passage: Option<String>,
+}
+
+impl FileMetadata {
+    /// This, with the fields `other` has set in its place
+    pub fn merged(&self, other: &FileMetadata) -> FileMetadata {
+        FileMetadata {
+            title: other.title.clone().or_else(|| self.title.clone()),
+            passage: other.passage.clone().or_else(|| self.passage.clone()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -50,6 +75,18 @@ pub struct Source {
     pub word_count: usize,
     #[serde(default)]
     pub match_count: usize,
+    /// The sermon's id: the one its transcript gives (a Let's Church media id) once it's been
+    /// searched, or its file's name. Empty in projects saved before there was one; see
+    /// [`Source::file_id`]
+    #[serde(default)]
+    pub file_id: String,
+}
+
+impl Source {
+    /// The sermon's id ([`Source::file_id`](field@Source::file_id)), or its file's name
+    pub fn file_id(&self) -> String {
+        if self.file_id.is_empty() { base_name(&self.transcript_path) } else { self.file_id.clone() }
+    }
 }
 
 /// The reading used for a verse, and how to cut it
@@ -320,6 +357,57 @@ impl Project {
             selections: BTreeMap::new(),
             settings: Default::default(),
             metadata,
+            files: BTreeMap::new(),
+        }
+    }
+
+    /// What's known about a sermon
+    pub fn file_metadata(&self, source: &Source) -> FileMetadata {
+        self.files.get(&source.file_id()).cloned().unwrap_or_default()
+    }
+
+    /// A sermon's title, or its file's name when it has none
+    pub fn source_title(&self, source: &Source) -> String {
+        self.file_metadata(source).title.unwrap_or_else(|| source.label.clone())
+    }
+
+    /**
+    Sets what's known about sermons by their file ids, field by field (a field left out is kept),
+    from JSON like `{"1qUVQV7mkmdh3TxbEwHHtA": {"title": "Encourage One Another", "passage":
+    "1 Thess 5:12-15"}}`. Returns how many ids were given
+    */
+    pub fn apply_file_metadata(&mut self, given: BTreeMap<String, FileMetadata>) -> usize {
+        let count = given.len();
+        for (id, meta) in given {
+            let merged = self.files.get(&id).cloned().unwrap_or_default().merged(&meta);
+            self.files.insert(id, merged);
+        }
+        self.updated_at = now();
+        count
+    }
+
+    /**
+    Records what a sermon's transcript says of it: its id becomes the sermon's (what was known
+    by its old id moves with it), and its title is the sermon's if none was given
+    */
+    pub fn identify(&mut self, source_id: &str, id: Option<&str>, title: Option<&str>) {
+        let Some(source) = self.sources.iter_mut().find(|s| s.id == source_id) else { return };
+        let old = source.file_id();
+        if let Some(id) = id
+            && id != old
+        {
+            source.file_id = id.to_string();
+            if let Some(known) = self.files.remove(&old) {
+                let merged = self.files.get(id).cloned().unwrap_or_default();
+                self.files.insert(id.to_string(), known.merged(&merged));
+            }
+        } else if source.file_id.is_empty() {
+            source.file_id = old;
+        }
+        let file_id = source.file_id.clone();
+        if let Some(title) = title {
+            let meta = self.files.entry(file_id).or_default();
+            meta.title.get_or_insert_with(|| title.to_string());
         }
     }
 
@@ -356,6 +444,7 @@ impl Project {
                 duration: None,
                 word_count: 0,
                 match_count: 0,
+                file_id: base_name(audio),
             });
             added.added += 1;
         }
@@ -418,5 +507,37 @@ mod tests {
         assert_eq!(added.unpaired, ["a/two.m4a", "b/one.json", "a/three.json"]);
         assert_eq!(p.sources[0].id, stable_id("a/one.mp3"));
         assert_eq!(p.add_sources(&paths).added, 0);
+    }
+
+    #[test]
+    fn file_metadata_follows_the_transcript_id() {
+        let bible = Bible {
+            id: "b".into(),
+            name: "Test".into(),
+            abbreviation: "T".into(),
+            language: None,
+            format: "text".into(),
+            books: vec![],
+        };
+        let mut p = Project::new("p", "", &bible, None);
+        p.add_sources(&["a/one.mp3".into(), "a/one.json".into()]);
+        let source = p.sources[0].id.clone();
+        let given = |title: Option<&str>, passage: Option<&str>| FileMetadata {
+            title: title.map(Into::into),
+            passage: passage.map(Into::into),
+        };
+        p.apply_file_metadata([("one".into(), given(None, Some("John 11")))].into());
+        assert_eq!(p.source_title(&p.sources[0]), "one");
+
+        // Searching finds its transcript's id and title: what was given moves to the id
+        p.identify(&source, Some("xyz"), Some("Jesus Wept"));
+        assert_eq!(p.sources[0].file_id(), "xyz");
+        assert_eq!(p.file_metadata(&p.sources[0]), given(Some("Jesus Wept"), Some("John 11")));
+
+        // A title given wins over the transcript's, and a field left out is kept
+        p.apply_file_metadata([("xyz".into(), given(Some("Lazarus"), None))].into());
+        p.identify(&source, Some("xyz"), Some("Jesus Wept"));
+        assert_eq!(p.file_metadata(&p.sources[0]), given(Some("Lazarus"), Some("John 11")));
+        assert_eq!(p.source_title(&p.sources[0]), "Lazarus");
     }
 }

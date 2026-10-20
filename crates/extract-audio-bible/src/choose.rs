@@ -268,6 +268,7 @@ mod tests {
             duration: None,
             word_count: 0,
             match_count: 0,
+            file_id: String::new(),
         });
         project.settings.chapter_lead_in = 0.0;
         let second_half = reading("late", 35, 100.0, 102.0, [false, false, true, true]);

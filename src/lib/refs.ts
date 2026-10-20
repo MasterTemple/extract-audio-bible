@@ -1,4 +1,4 @@
-import type { BookOutline, Match, Project, Run } from "./api";
+import type { BookOutline, FileMetadata, Match, Project, Run, Source } from "./api";
 
 export const verseKey = (book: number, chapter: number, verse: number) => `${book}.${chapter}.${verse}`;
 
@@ -30,6 +30,28 @@ export function runLabel(outline: BookOutline[], run: Run): string {
 
 export function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
+}
+
+const SERMON_FILES = new Set(["json", "mp3", "m4a", "wav", "flac", "ogg", "aac", "mp4"]);
+
+/** A sermon's id for metadata: the one its transcript gives, or its file's name without its extensions */
+export function fileIdOf(source: Source): string {
+  if (source.fileId) return source.fileId;
+  let name = fileName(source.transcriptPath);
+  for (let dot = name.lastIndexOf("."); dot > 0 && SERMON_FILES.has(name.slice(dot + 1).toLowerCase()); dot = name.lastIndexOf("."))
+    name = name.slice(0, dot);
+  return name;
+}
+
+/** What's known about a sermon */
+export function fileMetadataOf(project: Project, source: Source): FileMetadata {
+  return project.files?.[fileIdOf(source)] ?? {};
+}
+
+/** A sermon's title, or its file's name when it has none */
+export function sourceTitle(project: Project, source: Source | undefined): string {
+  if (!source) return "Missing sermon";
+  return fileMetadataOf(project, source).title || source.label;
 }
 
 /** Verses of a chapter that need audio (bridged verses have no text of their own) */

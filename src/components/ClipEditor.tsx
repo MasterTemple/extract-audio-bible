@@ -9,7 +9,7 @@ import { api, type Part, type Selection } from "@/lib/api";
 import { partsOf, useApp } from "@/lib/store";
 import { usePeaks, useWords } from "@/lib/hooks";
 import { play, sourceTime, usePlayer } from "@/lib/player";
-import { fileName, formatTime, sourceColor } from "@/lib/refs";
+import { fileName, formatTime, sourceColor, sourceTitle } from "@/lib/refs";
 import { cn } from "@/lib/utils";
 import { Waveform } from "./Waveform";
 
@@ -166,7 +166,7 @@ export function ClipEditor({ verseKey, selection, verseText }: { verseKey: strin
         <span className="size-2.5 rounded-full" style={{ background: sourceColor(project, source.id) }} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">
-            {joined ? `Chosen: ${parts.length} readings, joined` : `Chosen: ${source.label}`}
+            {joined ? `Chosen: ${parts.length} readings, joined` : `Chosen: ${sourceTitle(project, source)}`}
           </div>
           <div className="truncate text-[11px] text-muted-foreground" title={source.audioPath}>
             {joined && `Part ${index + 1}: `}
@@ -202,7 +202,7 @@ export function ClipEditor({ verseKey, selection, verseText }: { verseKey: strin
                 </span>
                 <span className="size-2 shrink-0 rounded-full" style={{ background: sourceColor(project, p.sourceId) }} />
                 <span className="min-w-0 flex-1 truncate">
-                  {s?.label ?? "Missing sermon"} · {formatTime(a, true)}–{formatTime(b, true)}{" "}
+                  {sourceTitle(project, s)} · {formatTime(a, true)}–{formatTime(b, true)}{" "}
                   <span className="text-muted-foreground">({(b - a).toFixed(1)}s)</span>
                 </span>
                 <span className="flex shrink-0" onClick={(e) => e.stopPropagation()}>

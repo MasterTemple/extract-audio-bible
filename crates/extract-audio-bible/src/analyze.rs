@@ -21,8 +21,9 @@ pub struct Analysis {
 
 /**
 Finds every reading of the project's book (or the whole Bible) in every sermon's transcript.
-The project's sources get their word counts, durations, and match counts, and its selections
-follow their readings to their new ids. `progress` is told each sermon as it's searched (from
+The project's sources get their word counts, durations, and match counts (and the ids and titles
+their transcripts give: [`Project::identify`]), and its selections follow their readings to their
+new ids. `progress` is told each sermon as it's searched (from
 several threads at once, natively)
 */
 pub fn analyze(
@@ -49,7 +50,7 @@ pub fn analyze_with(
     let search = |source: &crate::project::Source| {
         let found = Transcript::open(files, &source.transcript_path).map(|t| {
             let (matches, runs) = matcher::find_matches(&searcher, &t, &source.id, &options);
-            (t.words.len(), t.duration(), matches, runs)
+            (t.words.len(), t.duration(), matches, runs, t.id, t.title)
         });
         let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         progress(n, total, &source.label);
@@ -64,9 +65,11 @@ pub fn analyze_with(
     let results: Vec<_> = project.sources.iter().map(search).collect();
 
     let mut analysis = Analysis { matches: MatchSet { analyzed_at: now(), ..Default::default() }, errors: vec![] };
+    let mut identities = vec![];
     for (source, result) in project.sources.iter_mut().zip(results) {
         match result {
-            Ok((words, duration, matches, runs)) => {
+            Ok((words, duration, matches, runs, id, title)) => {
+                identities.push((source.id.clone(), id, title));
                 source.word_count = words;
                 source.match_count = matches.len();
                 source.duration = source.duration.or(Some(duration));
@@ -75,6 +78,9 @@ pub fn analyze_with(
             }
             Err(e) => analysis.errors.push((source.label.clone(), e)),
         }
+    }
+    for (source, id, title) in identities {
+        project.identify(&source, id.as_deref(), title.as_deref());
     }
     // Selections follow their readings to their new ids, if the analysis changed them
     let set = &analysis.matches;

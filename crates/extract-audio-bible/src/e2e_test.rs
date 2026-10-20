@@ -96,10 +96,12 @@ fn export_e2e() {
             duration: None,
             word_count: 0,
             match_count: 0,
+            file_id: String::new(),
         }],
         selections: Default::default(),
         settings: Default::default(),
         metadata: Default::default(),
+        files: Default::default(),
     };
     for m in matches.iter().filter(|m| m.run_id.is_some()) {
         project.selections.insert(
