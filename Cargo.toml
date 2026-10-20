@@ -4,6 +4,7 @@ members = [
     "crates/extract-audio-bible",
     "crates/extract-audio-bible-cli",
     "crates/extract-audio-bible-ffi",
+    "crates/scripture-quotes",
     "src-tauri",
 ]
 

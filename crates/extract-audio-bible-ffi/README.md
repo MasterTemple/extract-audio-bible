@@ -601,6 +601,6 @@ python examples/python/readme.py                    # every Python example above
 python scripts/smoke-test.py                        # the installed wheel imports and answers
 ```
 
-The library this wraps is `crates/extract-audio-bible`; it finds verses with `scripture-quotes`,
-a path dependency (`../../../rust/scripture-quotes` from the repository).
+The library this wraps is `crates/extract-audio-bible`; it finds verses with
+`crates/scripture-quotes`.
 <!-- /source -->

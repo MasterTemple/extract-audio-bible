@@ -55,8 +55,8 @@ run pack:python`, and `python scripts/readme.py check`.
 
 ## How matching works
 
-Readings are found with [`scripture-quotes`](../../rust/scripture-quotes) (a path dependency;
-`crates/extract-audio-bible/src/matcher.rs` adapts it): a transcript's word trigrams vote for
+Readings are found with [`scripture-quotes`](crates/scripture-quotes)
+(`crates/extract-audio-bible/src/matcher.rs` adapts it): a transcript's word trigrams vote for
 verses, each group of votes is aligned word by word so transcription slips still count, the verses
 around every reading are looked for directly (which catches very short verses like "Jesus wept"),
 and readings of verse after verse are joined into runs. A reading counts when its words are at
