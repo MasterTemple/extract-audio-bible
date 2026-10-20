@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
 use extract_audio_bible::{
@@ -26,7 +26,7 @@ use crate::{
     store::{ProjectSummary, Store},
 };
 
-/// The Bible last searched for, ready to search again, by its id
+/// The Bibles last searched for, ready to search again, by their ids joined with `+`
 type CachedEngine = Arc<Mutex<Option<(String, Arc<scripture_quotes::Engine>)>>>;
 
 struct AppState {
@@ -37,13 +37,18 @@ struct AppState {
 
 impl AppState {
     fn transcript(&self, path: &str) -> Result<Arc<Transcript>> {
-        if let Some(t) = self.transcripts.lock().unwrap().get(path) {
+        if let Some(t) = lock(&self.transcripts).get(path) {
             return Ok(t.clone());
         }
         let t = Arc::new(Transcript::open(&Disk, path)?);
-        self.transcripts.lock().unwrap().insert(path.to_string(), t.clone());
+        lock(&self.transcripts).insert(path.to_string(), t.clone());
         Ok(t)
     }
+}
+
+/// A cache's lock, even if a thread panicked holding it: what it holds is whole either way
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Runs blocking work off the main thread
@@ -60,8 +65,9 @@ fn new_id() -> String {
 // ---------------------------------------------------------------- Bibles
 
 #[tauri::command]
-fn list_bibles(state: State<AppState>) -> Result<Vec<BibleSummary>> {
-    state.store.bibles()
+async fn list_bibles(state: State<'_, AppState>) -> Result<Vec<BibleSummary>> {
+    let store = state.store.clone();
+    blocking(move || store.bibles()).await
 }
 
 /// An imported Bible, and what was left out of it
@@ -102,8 +108,18 @@ async fn import_bible(
 }
 
 #[tauri::command]
-fn delete_bible(state: State<AppState>, id: String) -> Result<()> {
-    state.store.delete_bible(&id)
+async fn delete_bible(state: State<'_, AppState>, id: String) -> Result<()> {
+    let store = state.store.clone();
+    let cached = state.engine.clone();
+    blocking(move || {
+        let mut engine = lock(&cached);
+        if engine.as_ref().is_some_and(|(key, _)| key.split('+').any(|k| k == id)) {
+            *engine = None;
+        }
+        drop(engine);
+        store.delete_bible(&id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -130,29 +146,39 @@ fn list_projects(state: State<AppState>) -> Result<Vec<ProjectSummary>> {
 }
 
 #[tauri::command]
-fn create_project(state: State<AppState>, name: String, bible_id: String, book: Option<u8>) -> Result<Project> {
-    let bible = state.store.bible(&bible_id)?;
-    let project = Project::new(new_id(), &name, &bible, book);
-    state.store.save_project(&project)?;
-    Ok(project)
+async fn create_project(
+    state: State<'_, AppState>,
+    name: String,
+    bible_id: String,
+    book: Option<u8>,
+) -> Result<Project> {
+    let store = state.store.clone();
+    blocking(move || {
+        let bible = store.bible(&bible_id)?;
+        let project = Project::new(new_id(), &name, &bible, book);
+        store.save_project(&project)?;
+        Ok(project)
+    })
+    .await
 }
 
 /// A project finding every verse read in its sermons, in any of some translations, in some books
 #[tauri::command]
-fn create_readings_project(
-    state: State<AppState>,
+async fn create_readings_project(
+    state: State<'_, AppState>,
     name: String,
     bible_ids: Vec<String>,
     scope: extract_audio_bible::BookScope,
 ) -> Result<Project> {
-    scope.books()?;
-    let bibles = bible_ids
-        .iter()
-        .map(|id| state.store.bible(id))
-        .collect::<Result<Vec<_>>>()?;
-    let project = Project::readings(new_id(), &name, &bibles.iter().collect::<Vec<_>>(), scope)?;
-    state.store.save_project(&project)?;
-    Ok(project)
+    let store = state.store.clone();
+    blocking(move || {
+        scope.books()?;
+        let bibles = bible_ids.iter().map(|id| store.bible(id)).collect::<Result<Vec<_>>>()?;
+        let project = Project::readings(new_id(), &name, &bibles.iter().collect::<Vec<_>>(), scope)?;
+        store.save_project(&project)?;
+        Ok(project)
+    })
+    .await
 }
 
 /// topos's genres (groups of books), in order
@@ -277,7 +303,7 @@ async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project: Pro
         // Kept for the next search of the same translations
         let ids = project.bibles_searched();
         let key = ids.join("+");
-        let engine = match &*cached.lock().unwrap() {
+        let engine = match &*lock(&cached) {
             Some((k, engine)) if *k == key => Some(engine.clone()),
             _ => None,
         };
@@ -286,7 +312,7 @@ async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project: Pro
             None => {
                 let bibles = ids.iter().map(|id| store.bible(id)).collect::<Result<Vec<_>>>()?;
                 let engine = Arc::new(matcher::engine_of(&bibles)?);
-                *cached.lock().unwrap() = Some((key, engine.clone()));
+                *lock(&cached) = Some((key, engine.clone()));
                 engine
             }
         };
@@ -371,7 +397,7 @@ async fn search_transcripts(
     limit: usize,
 ) -> Result<SaidIn> {
     use rayon::prelude::*;
-    let held = state.transcripts.lock().unwrap().clone();
+    let held = lock(&state.transcripts).clone();
     blocking(move || {
         let options = extract_audio_bible::FindOptions {
             prefix,
