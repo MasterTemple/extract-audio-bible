@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { ArrowLeft, BookOpen, Check, Loader2 } from "lucide-react";
+import { useEffect, useMemo } from "react";
+import { ArrowLeft, BookOpen, Check, Loader2, Redo2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApp, type Tab } from "@/lib/store";
@@ -10,8 +10,29 @@ import { ExportPanel } from "./ExportPanel";
 import { TranscriptView } from "./TranscriptView";
 import { SearchPanel } from "./SearchPanel";
 
+/** Whether a key press belongs to a text field (which has its own undo) */
+function typing(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable || target instanceof HTMLTextAreaElement) return true;
+  return target instanceof HTMLInputElement && !["checkbox", "radio", "range", "button", "submit"].includes(target.type);
+}
+
 export function Shell() {
-  const { project, bibles, tab, setTab, saving, closeProject, outline } = useApp();
+  const { project, bibles, tab, setTab, saving, closeProject, outline, past, future, undo, redo } = useApp();
+
+  // Ctrl+Z undoes, Ctrl+Shift+Z and Ctrl+Y redo (⌘ on a Mac), except while typing
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || typing(e.target)) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) undo();
+      else if ((key === "z" && e.shiftKey) || key === "y") redo();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
   const bible = bibles.find((b) => b.id === project?.bibleId);
 
   const progress = useMemo(() => {
@@ -54,7 +75,25 @@ export function Shell() {
             <TabsTrigger value="export">Export</TabsTrigger>
           </TabsList>
         </Tabs>
-        <div className="flex w-40 items-center justify-end gap-1.5 text-xs text-muted-foreground">
+        <div className="flex w-56 items-center justify-end gap-1.5 text-xs text-muted-foreground">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            disabled={past.length === 0}
+            onClick={undo}
+            title={past.length ? `Undo ${past[past.length - 1].label} (Ctrl+Z)` : "Nothing to undo"}
+          >
+            <Undo2 />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            disabled={future.length === 0}
+            onClick={redo}
+            title={future.length ? `Redo ${future[future.length - 1].label} (Ctrl+Shift+Z)` : "Nothing to redo"}
+          >
+            <Redo2 />
+          </Button>
           {saving ? (
             <>
               <Loader2 className="size-3 animate-spin" /> Saving

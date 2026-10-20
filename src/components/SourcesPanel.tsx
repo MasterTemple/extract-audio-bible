@@ -40,7 +40,7 @@ export function SourcesPanel() {
     await flush();
     try {
       const result = await api.addSources(project.id, Array.isArray(picked) ? picked : [picked]);
-      setProject(result.project);
+      setProject(result.project, `add ${result.added} sermon${result.added === 1 ? "" : "s"}`);
       setUnpaired(result.unpaired);
       toast.success(`Added ${result.added} sermon${result.added === 1 ? "" : "s"}`);
     } catch (e) {
@@ -67,7 +67,7 @@ export function SourcesPanel() {
     setProgress({ done: 0, total: project.sources.length, message: "Starting" });
     try {
       const result = await api.analyze(useApp.getState().project!);
-      setProject(result.project);
+      setProject(result.project, "search the sermons");
       setMatches(result.matches);
       for (const e of result.errors) toast.error(e);
       setBookChanged(false);
@@ -88,7 +88,7 @@ export function SourcesPanel() {
       ...p,
       sources: p.sources.filter((s) => s.id !== id),
       selections: Object.fromEntries(Object.entries(p.selections).filter(([, s]) => s.sourceId !== id)),
-    }));
+    }), "remove a sermon");
     setMatches({
       ...matchSet,
       matches: matchSet.matches.filter((m) => m.sourceId !== id),
@@ -133,7 +133,7 @@ export function SourcesPanel() {
                 className="max-w-xl font-mono text-xs"
                 placeholder="https://example.com/audio/{id}.mp3"
                 value={project.settings.audioUrl ?? ""}
-                onChange={(e) => update((p) => ({ ...p, settings: { ...p.settings, audioUrl: e.target.value } }))}
+                onChange={(e) => update((p) => ({ ...p, settings: { ...p.settings, audioUrl: e.target.value } }), "change where audio downloads from", "audioUrl")}
               />
               <span className="text-xs text-muted-foreground">
                 For sermons with only a transcript: <code>{"{id}"}</code> is the sermon's id. It's downloaded when first played.
@@ -255,7 +255,7 @@ export function SourcesPanel() {
                 value={project.book === null ? "all" : String(project.book)}
                 onValueChange={(v) => {
                   const book = v === "all" ? null : Number(v);
-                  update((p) => ({ ...p, book }));
+                  update((p) => ({ ...p, book }), "change the book");
                   setBookChanged(true);
                   if (book !== null) go(book, 1);
                   setTab("sources");
@@ -285,7 +285,7 @@ export function SourcesPanel() {
                 max={1}
                 step={0.05}
                 value={[project.settings.minAccuracy]}
-                onValueChange={([v]) => update((p) => ({ ...p, settings: { ...p.settings, minAccuracy: v } }))}
+                onValueChange={([v]) => update((p) => ({ ...p, settings: { ...p.settings, minAccuracy: v } }), "change the minimum accuracy", "minAccuracy")}
               />
               <span className="text-xs text-muted-foreground">Lower finds readings with more words changed, skipped, or misheard.</span>
             </div>

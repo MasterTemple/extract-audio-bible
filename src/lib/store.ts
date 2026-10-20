@@ -39,14 +39,23 @@ interface AppState extends Indexed {
   saving: boolean;
   /** The transcript open, the time to show in it, and what to find in it */
   reading: { sourceId: string; at: number | null; query: string } | null;
+  /** Steps to undo, the last most recent, and steps undone to redo */
+  past: Step[];
+  future: Step[];
 
   setTab: (tab: Tab) => void;
   refreshLists: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
   closeProject: () => void;
-  setProject: (project: Project) => void;
-  /** Change the project and save it shortly after */
-  update: (recipe: (p: Project) => Project) => void;
+  /** Sets the project as the backend changed it (adding or searching sermons), as a step to undo */
+  setProject: (project: Project, label: string) => void;
+  /**
+   * Changes the project and saves it shortly after, as a step to undo called `label`. Changes
+   * with the same `merge` key a moment apart (dragging, typing) are one step
+   */
+  update: (recipe: (p: Project) => Project, label: string, merge?: string) => void;
+  undo: () => void;
+  redo: () => void;
   setMatches: (set: MatchSet) => void;
   loadBook: (book: number) => Promise<string[][] | undefined>;
   go: (book: number, chapter: number, verse?: number | null) => void;
@@ -119,8 +128,23 @@ function begins(m: Match): number {
   return i < 0 ? Infinity : i;
 }
 
+/** A project as it was before a change, to go back to */
+export interface Step {
+  project: Project;
+  matchSet: MatchSet;
+  /** What the change was ("choose a reading") */
+  label: string;
+}
+
+/** The most steps kept to undo */
+const HISTORY = 200;
+/** Changes with the same merge key less than this apart (ms) are one step */
+const MERGE_WITHIN = 1000;
+
 const LAST_PROJECT = "cab:lastProject";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+/** The last change recorded, to merge with */
+let lastChange: { merge: string; at: number } | null = null;
 
 export const useApp = create<AppState>((set, get) => {
   const save = async () => {
@@ -137,6 +161,41 @@ export const useApp = create<AppState>((set, get) => {
     }
   };
 
+  const scheduleSave = () => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(save, 400);
+  };
+
+  /** Keeps the project as it is now, to undo the change about to be made */
+  const record = (label: string, merge?: string) => {
+    const { project, matchSet, past } = get();
+    if (!project) return;
+    const now = Date.now();
+    const merging = merge !== undefined && lastChange?.merge === merge && now - lastChange.at < MERGE_WITHIN;
+    lastChange = merge === undefined ? null : { merge, at: now };
+    if (merging) return;
+    set({ past: [...past, { project, matchSet, label }].slice(-HISTORY), future: [] });
+  };
+
+  /** Goes to a step, keeping where it came from on `to`'s side */
+  const travel = (from: "past" | "future") => {
+    const state = get();
+    const steps = state[from];
+    const step = steps[steps.length - 1];
+    if (!step || !state.project) return;
+    const here: Step = { project: state.project, matchSet: state.matchSet, label: step.label };
+    const other = from === "past" ? "future" : "past";
+    lastChange = null;
+    set({
+      [from]: steps.slice(0, -1),
+      [other]: [...state[other], here],
+      project: step.project,
+      ...(step.matchSet !== state.matchSet ? { matchSet: step.matchSet, ...index(step.matchSet) } : {}),
+    });
+    scheduleSave();
+    toast(`${from === "past" ? "Undid" : "Redid"}: ${step.label}`);
+  };
+
   return {
     bibles: [],
     projects: [],
@@ -151,6 +210,8 @@ export const useApp = create<AppState>((set, get) => {
     verse: null,
     saving: false,
     reading: null,
+    past: [],
+    future: [],
 
     setTab: (tab) => set({ tab }),
 
@@ -182,7 +243,10 @@ export const useApp = create<AppState>((set, get) => {
         chapter: first ? 1 : null,
         verse: null,
         tab: project.sources.length === 0 ? "sources" : "verses",
+        past: [],
+        future: [],
       });
+      lastChange = null;
       if (first) void get().loadBook(first.id);
     },
 
@@ -193,19 +257,27 @@ export const useApp = create<AppState>((set, get) => {
       } catch {
         // ignore
       }
-      set({ project: null, outline: [], bookText: {}, book: null, chapter: null, verse: null });
+      set({ project: null, outline: [], bookText: {}, book: null, chapter: null, verse: null, past: [], future: [] });
       void get().refreshLists();
     },
 
-    setProject: (project) => set({ project }),
+    setProject: (project, label) => {
+      record(label);
+      set({ project });
+    },
 
-    update: (recipe) => {
+    update: (recipe, label, merge) => {
       const project = get().project;
       if (!project) return;
-      set({ project: recipe(project) });
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(save, 400);
+      const changed = recipe(project);
+      if (changed === project) return;
+      record(label, merge);
+      set({ project: changed });
+      scheduleSave();
     },
+
+    undo: () => travel("past"),
+    redo: () => travel("future"),
 
     setMatches: (matchSet) => set({ matchSet, ...index(matchSet) }),
 
@@ -238,21 +310,21 @@ export const useApp = create<AppState>((set, get) => {
           selections[key] = selectionFor(m, selections[key]);
         }
         return { ...p, selections };
-      }),
+      }, matches.length === 1 ? "choose a reading" : `choose ${matches.length} readings`),
 
     unselect: (key) =>
       get().update((p) => {
         const selections = { ...p.selections };
         delete selections[key];
         return { ...p, selections };
-      }),
+      }, "unchoose a verse"),
 
     editSelection: (key, change) =>
       get().update((p) => {
         const current = p.selections[key];
         if (!current) return p;
         return { ...p, selections: { ...p.selections, [key]: { ...current, ...change } } };
-      }),
+      }, "change a verse", `verse:${key}:${Object.keys(change).join()}`),
 
     setFileMetadata: (given) =>
       get().update((p) => {
@@ -264,7 +336,7 @@ export const useApp = create<AppState>((set, get) => {
           else files[id] = merged;
         }
         return { ...p, files };
-      }),
+      }, "change a sermon's title or passage", `file:${Object.keys(given).join()}`),
 
     join: (m) =>
       get().update((p) => {
@@ -281,7 +353,7 @@ export const useApp = create<AppState>((set, get) => {
         const part: Part = { matchId: m.id, sourceId: m.sourceId, start: m.start, end: m.end, trimStart: 0, trimEnd: 0 };
         parts.splice(later < 0 ? parts.length : later, 0, part);
         return { ...p, selections: { ...p.selections, [key]: withParts(current, parts) } };
-      }),
+      }, "join a reading"),
 
     unjoin: (key, matchId) =>
       get().update((p) => {
@@ -292,14 +364,14 @@ export const useApp = create<AppState>((set, get) => {
         if (parts.length === 0) delete selections[key];
         else selections[key] = withParts(current, parts);
         return { ...p, selections };
-      }),
+      }, "take out a reading"),
 
     arrange: (key, parts) =>
       get().update((p) => {
         const current = p.selections[key];
         if (!current || parts.length === 0) return p;
         return { ...p, selections: { ...p.selections, [key]: withParts(current, parts) } };
-      }),
+      }, "reorder a verse's readings"),
 
     editPart: (key, index, change) =>
       get().update((p) => {
@@ -309,7 +381,7 @@ export const useApp = create<AppState>((set, get) => {
         if (!parts[index]) return p;
         parts[index] = { ...parts[index], ...change };
         return { ...p, selections: { ...p.selections, [key]: withParts(current, parts) } };
-      }),
+      }, "cut a reading", `part:${key}:${index}`),
 
     flush: async () => {
       if (saveTimer) {

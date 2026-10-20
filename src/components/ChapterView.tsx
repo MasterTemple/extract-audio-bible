@@ -118,7 +118,7 @@ export function ChapterView() {
     update((p) => ({
       ...p,
       selections: Object.fromEntries(Object.entries(p.selections).filter(([k]) => !k.startsWith(`${b.id}.${chapter}.`))),
-    }));
+    }), `unchoose ${b.name} ${chapter}`);
   };
 
   const preview = async () => {

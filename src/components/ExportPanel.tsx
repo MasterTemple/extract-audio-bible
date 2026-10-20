@@ -109,8 +109,10 @@ export function ExportPanel() {
   const meta = project.metadata;
   const settings = project.settings;
   const bible = bibles.find((b) => b.id === project.bibleId);
-  const setMeta = (change: Partial<Metadata>) => update((p) => ({ ...p, metadata: { ...p.metadata, ...change } }));
-  const setSettings = (change: Partial<Settings>) => update((p) => ({ ...p, settings: { ...p.settings, ...change } }));
+  const setMeta = (change: Partial<Metadata>) =>
+    update((p) => ({ ...p, metadata: { ...p.metadata, ...change } }), "change the export's tags or files", `metadata:${Object.keys(change).join()}`);
+  const setSettings = (change: Partial<Settings>) =>
+    update((p) => ({ ...p, settings: { ...p.settings, ...change } }), "change the export's sound", `settings:${Object.keys(change).join()}`);
   // Previews are of the first chapter to be exported (or the book's first), and its first chosen verse
   const first = chapters[0] ?? (project.book !== null ? { book: project.book, chapter: 1 } : null);
   const sampleBook = outline.find((b) => b.id === (first?.book ?? outline[0]?.id));
