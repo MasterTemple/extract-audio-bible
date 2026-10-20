@@ -71,7 +71,7 @@ extract-audio-bible export 1thess -o audio-bible/
 
 | Command | What it does |
 |---|---|
-| `import PATHS… -o FILE` | Reads a Bible's text and saves it as JSON |
+| `import PATHS… -o FILE` | Reads a Bible's text and saves it as JSON, noting on stderr what it left out (files not read, books passed over; `warnings` with `--json`) |
 | `find --bible BIBLE [--translation BIBLE]… [--testament T] [--genre G]… [--book B]… [--exclude-…] [--csv] TRANSCRIPTS…` | The verses read in transcripts, with their times and translations (no project) |
 | `init DIR --bible BIBLE [--book B] [--name N]` | Starts a project for a book (or, with no `--book`, the whole Bible) |
 | `add DIR PATHS…` | Adds sermons from files or folders: audio files with the transcript of the same name, and transcripts alone (to search, or with `audioUrl` set, to download audio for); JSON that isn't a transcript is skipped |

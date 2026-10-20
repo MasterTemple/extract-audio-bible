@@ -46,6 +46,18 @@ function ImportBibleDialog() {
     try {
       const bible = await api.importBible(paths, name, abbreviation, language || null);
       toast.success(`Imported ${bible.name}: ${bible.bookCount} books, ${bible.verseCount.toLocaleString()} verses`);
+      if (bible.warnings.length > 0) {
+        toast.warning(`${bible.warnings.length} ${bible.warnings.length === 1 ? "thing was" : "things were"} left out`, {
+          duration: 30_000,
+          description: (
+            <div className="max-h-40 overflow-auto text-xs">
+              {bible.warnings.map((w) => (
+                <div key={w}>{w}</div>
+              ))}
+            </div>
+          ),
+        });
+      }
       await refreshLists();
       setOpenDialog(false);
       setPaths([]);

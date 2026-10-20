@@ -64,6 +64,14 @@ fn list_bibles(state: State<AppState>) -> Result<Vec<BibleSummary>> {
     state.store.bibles()
 }
 
+/// An imported Bible, and what was left out of it
+#[derive(Serialize)]
+struct ImportedBible {
+    #[serde(flatten)]
+    summary: BibleSummary,
+    warnings: Vec<String>,
+}
+
 #[tauri::command]
 async fn import_bible(
     state: State<'_, AppState>,
@@ -71,7 +79,7 @@ async fn import_bible(
     name: String,
     abbreviation: String,
     language: Option<String>,
-) -> Result<BibleSummary> {
+) -> Result<ImportedBible> {
     let store = state.store.clone();
     blocking(move || {
         let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
@@ -80,15 +88,15 @@ async fn import_bible(
         } else {
             name.trim()
         };
-        let mut bible = Bible::new(
-            new_id(),
-            name,
-            abbreviation.trim(),
-            extract_audio_bible::import_paths(&paths)?,
-        );
+        let mut imported = extract_audio_bible::import_paths(&paths)?;
+        let warnings = std::mem::take(&mut imported.warnings);
+        let mut bible = Bible::new(new_id(), name, abbreviation.trim(), imported);
         bible.language = language.filter(|l| !l.trim().is_empty());
         store.save_bible(&bible)?;
-        Ok(bible.summary())
+        Ok(ImportedBible {
+            summary: bible.summary(),
+            warnings,
+        })
     })
     .await
 }

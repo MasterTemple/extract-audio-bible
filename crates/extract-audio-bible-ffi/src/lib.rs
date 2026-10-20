@@ -108,7 +108,7 @@ impl ExtractAudioBible {
         abbreviation: String,
     ) -> Result<Bible, ExtractAudioBibleError> {
         let imported = eab::import(files.into_iter().map(|f| (f.path, f.bytes)).collect())?;
-        Ok(Bible::new(named_bible(&name, &abbreviation, imported)))
+        Ok(named_bible(&name, &abbreviation, imported))
     }
 
     /// [`ExtractAudioBible::import_bible`] from files and folders on disk (native only; in
@@ -279,7 +279,7 @@ impl ExtractAudioBible {
     }
 }
 
-fn named_bible(name: &str, abbreviation: &str, imported: eab::Imported) -> eab::Bible {
+fn named_bible(name: &str, abbreviation: &str, mut imported: eab::Imported) -> Bible {
     let name = if name.trim().is_empty() {
         "Untitled translation"
     } else {
@@ -290,17 +290,22 @@ fn named_bible(name: &str, abbreviation: &str, imported: eab::Imported) -> eab::
     } else {
         abbreviation.trim()
     };
-    eab::Bible::new(eab::project::stable_id(name), name, abbreviation, imported)
+    let warnings = std::mem::take(&mut imported.warnings);
+    Bible {
+        warnings,
+        ..Bible::new(eab::Bible::new(
+            eab::project::stable_id(name),
+            name,
+            abbreviation,
+            imported,
+        ))
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn import_paths(paths: Vec<String>, name: String, abbreviation: String) -> Result<Bible, ExtractAudioBibleError> {
     let paths: Vec<std::path::PathBuf> = paths.into_iter().map(Into::into).collect();
-    Ok(Bible::new(named_bible(
-        &name,
-        &abbreviation,
-        eab::import_paths(&paths)?,
-    )))
+    Ok(named_bible(&name, &abbreviation, eab::import_paths(&paths)?))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -324,6 +329,8 @@ pub struct Bible {
     /// Indexed for searching the first time it's needed (about a fifth of a second for a whole
     /// Bible), then kept
     engine: OnceLock<Arc<Engine>>,
+    /// What importing it left out
+    warnings: Vec<String>,
 }
 
 impl Bible {
@@ -331,6 +338,7 @@ impl Bible {
         Bible {
             inner: Arc::new(bible),
             engine: OnceLock::new(),
+            warnings: vec![],
         }
     }
 
@@ -353,6 +361,13 @@ impl Bible {
 
     pub fn abbreviation(&self) -> String {
         self.inner.abbreviation.clone()
+    }
+
+    /// What importing it left out, a sentence each: files not read (of another format than the
+    /// one read, or with no verses found), books that couldn't be read, and books passed over.
+    /// None for a Bible read from its JSON
+    pub fn import_warnings(&self) -> Vec<String> {
+        self.warnings.clone()
     }
 
     pub fn books(&self) -> Vec<BookInfo> {

@@ -85,7 +85,9 @@ print(eab.version())  # → 0.1.0
 `importBible` reads a translation from its files, given as bytes: USFM, USX, OSIS, ThML, GBF,
 JSON, CSV/TSV (`book, chapter, verse, text`), or lines like `John 3:16 For God so loved…`. Each
 file's name says what it is. `toJson` saves it, and `readBible` reads it again (or a Bible the
-Extract Audio Bible app imported). Books are numbered 1 (Genesis) to 66 (Revelation); `bookId`
+Extract Audio Bible app imported). `importWarnings` says what the import left out, a sentence
+each: files not read (of another format than the one read, or with no verses found), books that
+couldn't be read, and books passed over. Books are numbered 1 (Genesis) to 66 (Revelation); `bookId`
 reads any of a book's names.
 
 ```ts
@@ -99,6 +101,7 @@ const bsb = eab.importBible(
 const john = bsb.books()[0];
 console.log(john.name, john.id, john.verseCounts.length, john.verseCounts[10]); // → John 43 11 57
 console.log(bsb.verse(43, 11, 35)); // → Jesus wept.
+console.log(bsb.importWarnings()); // → []
 console.log(bsb.chapter(43, 11).length); // → 57
 console.log(eab.bookId("1 Thess")); // → 52
 console.log(eab.readBible(bsb.toJson()).abbreviation()); // → BSB
@@ -116,6 +119,7 @@ bsb = eab.import_bible(
 john = bsb.books()[0]
 print(john.name, john.id, len(john.verse_counts), john.verse_counts[10])  # → John 43 11 57
 print(bsb.verse(43, 11, 35))  # → Jesus wept.
+print(bsb.import_warnings())  # → []
 print(len(bsb.chapter(43, 11)))  # → 57
 print(eab.book_id("1 Thess"))  # → 52
 print(eab.read_bible(bsb.to_json()).abbreviation())  # → BSB
@@ -676,7 +680,7 @@ Each class, record, and enum <!-- source -->(by their TypeScript names)<!-- /sou
 | `BookScope`, `Testament`, `GenreInfo`, `ReadingRow`, `ProjectKind` | [Every verse read](#every-verse-read) |
 | `ExtractAudioBible.readProject` | [Saving and opening](#saving-and-opening) |
 | `ExtractAudioBible.importBibleFromPaths`, `openTranscript` | [Reading natively](#reading-natively) |
-| `Bible.id`, `name`, `abbreviation`, `books`, `verse`, `chapter`, `toJson` | [A Bible](#a-bible), [Saving and opening](#saving-and-opening) |
+| `Bible.id`, `name`, `abbreviation`, `importWarnings`, `books`, `verse`, `chapter`, `toJson` | [A Bible](#a-bible), [Saving and opening](#saving-and-opening) |
 | `Transcript.words`, `wordCount`, `duration`, `paragraphStarts`, `id`, `title`, `find` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `Searcher.find` | [Finding verses in a transcript](#finding-verses-in-a-transcript) |
 | `Files.memory`, `add`, `paths` | [A project](#a-project) |

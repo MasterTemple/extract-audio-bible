@@ -11,7 +11,7 @@ use logoxide_text::{
     MemoryFiles, TextFormat,
     hash::{HashRule, verse_text},
     markup::verses::slice,
-    source,
+    source::{self, Skipped},
     topos_bible::data::{
         BibleData,
         books::{BookId, Books},
@@ -176,6 +176,11 @@ impl Collected {
         slot.push_str(text.trim());
     }
 
+    /// Verses gathered so far
+    fn len(&self) -> usize {
+        self.0.values().flat_map(|c| c.values()).map(|v| v.len()).sum()
+    }
+
     fn into_books(self) -> Vec<BibleBook> {
         let names = books();
         (self.0.into_iter())
@@ -218,6 +223,9 @@ pub struct Imported {
     pub books: Vec<BibleBook>,
     /// What it was read from ("usx", "json", ...)
     pub format: String,
+    /// What was left out, a sentence each: files not read (of another format than the one read,
+    /// or with no verses found), books that couldn't be read, and books logoxide-text passed over
+    pub warnings: Vec<String>,
 }
 
 /// Read a Bible from files and folders on disk (see [`import`])
@@ -245,17 +253,25 @@ pub fn import(files: Vec<(String, Vec<u8>)>) -> Result<Imported> {
             "usx" | "usfm" | "sfm" | "xml" | "osis" | "thml" | "gbf"
         )
     });
+    let mut warnings = vec![];
     let (books, format) = if !markup.is_empty() {
-        import_markup(markup)?
+        for (name, _) in &other {
+            warnings.push(format!("{name}: not read, since the Bible's markup was given with it"));
+        }
+        import_markup(markup, &mut warnings)?
     } else {
         let mut collected = Collected::default();
         let mut format = String::new();
         for (name, bytes) in &other {
             let text = String::from_utf8_lossy(bytes);
             let text = text.trim_start_matches('\u{feff}');
-            format = match ext(name).as_str() {
+            let before = collected.len();
+            let this = match ext(name).as_str() {
                 "json" => {
-                    import_json(text, &mut collected)?;
+                    if let Err(e) = import_json(text, &mut collected) {
+                        warnings.push(format!("{name}: not read: {e}"));
+                        continue;
+                    }
                     "json"
                 }
                 "csv" => {
@@ -270,22 +286,35 @@ pub fn import(files: Vec<(String, Vec<u8>)>) -> Result<Imported> {
                     import_lines(text, &mut collected);
                     "text"
                 }
+            };
+            if collected.len() == before {
+                warnings.push(format!("{name}: no verses found"));
+            } else {
+                format = this.into();
             }
-            .into();
         }
         (collected.into_books(), format)
     };
     if books.is_empty() {
-        return Err(Error::invalid(
-            "No verses were found. Supported: USFM, USX, OSIS, ThML, GBF, JSON, CSV/TSV (book, chapter, verse, text), or lines like \"John 3:16 For God so loved…\"",
-        ));
+        let mut message = "No verses were found. Supported: USFM, USX, OSIS, ThML, GBF, JSON, CSV/TSV (book, chapter, verse, text), or lines like \"John 3:16 For God so loved…\"".to_string();
+        for warning in &warnings {
+            message.push('\n');
+            message.push_str(warning);
+        }
+        return Err(Error::invalid(message));
     }
-    Ok(Imported { books, format })
+    Ok(Imported {
+        books,
+        format,
+        warnings,
+    })
 }
 
 /// USX, USFM, OSIS, ThML, or GBF, read by logoxide-text
-fn import_markup(files: Vec<(String, Vec<u8>)>) -> Result<(Vec<BibleBook>, String)> {
+fn import_markup(files: Vec<(String, Vec<u8>)>, warnings: &mut Vec<String>) -> Result<(Vec<BibleBook>, String)> {
     let mut by_format: BTreeMap<TextFormat, Vec<(String, Vec<u8>)>> = BTreeMap::new();
+    // Each file's name as given, by the name it's read as
+    let mut given: BTreeMap<String, String> = BTreeMap::new();
     for (i, (path, bytes)) in files.into_iter().enumerate() {
         let head = String::from_utf8_lossy(&bytes[..bytes.len().min(8192)]).to_ascii_lowercase();
         let format = match ext(&path).as_str() {
@@ -315,15 +344,51 @@ fn import_markup(files: Vec<(String, Vec<u8>)>) -> Result<(Vec<BibleBook>, Strin
         } else {
             name.to_string()
         };
+        given.insert(name.clone(), path);
         by_format.entry(format).or_default().push((name, bytes));
     }
     // The richest format given, as logoxide orders them
-    let (format, files) = by_format.into_iter().next().expect("some markup");
+    let mut by_format = by_format.into_iter();
+    let (format, files) = by_format.next().expect("some markup");
+    for (other, files) in by_format {
+        for (name, _) in files {
+            warnings.push(format!(
+                "{}: {} not read, since {} was given too (one format is read)",
+                given[&name],
+                other.name().to_uppercase(),
+                format.name().to_uppercase()
+            ));
+        }
+    }
     let memory = MemoryFiles::with(files.into_iter().map(|(n, b)| (format!("text/{n}"), b)));
     let source = source::open(Arc::new(memory), format, "text")?;
+    let original = |path: &str| {
+        let name = path.strip_prefix("text/").unwrap_or(path);
+        given.get(name).cloned().unwrap_or_else(|| name.to_string())
+    };
+    for skipped in source.skipped().iter().filter(|s| s.is_warning()) {
+        warnings.push(
+            Skipped {
+                path: original(&skipped.path),
+                ..skipped.clone()
+            }
+            .to_string(),
+        );
+    }
     let mut collected = Collected::default();
     for id in source.books() {
-        let book = source.book(id)?;
+        let book = match source.book(id) {
+            Ok(book) => book,
+            Err(e) => {
+                let file = source.files().get(&id).map(|f| original(f)).unwrap_or_default();
+                let name = books()
+                    .get_name(id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("Book {}", id.0));
+                warnings.push(format!("{file}: {name} not read: {e}"));
+                continue;
+            }
+        };
         for span in &book.spans {
             let nodes = slice(&book.nodes, &span.start, Some(&span.end));
             let text = verse_text(&nodes, HashRule::One);
@@ -588,6 +653,59 @@ mod tests {
         assert_eq!(ch[16], "For God sent not.");
         assert_eq!(ch[17], "");
         assert_eq!(ch[18], "And this is.");
+    }
+
+    #[test]
+    fn says_what_was_left_out() {
+        let usfm = |text: &str| text.as_bytes().to_vec();
+        let imported = import(vec![
+            (
+                "bible/JHN.usfm".into(),
+                usfm("\\id JHN\n\\c 11\n\\p\n\\v 35 Jesus wept.\n"),
+            ),
+            (
+                "bible/XYZ.usfm".into(),
+                usfm("\\id XYZ\n\\c 1\n\\p\n\\v 1 Who knows.\n"),
+            ),
+            (
+                "bible/MAT.usx".into(),
+                usfm(r#"<usx version="3.0"><book code="MAT" style="id"/><chapter number="1" style="c"/><para style="p"><verse number="1" style="v"/>The book.</para></usx>"#),
+            ),
+            ("bible/notes.csv".into(), usfm("John,3,16,For God so loved the world")),
+        ])
+        .unwrap();
+        assert_eq!(imported.format, "usx");
+        let warnings = imported.warnings.join("\n");
+        assert!(warnings.contains("bible/notes.csv: not read"), "{warnings}");
+        assert!(warnings.contains("bible/JHN.usfm: USFM not read"), "{warnings}");
+        assert!(warnings.contains("bible/XYZ.usfm: USFM not read"), "{warnings}");
+
+        let imported = import(vec![
+            ("JHN.usfm".into(), usfm("\\id JHN\n\\c 11\n\\p\n\\v 35 Jesus wept.\n")),
+            ("XYZ.usfm".into(), usfm("\\id XYZ\n\\c 1\n\\p\n\\v 1 Who knows.\n")),
+        ])
+        .unwrap();
+        assert_eq!(imported.books.len(), 1);
+        assert_eq!(imported.warnings.len(), 1, "{:?}", imported.warnings);
+        assert!(
+            imported.warnings[0].starts_with("XYZ.usfm: "),
+            "{:?}",
+            imported.warnings
+        );
+
+        let imported = import(vec![
+            ("kjv.json".into(), usfm(r#"{"John": {"11": {"35": "Jesus wept."}}}"#)),
+            ("broken.json".into(), usfm("{")),
+            ("empty.txt".into(), usfm("nothing here")),
+        ])
+        .unwrap();
+        assert_eq!(imported.books.len(), 1);
+        assert!(
+            imported.warnings[0].starts_with("broken.json: not read: "),
+            "{:?}",
+            imported.warnings
+        );
+        assert_eq!(imported.warnings[1], "empty.txt: no verses found");
     }
 
     #[test]

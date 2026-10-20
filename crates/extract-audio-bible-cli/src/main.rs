@@ -338,11 +338,18 @@ fn run(command: Command, out: &Out) -> Result<()> {
             abbreviation,
             language,
         } => {
-            let mut bible = import_bible(&paths, &name, &abbreviation)?;
+            let (mut bible, warnings) = import_bible(&paths, &name, &abbreviation)?;
+            for warning in &warnings {
+                out.note(warning);
+            }
             bible.language = language;
             write_json(&output, &bible)?;
-            let summary = bible.summary();
-            out.result(&summary, || {
+            let imported = Imported {
+                summary: bible.summary(),
+                warnings,
+            };
+            let summary = &imported.summary;
+            out.result(&imported, || {
                 format!(
                     "{} ({}): {} books, {} verses → {}",
                     summary.name,
@@ -366,9 +373,9 @@ fn run(command: Command, out: &Out) -> Result<()> {
             min_accuracy,
             transcripts,
         } => {
-            let mut bibles = vec![load_bible(&bible)?];
+            let mut bibles = vec![load_bible(&bible, out)?];
             for path in &translations {
-                bibles.push(load_bible(std::slice::from_ref(path))?);
+                bibles.push(load_bible(std::slice::from_ref(path), out)?);
             }
             let scope = extract_audio_bible::BookScope {
                 testaments: testaments.into_iter().map(Into::into).collect(),
@@ -452,7 +459,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
             })
         }
         Command::Init { dir, bible, book, name } => {
-            let bible = load_bible(&bible)?;
+            let bible = load_bible(&bible, out)?;
             let book = book.as_deref().map(|b| book_id(&bible, b)).transpose()?;
             if dir.join("project.json").exists() {
                 bail!("{} already has a project", dir.display());
@@ -875,7 +882,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 Some(dir) => dir.clone(),
                 None => std::env::temp_dir().join(format!("extract-audio-bible-{}", std::process::id())),
             };
-            let bible = load_bible(&bible)?;
+            let bible = load_bible(&bible, out)?;
             let book = book.as_deref().map(|b| book_id(&bible, b)).transpose()?;
             let mut project = if dir.join("project.json").exists() {
                 Folder::open(&dir)?.project
@@ -1173,19 +1180,35 @@ fn add_sermons(project: &mut Project, paths: &[PathBuf]) -> Result<extract_audio
     Ok(project.add_sources_from(&Disk, &files))
 }
 
-/// A Bible from its JSON (one `.json` file that `import` wrote) or its files
-fn load_bible(paths: &[PathBuf]) -> Result<Bible> {
+/// A Bible imported, and what was left out of it
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Imported {
+    #[serde(flatten)]
+    summary: bible::BibleSummary,
+    warnings: Vec<String>,
+}
+
+/// A Bible from its JSON (one `.json` file that `import` wrote) or its files, noting what its
+/// files' import left out
+fn load_bible(paths: &[PathBuf], out: &Out) -> Result<Bible> {
     if let [path] = paths
         && path.extension().is_some_and(|e| e == "json")
         && let Ok(bible) = read_json::<Bible>(path)
     {
         return Ok(bible);
     }
-    import_bible(paths, "", "")
+    let (bible, warnings) = import_bible(paths, "", "")?;
+    for warning in &warnings {
+        out.note(warning);
+    }
+    Ok(bible)
 }
 
-fn import_bible(paths: &[PathBuf], name: &str, abbreviation: &str) -> Result<Bible> {
-    let imported = bible::import_paths(paths)?;
+/// A Bible from its files, and what was left out of it
+fn import_bible(paths: &[PathBuf], name: &str, abbreviation: &str) -> Result<(Bible, Vec<String>)> {
+    let mut imported = bible::import_paths(paths)?;
+    let warnings = std::mem::take(&mut imported.warnings);
     let fallback = paths
         .first()
         .and_then(|p| p.file_stem())
@@ -1201,7 +1224,7 @@ fn import_bible(paths: &[PathBuf], name: &str, abbreviation: &str) -> Result<Bib
     } else {
         abbreviation.trim()
     };
-    Ok(Bible::new(stable_id(name), name, abbreviation, imported))
+    Ok((Bible::new(stable_id(name), name, abbreviation, imported), warnings))
 }
 
 fn book_id(bible: &Bible, name: &str) -> Result<u8> {

@@ -295,7 +295,8 @@ export interface Progress {
 export const api = {
   listBibles: () => invoke<BibleSummary[]>("list_bibles"),
   importBible: (paths: string[], name: string, abbreviation: string, language: string | null) =>
-    invoke<BibleSummary>("import_bible", { paths, name, abbreviation, language }),
+    // `warnings`: what was left out (files not read, books passed over), a sentence each
+    invoke<BibleSummary & { warnings: string[] }>("import_bible", { paths, name, abbreviation, language }),
   deleteBible: (id: string) => invoke<void>("delete_bible", { id }),
   bibleOutline: (id: string) => invoke<BookOutline[]>("bible_outline", { id }),
   bookText: (bibleId: string, book: number) => invoke<string[][]>("book_text", { bibleId, book }),
