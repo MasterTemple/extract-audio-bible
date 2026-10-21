@@ -50,7 +50,8 @@ fn ordinal(word: &str) -> Option<Vec<String>> {
     if digits.is_empty() || !matches!(suffix, "st" | "nd" | "rd" | "th") {
         return None;
     }
-    let mut words = number_words(digits.parse().ok()?);
+    // Spelled out below a million, as numerals are (`tokenize_into`)
+    let mut words = number_words(digits.parse().ok().filter(|&n| n < 1_000_000)?);
     let last = words.pop()?;
     let ord = match last.as_str() {
         "one" => "first".into(),
@@ -113,16 +114,37 @@ pub fn number_words(n: u64) -> Vec<String> {
             out.push(ONES[rest as usize].into());
         }
     }
-    let mut out = Vec::new();
-    let (thousands, rest) = (n / 1000, n % 1000);
-    if thousands > 0 {
-        under_thousand(thousands, &mut out);
-        out.push("thousand".into());
-        if rest > 0 && rest < 100 {
-            out.push("and".into());
+    const SCALES: [&str; 7] = [
+        "",
+        "thousand",
+        "million",
+        "billion",
+        "trillion",
+        "quadrillion",
+        "quintillion",
+    ];
+    // Groups of three digits, the last first
+    let mut groups = vec![];
+    let mut left = n;
+    loop {
+        groups.push(left % 1000);
+        left /= 1000;
+        if left == 0 {
+            break;
         }
     }
-    if rest > 0 || thousands == 0 {
+    let mut out = Vec::new();
+    for (scale, &group) in groups.iter().enumerate().skip(1).rev() {
+        if group > 0 {
+            under_thousand(group, &mut out);
+            out.push(SCALES[scale].into());
+        }
+    }
+    let rest = groups[0];
+    if rest > 0 && rest < 100 && !out.is_empty() {
+        out.push("and".into());
+    }
+    if rest > 0 || out.is_empty() {
         under_thousand(rest, &mut out);
     }
     out
@@ -227,6 +249,19 @@ mod tests {
         assert_eq!(tokenize("Éphraïm's 70"), ["ephraims", "seventy"]);
         assert_eq!(tokenize("120"), ["one", "hundred", "and", "twenty"]);
         assert_eq!(tokenize("3rd 20th"), ["third", "twentieth"]);
+        // Ordinals a million and past are left as written, like numerals
+        assert_eq!(tokenize("5,100,000th 5100000"), ["5100000th", "5100000"]);
+    }
+
+    #[test]
+    fn numbers_of_any_size() {
+        let words = |n| number_words(n).join(" ");
+        assert_eq!(words(0), "zero");
+        assert_eq!(words(144_000), "one hundred and forty four thousand");
+        assert_eq!(words(1_005), "one thousand and five");
+        assert_eq!(words(5_100_000), "five million one hundred thousand");
+        assert_eq!(words(2_000_000_050), "two billion and fifty");
+        assert!(!number_words(u64::MAX).is_empty());
     }
 
     #[test]
