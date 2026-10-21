@@ -1,5 +1,5 @@
-//! Putting chosen readings together, and writing them as tagged MP3s: a file per chapter, a file
-//! per verse, or both.
+//! Putting chosen readings together, and writing them as tagged MP3s: a file per chapter (or, for
+//! a passage, one for it all), a file per verse, or both.
 
 use std::path::Path;
 
@@ -37,7 +37,7 @@ pub(crate) enum Piece {
     Audio(Clip),
 }
 
-/// The verses of a chapter that have text but no chosen reading
+/// The verses of a chapter that have text but no chosen reading (of the project's passage, if it has one)
 pub fn missing_verses(project: &Project, book: &BibleBook, chapter: u16) -> Vec<u16> {
     let Some(verses) = book.chapters.get(chapter as usize - 1) else {
         return vec![];
@@ -45,15 +45,17 @@ pub fn missing_verses(project: &Project, book: &BibleBook, chapter: u16) -> Vec<
     (verses.iter().enumerate())
         .filter(|(_, t)| !t.trim().is_empty())
         .map(|(i, _)| i as u16 + 1)
+        .filter(|v| project.covers(book.id, chapter, *v))
         .filter(|v| !project.selections.contains_key(&verse_key(book.id, chapter, *v)))
         .collect()
 }
 
-/// A chapter's chosen verses, in order, with their clips (more than one for a verse read in
-/// pieces)
+/// A chapter's chosen verses (of the project's passage, if it has one), in order, with their clips
+/// (more than one for a verse read in pieces)
 fn chosen<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> Vec<(u16, &'a Selection, Vec<Clip>)> {
     let count = book.chapters.get(chapter as usize - 1).map_or(0, Vec::len) as u16;
     (1..=count)
+        .filter(|&v| project.covers(book.id, chapter, v))
         .filter_map(|v| {
             let sel = project.selections.get(&verse_key(book.id, chapter, v))?;
             let clips = clips(project, sel);
@@ -89,8 +91,20 @@ pub struct VerseTime {
 
 /// A chapter's audio as pieces, and when each verse is heard in it
 pub(crate) fn chapter_pieces(project: &Project, book: &BibleBook, chapter: u16) -> (Vec<Piece>, Vec<VerseTime>) {
+    pieces(project, chosen(project, book, chapter))
+}
+
+/// A passage's audio as pieces: its chapters' chosen verses one after another, with one lead-in and tail
+fn passage_pieces(project: &Project, chapters: &[(&ChapterRef, &BibleBook)]) -> Vec<Piece> {
+    let verses = (chapters.iter())
+        .flat_map(|(c, book)| chosen(project, book, c.chapter))
+        .collect();
+    pieces(project, verses).0
+}
+
+/// Chosen verses' audio as pieces (with the silences between them), and when each is heard
+fn pieces(project: &Project, verses: Vec<(u16, &Selection, Vec<Clip>)>) -> (Vec<Piece>, Vec<VerseTime>) {
     let settings = &project.settings;
-    let verses = chosen(project, book, chapter);
     let mut out = vec![Piece::Silence(settings.chapter_lead_in)];
     let mut times = vec![];
     let mut at = settings.chapter_lead_in.max(0.0);
@@ -310,8 +324,8 @@ pub struct ExportProgress {
     pub current: String,
 }
 
-/// The chapters that would be exported: those of the project's book with a chosen verse (only
-/// full ones, if asked)
+/// The chapters that would be exported: those of the project's book (or passage) with a chosen
+/// verse (only full ones, if asked)
 pub fn chapters_to_export(project: &Project, bible: &Bible) -> Vec<ChapterRef> {
     let mut out = vec![];
     for book in bible
@@ -321,6 +335,7 @@ pub fn chapters_to_export(project: &Project, bible: &Bible) -> Vec<ChapterRef> {
     {
         for c in 1..=book.chapters.len() as u16 {
             let any = (1..=book.chapters[c as usize - 1].len() as u16)
+                .filter(|&v| project.covers(book.id, c, v))
                 .any(|v| project.selections.contains_key(&verse_key(book.id, c, v)));
             if any && (!project.metadata.only_complete || missing_verses(project, book, c).is_empty()) {
                 out.push(ChapterRef {
@@ -333,10 +348,24 @@ pub fn chapters_to_export(project: &Project, bible: &Bible) -> Vec<ChapterRef> {
     out
 }
 
-fn fill(template: &str, bible: &Bible, book: &BibleBook, chapter: u16, verse: Option<u16>) -> String {
+/// A template filled in: `{passage}` is the project's passage ("2 Corinthians 2:14-17"), or the
+/// book and chapter when it has none
+fn fill(
+    template: &str,
+    project: &Project,
+    bible: &Bible,
+    book: &BibleBook,
+    chapter: u16,
+    verse: Option<u16>,
+) -> String {
     let verse_count = book.chapters.get(chapter as usize - 1).map_or(0, Vec::len);
     let v = |f: &dyn Fn(u16) -> String| verse.map(f).unwrap_or_default();
+    let passage = match project.passage {
+        Some(p) => format!("{} {}", book.name, p.label()),
+        None => format!("{} {chapter}", book.name),
+    };
     template
+        .replace("{passage}", &passage)
         .replace("{book}", &book.name)
         .replace("{osis}", &book.osis)
         .replace("{bookNumber2}", &format!("{:02}", book.id))
@@ -377,7 +406,7 @@ impl Tagger<'_> {
     /// An MP3's ID3v2.4 tag, to put before its audio
     fn tag(&self, book: &BibleBook, chapter: u16, verse: Option<u16>, track: (u32, u32), disc: u32) -> Result<Vec<u8>> {
         let meta = &self.project.metadata;
-        let fill = |t: &str| fill(t, self.bible, book, chapter, verse);
+        let fill = |t: &str| fill(t, self.project, self.bible, book, chapter, verse);
         let mut tag = Tag::new();
         tag.set_title(fill(if verse.is_some() {
             &meta.verse_title_template
@@ -484,27 +513,76 @@ pub fn export(
         ExportMode::Both => (true, true),
     };
     let join = |dir: &str, name: String| if dir.is_empty() { name } else { format!("{dir}/{name}") };
+    let book_dir = |book: &BibleBook| {
+        if meta.folder_per_book {
+            file_name(&format!("{:02} {}", book.id, book.name))
+        } else {
+            String::new()
+        }
+    };
+    // A passage is one file, not a file per chapter, and its verses an album numbered in its order
+    let passage = project.passage.is_some();
+    let passage_verses: u32 = (chapters.iter().zip(&books))
+        .map(|(c, b)| chosen(project, b, c.chapter).len() as u32)
+        .sum();
+    let mut passage_track = 0;
 
     let mut done = vec![];
+    if passage
+        && chapter_files
+        && let (Some(first), Some(book)) = (chapters.first(), books.first())
+    {
+        progress(ExportProgress {
+            done: 0,
+            total: chapters.len(),
+            current: project.reference(bible).unwrap_or_default(),
+        });
+        let parts: Vec<(&ChapterRef, &BibleBook)> = chapters.iter().zip(books.iter().copied()).collect();
+        let pcm = leveler.render_pieces(&passage_pieces(project, &parts), meta.sample_rate)?;
+        let path = join(
+            &book_dir(book),
+            format!(
+                "{}.mp3",
+                file_name(&fill(
+                    &meta.filename_template,
+                    project,
+                    bible,
+                    book,
+                    first.chapter,
+                    None
+                ))
+            ),
+        );
+        let mut bytes = tagger.tag(book, first.chapter, None, (1, 1), book.id as u32)?;
+        bytes.extend(audio::mp3(&pcm, meta.bitrate)?);
+        let file = ExportedFile {
+            book: first.book,
+            chapter: first.chapter,
+            verse: None,
+            path,
+            duration: pcm.seconds(),
+            missing: (parts.iter())
+                .flat_map(|(c, b)| missing_verses(project, b, c.chapter))
+                .collect(),
+        };
+        write(&file, bytes)?;
+        done.push(file);
+    }
     for (i, (ch, book)) in chapters.iter().zip(&books).enumerate() {
         progress(ExportProgress {
             done: i,
             total: chapters.len(),
             current: format!("{} {}", book.name, ch.chapter),
         });
-        let book_dir = if meta.folder_per_book {
-            file_name(&format!("{:02} {}", book.id, book.name))
-        } else {
-            String::new()
-        };
+        let book_dir = book_dir(book);
         let missing = missing_verses(project, book, ch.chapter);
-        if chapter_files {
+        if chapter_files && !passage {
             let pcm = leveler.render_pieces(&chapter_pieces(project, book, ch.chapter).0, meta.sample_rate)?;
             let path = join(
                 &book_dir,
                 format!(
                     "{}.mp3",
-                    file_name(&fill(&meta.filename_template, bible, book, ch.chapter, None))
+                    file_name(&fill(&meta.filename_template, project, bible, book, ch.chapter, None))
                 ),
             );
             let track = if meta.track_numbering == "sequence" {
@@ -526,7 +604,13 @@ pub fn export(
             done.push(file);
         }
         if verse_files {
-            let dir = join(&book_dir, file_name(&format!("{} {}", book.name, ch.chapter)));
+            let dir = join(
+                &book_dir,
+                file_name(&match project.reference(bible).filter(|_| passage) {
+                    Some(reference) => reference,
+                    None => format!("{} {}", book.name, ch.chapter),
+                }),
+            );
             let count = book.chapters[ch.chapter as usize - 1].len() as u32;
             for (v, sel, clips) in chosen(project, book, ch.chapter) {
                 let pcm = leveler.render_pieces(&verse_pieces(sel, &clips), meta.sample_rate)?;
@@ -534,10 +618,23 @@ pub fn export(
                     &dir,
                     format!(
                         "{}.mp3",
-                        file_name(&fill(&meta.verse_filename_template, bible, book, ch.chapter, Some(v)))
+                        file_name(&fill(
+                            &meta.verse_filename_template,
+                            project,
+                            bible,
+                            book,
+                            ch.chapter,
+                            Some(v)
+                        ))
                     ),
                 );
-                let mut bytes = tagger.tag(book, ch.chapter, Some(v), (v as u32, count), ch.chapter as u32)?;
+                passage_track += 1;
+                let (track, disc) = if passage {
+                    ((passage_track, passage_verses), 1)
+                } else {
+                    ((v as u32, count), ch.chapter as u32)
+                };
+                let mut bytes = tagger.tag(book, ch.chapter, Some(v), track, disc)?;
                 bytes.extend(audio::mp3(&pcm, meta.bitrate)?);
                 let file = ExportedFile {
                     book: ch.book,
@@ -581,4 +678,138 @@ pub fn export_to_dir(
         file.path = dir.join(&file.path).to_string_lossy().into_owned();
     }
     Ok(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Memory, Passage, Selection};
+
+    #[test]
+    fn a_passage_is_one_file_and_its_verses_an_album() {
+        let mut lines = String::new();
+        for (chapter, verses) in [(7, 25), (8, 39)] {
+            for v in 1..=verses {
+                lines += &format!("Romans {chapter}:{v} Verse {v}.\n");
+            }
+        }
+        let bible = Bible::new(
+            "b",
+            "Test",
+            "T",
+            crate::import(vec![("b.txt".into(), lines.into_bytes())]).unwrap(),
+        );
+        let romans = bible.book(45).unwrap();
+        let passage = Passage::parse("7:24-8:2", romans).unwrap();
+        let mut project = Project::passage("p", "", &bible, 45, passage);
+        project.metadata.export_mode = ExportMode::Both;
+        project.settings.chapter_lead_in = 0.0;
+        project.settings.chapter_tail = 0.0;
+        project.add_sources(&["s.wav".into(), "s.json".into()]);
+        let source = project.sources[0].id.clone();
+        // A second of the sermon for each verse, 7:23 (before the passage) too
+        for (i, (chapter, verse)) in [(7, 23), (7, 24), (7, 25), (8, 1), (8, 2)].into_iter().enumerate() {
+            let at = i as f64;
+            project.selections.insert(
+                verse_key(45, chapter, verse),
+                Selection {
+                    match_id: format!("m{i}"),
+                    source_id: source.clone(),
+                    start: at,
+                    end: at + 1.0,
+                    trim_start: 0.0,
+                    trim_end: 0.0,
+                    pad_before: 0.0,
+                    pad_after: 0.0,
+                    gain_db: 0.0,
+                    needs_trim: false,
+                    note: String::new(),
+                    joined: vec![],
+                },
+            );
+        }
+        let mut files = Memory::new();
+        let tone: Vec<f32> = (0..16_000 * 6).map(|i| (i as f32 * 0.05).sin() * 0.3).collect();
+        files.insert(
+            "s.wav",
+            audio::wav(&Pcm {
+                rate: 16_000,
+                samples: tone,
+            }),
+        );
+
+        let chapters = chapters_to_export(&project, &bible);
+        assert_eq!(chapters.iter().map(|c| c.chapter).collect::<Vec<_>>(), [7, 8]);
+        assert!(missing_verses(&project, romans, 7).is_empty() && missing_verses(&project, romans, 8).is_empty());
+        let mut written = vec![];
+        let exported = export(
+            &project,
+            &bible,
+            &chapters,
+            &files,
+            |_| {},
+            |file, bytes| {
+                let tag = Tag::read_from2(std::io::Cursor::new(&bytes)).unwrap();
+                written.push((
+                    file.path.clone(),
+                    tag.title().unwrap_or_default().to_string(),
+                    tag.album().unwrap_or_default().to_string(),
+                    tag.track(),
+                    tag.total_tracks(),
+                ));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        // One file for the passage (its four verses, without 7:23), not one for each chapter
+        let (path, title, album, ..) = &written[0];
+        assert_eq!(path, "45 Romans/Romans 7_24-8_2.mp3");
+        assert_eq!(
+            (title.as_str(), album.as_str()),
+            ("Romans 7:24-8:2", "Romans 7:24-8:2 (T)")
+        );
+        assert!((exported[0].duration - 4.0).abs() < 0.2, "{}", exported[0].duration);
+        // Its verses, an album numbered in the passage's order
+        let verses: Vec<_> = written[1..]
+            .iter()
+            .map(|(path, title, _, track, total)| (path.as_str(), title.as_str(), *track, *total))
+            .collect();
+        assert_eq!(
+            verses,
+            [
+                (
+                    "45 Romans/Romans 7_24-8_2/45_Rom_007_024.mp3",
+                    "Romans 7:24",
+                    Some(1),
+                    Some(4)
+                ),
+                (
+                    "45 Romans/Romans 7_24-8_2/45_Rom_007_025.mp3",
+                    "Romans 7:25",
+                    Some(2),
+                    Some(4)
+                ),
+                (
+                    "45 Romans/Romans 7_24-8_2/45_Rom_008_001.mp3",
+                    "Romans 8:1",
+                    Some(3),
+                    Some(4)
+                ),
+                (
+                    "45 Romans/Romans 7_24-8_2/45_Rom_008_002.mp3",
+                    "Romans 8:2",
+                    Some(4),
+                    Some(4)
+                ),
+            ]
+        );
+        assert!(written[1..].iter().all(|w| w.2 == "Romans 7:24-8:2 (T)"));
+
+        // Its status is of the passage's verses alone
+        let status: Vec<_> = (project.status(&bible, &crate::MatchSet::default()).into_iter())
+            .map(|c| (c.chapter, c.verses, c.chosen))
+            .collect();
+        assert_eq!(status, [(7, 2, 2), (8, 2, 2)]);
+    }
 }

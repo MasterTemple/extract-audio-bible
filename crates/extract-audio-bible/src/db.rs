@@ -524,6 +524,26 @@ impl Readings {
         Ok(true)
     }
 
+    /// Calls a translation by another name and abbreviation (as it's been renamed)
+    pub fn rename_translation(&mut self, id: &str, name: &str, abbreviation: &str) -> Result<()> {
+        let abbreviation = if abbreviation.is_empty() { name } else { abbreviation };
+        self.conn.execute(
+            "update translations set name = ?2, abbreviation = ?3 where id = ?1",
+            params![id, name, abbreviation],
+        )?;
+        let translations = {
+            let mut q = self.conn.prepare("select id, abbreviation from translations")?;
+            q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<HashMap<String, String>>>()?
+        };
+        let names = std::mem::replace(
+            &mut self.names,
+            Names::from_parts(Default::default(), Default::default()),
+        );
+        self.names = names.with_translations(translations);
+        Ok(())
+    }
+
     /// How many readings there are, and of which verses
     pub fn summary(&self) -> Result<Summary> {
         let mut q = self
@@ -1202,6 +1222,21 @@ mod tests {
                 .sum::<usize>(),
             rows.len()
         );
+
+        // A translation renamed is called so, and filtered by, at once and when opened again
+        let of_web = |db: &Readings, abbreviation: &str| {
+            let only = RowFilter {
+                translation: Some(abbreviation.into()),
+                ..Default::default()
+            };
+            db.rows(&only, &Group::All).unwrap().len()
+        };
+        let web = of_web(&db, "WEB");
+        assert!(web > 0);
+        db.rename_translation("web", "World English Bible", "WEBUS").unwrap();
+        assert_eq!((of_web(&db, "WEBUS"), of_web(&db, "WEB")), (web, 0));
+        let again = Readings::open(&path(&dir)).unwrap();
+        assert_eq!(of_web(&again, "WEBUS"), web);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

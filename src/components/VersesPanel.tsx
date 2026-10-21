@@ -6,7 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/lib/store";
-import { chapterStatus, chapterTone, type ChapterStatus, type Tone } from "@/lib/refs";
+import { chapterStatus, chapterTone, passageHasChapter, type ChapterStatus, type Tone } from "@/lib/refs";
 import { ChapterView } from "./ChapterView";
 import { VerseDetail } from "./VerseDetail";
 
@@ -135,7 +135,7 @@ function Navigator() {
                 </div>
                 {open && (
                   <div className="grid grid-cols-7 gap-1 px-2 pt-1 pb-3">
-                    {s.chapters.map((cs, i) => (
+                    {s.chapters.map((cs, i) => passageHasChapter(project, b.id, i + 1) && (
                       <ChapterCell
                         key={i}
                         n={i + 1}

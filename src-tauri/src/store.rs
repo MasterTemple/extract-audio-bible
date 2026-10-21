@@ -155,6 +155,43 @@ impl Store {
         )
     }
 
+    /**
+    Renames a translation: its own file, the copies projects' folders keep of it (for the command
+    line), and what projects' readings call it
+    */
+    pub fn rename_bible(
+        &self,
+        id: &str,
+        name: &str,
+        abbreviation: &str,
+        language: Option<String>,
+    ) -> Result<BibleSummary> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(AppError::msg("A translation needs a name"));
+        }
+        let mut bible = self.bible(id)?;
+        bible.name = name.to_string();
+        bible.abbreviation = abbreviation.trim().to_string();
+        bible.language = language.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+        self.save_bible(&bible)?;
+        for summary in self.projects()? {
+            if !summary.translations.iter().any(|t| t == id) {
+                continue;
+            }
+            if let Some(folder) = &summary.folder {
+                let copy = folder_bible(folder, &*self.project_ref(&summary.id)?, id);
+                if copy.exists() {
+                    write_json(&copy, &bible)?;
+                }
+            }
+            if let Some(mut readings) = self.readings(&summary.id)? {
+                readings.rename_translation(id, &bible.name, &bible.abbreviation)?;
+            }
+        }
+        Ok(bible.summary())
+    }
+
     pub fn bible(&self, id: &str) -> Result<Bible> {
         read_json(&self.bible_path(id)?)
     }
@@ -238,6 +275,36 @@ impl Store {
                 project: project.clone(),
             },
         );
+        Ok(project)
+    }
+
+    /**
+    A new project (made, not yet saved) given some of another's sermons: their transcripts and
+    audio (searched again in it), what's known of them, and where its audio is downloaded from and
+    how faithfully readings are found. Saved, and given back
+    */
+    pub fn project_from(&self, from_id: &str, source_ids: &[String], mut project: Project) -> Result<Project> {
+        let from = self.project_ref(from_id)?;
+        let wanted: std::collections::HashSet<&str> = source_ids.iter().map(String::as_str).collect();
+        project.sources = (from.sources.iter())
+            .filter(|s| wanted.contains(s.id.as_str()))
+            .map(|s| extract_audio_bible::Source {
+                word_count: 0,
+                match_count: 0,
+                ..s.clone()
+            })
+            .collect();
+        if project.sources.is_empty() {
+            return Err(AppError::msg("No sermons to make it from"));
+        }
+        let files: std::collections::HashSet<String> = project.sources.iter().map(|s| s.file_id()).collect();
+        project.files = (from.files.iter())
+            .filter(|(id, _)| files.contains(*id))
+            .map(|(id, meta)| (id.clone(), meta.clone()))
+            .collect();
+        project.settings.audio_url = from.settings.audio_url.clone();
+        project.settings.min_accuracy = from.settings.min_accuracy;
+        self.save_project(&project)?;
         Ok(project)
     }
 
@@ -353,6 +420,53 @@ mod tests {
     }
 
     #[test]
+    fn a_project_from_another_s_sermons() {
+        let tmp = std::env::temp_dir().join(format!("eab-store-from-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let store = Store::new(tmp.clone());
+        let kjv = bible(
+            "kjv",
+            "2 Corinthians 2:14 Now thanks be unto God.\n2 Corinthians 2:15 For we are unto God a sweet savour.",
+        );
+        store.save_bible(&kjv).unwrap();
+        let mut every = Project::readings("every", "", &[&kjv], Default::default()).unwrap();
+        every.add_sources(&["a.json".into(), "b.json".into(), "c.json".into()]);
+        every.settings.audio_url = "https://example.com/{id}.mp3".into();
+        every.settings.min_accuracy = 0.8;
+        for (id, speaker) in [("a", "Paul Washer"), ("b", "Paul Washer"), ("c", "Someone else")] {
+            every.files.insert(
+                id.into(),
+                extract_audio_bible::FileMetadata {
+                    speaker: Some(speaker.into()),
+                    ..Default::default()
+                },
+            );
+        }
+        every.sources[0].word_count = 100;
+        store.save_project(&every).unwrap();
+
+        let washer: Vec<String> = every.sources[..2].iter().map(|s| s.id.clone()).collect();
+        let passage = extract_audio_bible::Passage::parse("2:14-15", kjv.book(47).unwrap()).unwrap();
+        let made = store
+            .project_from("every", &washer, Project::passage("made", "", &kjv, 47, passage))
+            .unwrap();
+        assert_eq!(made.sources.iter().map(|s| s.file_id()).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(made.sources[0].word_count, 0, "searched again in it");
+        assert_eq!(made.files.keys().collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(
+            (made.settings.audio_url.as_str(), made.settings.min_accuracy),
+            ("https://example.com/{id}.mp3", 0.8)
+        );
+        assert_eq!(store.project("made").unwrap().passage, Some(passage));
+        assert!(
+            store
+                .project_from("every", &[], Project::new("none", "", &kjv, None))
+                .is_err()
+        );
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
     fn changes_are_saved_and_read_back() {
         let tmp = std::env::temp_dir().join(format!("eab-store-changes-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
@@ -437,6 +551,17 @@ mod tests {
         std::fs::remove_file(folder.join("bibles/web.json")).unwrap();
         store.save_project(&project).unwrap();
         assert!(folder.join("bibles/web.json").exists());
+
+        // Renamed, it's renamed in the folder's copy (for the command line) and its readings
+        store.rename_bible("web", "World English Bible", "WEBUS", None).unwrap();
+        assert_eq!(store.bible("web").unwrap().abbreviation, "WEBUS");
+        assert_eq!(
+            read_json::<Bible>(&folder.join("bibles/web.json")).unwrap().name,
+            "World English Bible"
+        );
+        let readings = store.readings(&project.id).unwrap().unwrap();
+        assert!(readings.overview(&Default::default()).is_ok());
+        assert!(store.rename_bible("web", "  ", "", None).is_err());
 
         // Closing keeps the folder
         store.delete_project(&project.id).unwrap();

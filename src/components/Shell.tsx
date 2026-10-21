@@ -3,7 +3,7 @@ import { ArrowLeft, BookOpen, Check, Loader2, Redo2, Undo2 } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApp, type Tab } from "@/lib/store";
-import { versesNeeded } from "@/lib/refs";
+import { inPassage, projectReference, versesNeeded } from "@/lib/refs";
 import { SourcesPanel } from "./SourcesPanel";
 import { VersesPanel } from "./VersesPanel";
 import { ExportPanel } from "./ExportPanel";
@@ -41,10 +41,11 @@ export function Shell() {
     if (!project) return { done: 0, total: 0 };
     let total = 0;
     const books = outline.filter((b) => project.book === null || b.id === project.book);
-    for (const b of books) for (let c = 1; c <= b.chapters.length; c++) total += versesNeeded(b, c).length;
-    const done = Object.keys(project.selections).filter(
-      (k) => project.book === null || k.startsWith(`${project.book}.`),
-    ).length;
+    for (const b of books) for (let c = 1; c <= b.chapters.length; c++) total += versesNeeded(b, c, project).length;
+    const done = Object.keys(project.selections).filter((k) => {
+      const [book, chapter, verse] = k.split(".").map(Number);
+      return (project.book === null || book === project.book) && inPassage(project, book, chapter, verse);
+    }).length;
     return { done, total };
   }, [project, outline]);
 
@@ -72,7 +73,7 @@ export function Shell() {
               </>
             ) : (
               <>
-                {project.book !== null ? `${outline.find((b) => b.id === project.book)?.name ?? "Book"} · ` : ""}
+                {project.book !== null ? `${projectReference(project, outline)} · ` : ""}
                 {bible?.abbreviation || bible?.name || "Translation"} · {progress.done.toLocaleString()} of {progress.total.toLocaleString()} verses
                 chosen
               </>

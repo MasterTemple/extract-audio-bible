@@ -146,10 +146,10 @@ impl Project {
         let mut chosen = vec![];
         let mut previous: Option<(Option<String>, String)> = None; // run, source
         for (i, text) in texts.iter().enumerate() {
-            if text.trim().is_empty() {
+            let verse = i as u16 + 1;
+            if text.trim().is_empty() || !self.covers(book.id, chapter, verse) {
                 continue;
             }
-            let verse = i as u16 + 1;
             if let Some(existing) = self.selections.get(&verse_key(book.id, chapter, verse)) {
                 // What's heard last is what the next verse would carry on from
                 let last = (existing.joined.last()).map_or((&existing.match_id, &existing.source_id), |p| {
@@ -217,9 +217,13 @@ impl Project {
         for book in bible.books.iter().filter(|b| self.book.is_none_or(|only| only == b.id)) {
             for (c, texts) in book.chapters.iter().enumerate() {
                 let chapter = c as u16 + 1;
+                if self.passage.is_some_and(|p| !p.has_chapter(chapter)) {
+                    continue;
+                }
                 let verses: Vec<u16> = (texts.iter().enumerate())
                     .filter(|(_, t)| !t.trim().is_empty())
                     .map(|(i, _)| i as u16 + 1)
+                    .filter(|&v| self.covers(book.id, chapter, v))
                     .collect();
                 let missing = crate::export::missing_verses(self, book, chapter);
                 let with_readings = found

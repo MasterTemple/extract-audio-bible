@@ -88,8 +88,9 @@ enum Command {
         /// or file of its text); each reading is of the translation it fits best
         #[arg(long = "translation")]
         translations: Vec<PathBuf>,
-        /// The book being built ("1 Thessalonians"; the whole Bible if left out), or for every
-        /// verse read, only these books (again for others; with genres, they add up)
+        /// The book being built ("1 Thessalonians"; the whole Bible if left out), or some of its
+        /// verses ("2 Cor 2:14-17", exported as one file, and its verses as an album of their own);
+        /// for every verse read, only these books (again for others; with genres, they add up)
         #[arg(long = "book")]
         books: Vec<String>,
         #[command(flatten)]
@@ -519,8 +520,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
                         "an audio Bible is of one book (or the whole Bible): give --readings to find every verse read in some"
                     );
                 }
-                let book = books.first().map(|b| book_id(&bibles[0], b)).transpose()?;
-                Project::new(id, &name, &bibles[0], book)
+                audio_bible(id, &name, &bibles[0], books.first().map(String::as_str))?
             };
             std::fs::create_dir_all(&dir)?;
             write_json(&dir.join("bible.json"), &bibles[0])?;
@@ -995,11 +995,15 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 None => std::env::temp_dir().join(format!("extract-audio-bible-{}", std::process::id())),
             };
             let bible = load_bible(&bible, out)?;
-            let book = book.as_deref().map(|b| book_id(&bible, b)).transpose()?;
             let mut project = if dir.join("project.json").exists() {
                 Folder::open(&dir)?.project
             } else {
-                Project::new(stable_id(&format!("{}{}", dir.display(), now())), "", &bible, book)
+                audio_bible(
+                    stable_id(&format!("{}{}", dir.display(), now())),
+                    "",
+                    &bible,
+                    book.as_deref(),
+                )?
             };
             project.settings.min_accuracy = min_accuracy;
             if let Some(mode) = mode {
@@ -1376,6 +1380,18 @@ fn import_bible(paths: &[PathBuf], name: &str, abbreviation: &str) -> Result<(Bi
         abbreviation.trim()
     };
     Ok((Bible::new(stable_id(name), name, abbreviation, imported), warnings))
+}
+
+/// An audio Bible of a book ("1 Thessalonians"), some of its verses ("2 Cor 2:14-17"), or (with
+/// none) the whole Bible
+fn audio_bible(id: String, name: &str, bible: &Bible, reference: Option<&str>) -> Result<Project> {
+    Ok(match reference {
+        None => Project::new(id, name, bible, None),
+        Some(reference) => match extract_audio_bible::parse_reference(reference, bible)? {
+            (book, Some(passage)) => Project::passage(id, name, bible, book, passage),
+            (book, None) => Project::new(id, name, bible, Some(book)),
+        },
+    })
 }
 
 fn book_id(bible: &Bible, name: &str) -> Result<u8> {

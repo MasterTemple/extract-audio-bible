@@ -25,7 +25,7 @@ export function VerseDetail() {
   const matches = [...(matchesByVerse.get(key) ?? [])].sort((x, y) => order(x.id) - order(y.id) || y.score - x.score);
   const loaded = loadedChapters.has(`${b.id}.${chapter}`);
   const count = shown.key === key ? shown.count : PAGE;
-  const verses = versesNeeded(b, chapter);
+  const verses = versesNeeded(b, chapter, project);
   const i = verses.indexOf(verse);
 
   return (

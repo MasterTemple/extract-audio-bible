@@ -11,8 +11,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bible::Bible,
-    error::Result,
+    bible::{Bible, BibleBook},
+    error::{Error, Result},
     matcher::{Match, Run},
     scope::BookScope,
 };
@@ -31,6 +31,10 @@ pub struct Project {
     /// The book being built (most sermons preach through one book); none for the whole Bible
     #[serde(default)]
     pub book: Option<u8>,
+    /// Only these verses of the book (2 Corinthians 2:14-17): exported as one file, or its verses
+    /// as an album of their own
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passage: Option<Passage>,
     /// For finding every verse read: the Bibles searched, by id (each reading is of the one it
     /// fits best)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -379,6 +383,109 @@ pub fn stable_id(text: &str) -> String {
     format!("{:012x}", h.finish() & 0xffff_ffff_ffff)
 }
 
+/// Verses of a project's book from one to another: `2:14` to `2:17`, or across chapters, `7:24` to `8:2`
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Passage {
+    pub start_chapter: u16,
+    pub start_verse: u16,
+    pub end_chapter: u16,
+    pub end_verse: u16,
+}
+
+impl Passage {
+    /// Whether it has a verse
+    pub fn contains(&self, chapter: u16, verse: u16) -> bool {
+        (self.start_chapter, self.start_verse) <= (chapter, verse)
+            && (chapter, verse) <= (self.end_chapter, self.end_verse)
+    }
+
+    /// Whether it has any of a chapter's verses
+    pub fn has_chapter(&self, chapter: u16) -> bool {
+        self.start_chapter <= chapter && chapter <= self.end_chapter
+    }
+
+    /// `2:14-17`, `7:24-8:2`, or `3:16`
+    pub fn label(&self) -> String {
+        let (sc, sv, ec, ev) = (self.start_chapter, self.start_verse, self.end_chapter, self.end_verse);
+        if sc != ec {
+            format!("{sc}:{sv}-{ec}:{ev}")
+        } else if sv != ev {
+            format!("{sc}:{sv}-{ev}")
+        } else {
+            format!("{sc}:{sv}")
+        }
+    }
+
+    /**
+    Verses of `book` written as `2:14-17`, `7:24-8:2`, `3:16`, a chapter (`23`), or chapters
+    (`23-24`); a dash may be an en or em dash. An error if it isn't one, or the book hasn't those
+    verses
+    */
+    pub fn parse(text: &str, book: &BibleBook) -> Result<Self> {
+        let text: String = text.trim().replace(['–', '—'], "-").split_whitespace().collect();
+        let bad = || Error::invalid(format!("{text}: not verses of {} (like 2:14-17)", book.name));
+        let number = |s: &str| s.parse::<u16>().ok().filter(|&n| n > 0);
+        let verses_in = |chapter: u16| book.chapters.get(chapter as usize - 1).map(|c| c.len() as u16);
+        let (from, to) = text
+            .split_once('-')
+            .map_or((text.as_str(), None), |(a, b)| (a, Some(b)));
+        let (start_chapter, start_verse) = match from.split_once(':') {
+            Some((c, v)) => (number(c).ok_or_else(bad)?, Some(number(v).ok_or_else(bad)?)),
+            None => (number(from).ok_or_else(bad)?, None),
+        };
+        let (end_chapter, end_verse) = match to {
+            None => (start_chapter, start_verse),
+            Some(to) => match to.split_once(':') {
+                Some((c, v)) => (number(c).ok_or_else(bad)?, Some(number(v).ok_or_else(bad)?)),
+                // `2:14-17` is verses of one chapter; `23-24` is chapters
+                None if start_verse.is_some() => (start_chapter, Some(number(to).ok_or_else(bad)?)),
+                None => (number(to).ok_or_else(bad)?, None),
+            },
+        };
+        let start_count = verses_in(start_chapter).ok_or_else(bad)?;
+        let end_count = verses_in(end_chapter).ok_or_else(bad)?;
+        let passage = Passage {
+            start_chapter,
+            start_verse: start_verse.unwrap_or(1),
+            end_chapter,
+            end_verse: end_verse.unwrap_or(end_count),
+        };
+        if passage.start_verse > start_count
+            || passage.end_verse > end_count
+            || (passage.start_chapter, passage.start_verse) > (passage.end_chapter, passage.end_verse)
+        {
+            return Err(Error::invalid(format!(
+                "{} {text}: {} hasn't those verses",
+                book.name, book.name
+            )));
+        }
+        Ok(passage)
+    }
+}
+
+/**
+A book, or verses of one, of a Bible: `2 Corinthians 2:14-17`, `Romans 7:24-8:2`, `Psalm 23`, or
+`1 Thessalonians` (the whole book, no passage)
+*/
+pub fn parse_reference(text: &str, bible: &Bible) -> Result<(u8, Option<Passage>)> {
+    let text = text.trim();
+    let find = |name: &str| {
+        let id = crate::bible::find_book(name)?.0;
+        bible.book(id).map(|b| (id, b))
+    };
+    // The verses are what follows the book's name: its last word, if that's numbers
+    if let Some((name, verses)) = text.rsplit_once(' ')
+        && verses.starts_with(|c: char| c.is_ascii_digit())
+        && let Some((id, book)) = find(name)
+    {
+        return Ok((id, Some(Passage::parse(verses, book)?)));
+    }
+    find(text)
+        .map(|(id, _)| (id, None))
+        .ok_or_else(|| Error::not_found(format!("{text}: no such book in {}", bible.name)))
+}
+
 /**
 Changes to a project, as an editor sends them while it's edited (rather than all of it, which with
 thousands of sermons is megabytes): each part given replaces the project's, and its chosen verses
@@ -396,6 +503,9 @@ pub struct ProjectChanges {
     /// `Some(None)` for the whole Bible (`null`), `None` (left out) for no change
     #[serde(deserialize_with = "given", skip_serializing_if = "Option::is_none")]
     pub book: Option<Option<u8>>,
+    /// `Some(None)` for the whole book (`null`), `None` (left out) for no change
+    #[serde(deserialize_with = "given", skip_serializing_if = "Option::is_none")]
+    pub passage: Option<Option<Passage>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub translations: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -451,6 +561,7 @@ impl Project {
             kind,
             bible_id,
             book,
+            passage,
             translations,
             scope,
             sources,
@@ -468,6 +579,7 @@ impl Project {
         set(&mut self.kind, kind);
         set(&mut self.bible_id, bible_id);
         set(&mut self.book, book);
+        set(&mut self.passage, passage);
         set(&mut self.translations, translations);
         set(&mut self.scope, scope);
         set(&mut self.sources, sources);
@@ -506,6 +618,7 @@ impl Project {
             kind: ProjectKind::AudioBible,
             bible_id: bible.id.clone(),
             book,
+            passage: None,
             translations: vec![],
             scope: BookScope::default(),
             created_at: now(),
@@ -557,6 +670,47 @@ impl Project {
 
     /// The books its sermons are searched for, by number, or none for every book: its book (for
     /// an audio Bible), or its scope (for finding every verse read)
+    /**
+    An audio Bible of a passage of a book (2 Corinthians 2:14-17): named after it unless `name` is
+    given, its file exported for the whole passage named after it, and its verses' files an album
+    of their own
+    */
+    pub fn passage(id: impl Into<String>, name: &str, bible: &Bible, book: u8, passage: Passage) -> Self {
+        let reference = bible
+            .book(book)
+            .map_or_else(|| passage.label(), |b| format!("{} {}", b.name, passage.label()));
+        let translation = if bible.abbreviation.is_empty() {
+            &bible.name
+        } else {
+            &bible.abbreviation
+        };
+        let name = if name.trim().is_empty() {
+            format!("{reference} ({translation})")
+        } else {
+            name.trim().to_string()
+        };
+        let mut project = Project::new(id, &name, bible, Some(book));
+        project.passage = Some(passage);
+        project.metadata.title_template = "{passage}".into();
+        project.metadata.filename_template = "{passage}".into();
+        project.metadata.album_template = "{passage} ({abbreviation})".into();
+        project
+    }
+
+    /// Whether a verse is one the project is for: of its book (if it has one), in its passage (if it has one)
+    pub fn covers(&self, book: u8, chapter: u16, verse: u16) -> bool {
+        self.book.is_none_or(|b| b == book) && self.passage.is_none_or(|p| p.contains(chapter, verse))
+    }
+
+    /// What it's of: "2 Corinthians 2:14-17", "1 Thessalonians", or none for the whole Bible
+    pub fn reference(&self, bible: &Bible) -> Option<String> {
+        let book = bible.book(self.book?)?;
+        Some(match self.passage {
+            Some(p) => format!("{} {}", book.name, p.label()),
+            None => book.name.clone(),
+        })
+    }
+
     pub fn books_searched(&self) -> Result<Option<std::collections::BTreeSet<u8>>> {
         match self.kind {
             ProjectKind::AudioBible => Ok(self.book.map(|b| std::collections::BTreeSet::from([b]))),
@@ -793,6 +947,55 @@ fn base_name(p: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Romans 7:1-25 and 8:1-39, and 2 Corinthians 2:1-17, as verse numbers
+    fn bible_with_passages() -> Bible {
+        let mut lines = String::new();
+        for (book, chapter, verses) in [("Romans", 7, 25), ("Romans", 8, 39), ("2 Corinthians", 2, 17)] {
+            for v in 1..=verses {
+                lines += &format!("{book} {chapter}:{v} Verse {v}.\n");
+            }
+        }
+        Bible::new(
+            "b",
+            "Test",
+            "T",
+            crate::import(vec![("b.txt".into(), lines.into_bytes())]).unwrap(),
+        )
+    }
+
+    #[test]
+    fn passages_read_and_named() {
+        let bible = bible_with_passages();
+        let (cor, rom) = (47, 45);
+        let p = |text: &str| parse_reference(text, &bible).map(|(b, p)| (b, p.map(|p| p.label())));
+        assert_eq!(p("2 Corinthians 2:14-17").unwrap(), (cor, Some("2:14-17".into())));
+        assert_eq!(p("2 Cor 2:14–17").unwrap(), (cor, Some("2:14-17".into())));
+        assert_eq!(p("Romans 7:24-8:2").unwrap(), (rom, Some("7:24-8:2".into())));
+        assert_eq!(p("Romans 8").unwrap(), (rom, Some("8:1-39".into())));
+        assert_eq!(p("Romans 7-8").unwrap(), (rom, Some("7:1-8:39".into())));
+        assert_eq!(p("Romans 8:28").unwrap(), (rom, Some("8:28".into())));
+        assert_eq!(p("Romans").unwrap(), (rom, None));
+        // Verses the book hasn't, backwards, or not verses at all
+        for bad in ["Romans 8:40", "Romans 9", "Romans 8:5-2", "Romans 8:x", "Hezekiah 3:1"] {
+            assert!(p(bad).is_err(), "{bad}");
+        }
+
+        let romans = bible.book(rom).unwrap();
+        let passage = Passage::parse("7:24-8:2", romans).unwrap();
+        assert!(
+            passage.contains(7, 25) && passage.contains(8, 1) && !passage.contains(7, 23) && !passage.contains(8, 3)
+        );
+        assert!(passage.has_chapter(8) && !passage.has_chapter(9));
+
+        let project = Project::passage("p", "", &bible, rom, passage);
+        assert_eq!(project.name, "Romans 7:24-8:2 (T)");
+        assert_eq!(project.reference(&bible).as_deref(), Some("Romans 7:24-8:2"));
+        assert!(project.covers(rom, 8, 2) && !project.covers(rom, 8, 3) && !project.covers(cor, 2, 14));
+        // Kept as it was saved
+        let saved: Project = serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();
+        assert_eq!(saved.passage, Some(passage));
+    }
 
     #[test]
     fn changes_made_part_by_part() {

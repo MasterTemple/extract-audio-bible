@@ -172,6 +172,14 @@ export interface ReadingRow {
   said: string;
 }
 
+/** Verses of a project's book from one to another (2:14 to 2:17, or 7:24 to 8:2) */
+export interface Passage {
+  startChapter: number;
+  startVerse: number;
+  endChapter: number;
+  endVerse: number;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -184,6 +192,8 @@ export interface Project {
   scope?: BookScope;
   /** The book being built; null for the whole Bible */
   book: number | null;
+  /** Only these verses of the book (exported as one file, and its verses as an album of their own) */
+  passage?: Passage | null;
   createdAt: number;
   updatedAt: number;
   sources: Source[];
@@ -393,12 +403,19 @@ export const api = {
     // `warnings`: what was left out (files not read, books passed over), a sentence each
     invoke<BibleSummary & { warnings: string[] }>("import_bible", { paths, name, abbreviation, language }),
   deleteBible: (id: string) => invoke<void>("delete_bible", { id }),
+  /** Renames a translation, wherever it's kept and shown */
+  renameBible: (id: string, name: string, abbreviation: string, language: string | null) =>
+    invoke<BibleSummary>("rename_bible", { id, name, abbreviation, language }),
   bibleOutline: (id: string) => invoke<BookOutline[]>("bible_outline", { id }),
   bookText: (bibleId: string, book: number) => invoke<string[][]>("book_text", { bibleId, book }),
 
   listProjects: () => invoke<ProjectSummary[]>("list_projects"),
-  createProject: (name: string, bibleId: string, book: number | null) =>
-    invoke<Project>("create_project", { name, bibleId, book }),
+  /** An audio Bible of a book, some of its verses (`passage`, like "2:14-17"), or the whole Bible */
+  createProject: (name: string, bibleId: string, book: number | null, passage: string | null = null) =>
+    invoke<Project>("create_project", { name, bibleId, book, passage }),
+  /** An audio Bible from some of another project's sermons (their files, what's known of them, and where their audio is) */
+  createProjectFrom: (projectId: string, sourceIds: string[], name: string, bibleId: string, book: number | null, passage: string | null) =>
+    invoke<Project>("create_project_from", { projectId, sourceIds, name, bibleId, book, passage }),
   createReadingsProject: (name: string, bibleIds: string[], scope: BookScope) =>
     invoke<Project>("create_readings_project", { name, bibleIds, scope }),
   genres: () => invoke<Genre[]>("genres"),

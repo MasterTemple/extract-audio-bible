@@ -1,14 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { ChevronRight, ChevronsDownUp, ChevronsUpDown, Download, FileText, Loader2, Play, Search, Square } from "lucide-react";
+import { BookPlus, ChevronRight, ChevronsDownUp, ChevronsUpDown, Download, FileText, Loader2, Play, Search, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
-import { api, errorMessage, type MatchKind, type Overview, type Project, type ReadingRow, type RowFilter, type RowGroup } from "@/lib/api";
+import {
+  api,
+  errorMessage,
+  type BookOutline,
+  type MatchKind,
+  type Overview,
+  type Project,
+  type ReadingRow,
+  type RowFilter,
+  type RowGroup,
+} from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { play, usePlayer } from "@/lib/player";
 import { audioPathOf, formatTime, kindLabel, sourceColor } from "@/lib/refs";
@@ -142,6 +154,132 @@ function GroupRows({
       </div>
     );
   return <>{children(rows.rows)}</>;
+}
+
+/**
+ * An audio Bible made from the sermons the readings shown are of (a speaker's, say): in one of the
+ * project's translations, of a book or some of its verses, searched as soon as it's open
+ */
+function NewProjectFrom({ project, overview, filter }: { project: Project; overview: Overview; filter: RowFilter }) {
+  const bibles = useApp((s) => s.bibles);
+  const openProject = useApp((s) => s.openProject);
+  const refreshLists = useApp((s) => s.refreshLists);
+  const translations = bibles.filter((b) => (project.translations?.length ? project.translations : [project.bibleId]).includes(b.id));
+  const [openDialog, setOpenDialog] = useState(false);
+  const [name, setName] = useState("");
+  const [bibleId, setBibleId] = useState("");
+  const [book, setBook] = useState("");
+  const [passage, setPassage] = useState("");
+  const [books, setBooks] = useState<BookOutline[]>([]);
+  const [busy, setBusy] = useState(false);
+  const sermons = overview.bySermon;
+
+  // The translation filtered by (else the project's first), and the book, if the readings are of one
+  const start = (open: boolean) => {
+    if (open) {
+      const filtered = translations.find((b) => (b.abbreviation || b.name) === filter.translation);
+      setBibleId((filtered ?? translations[0])?.id ?? "");
+      setBook(overview.byBook.length === 1 ? String(overview.byBook[0].book) : "");
+      setPassage("");
+      setName("");
+    }
+    setOpenDialog(open);
+  };
+  useEffect(() => {
+    if (!bibleId) return;
+    api.bibleOutline(bibleId).then(setBooks).catch(() => setBooks([]));
+  }, [bibleId]);
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      const made = await api.createProjectFrom(
+        project.id,
+        sermons.map((g) => g.id),
+        name,
+        bibleId,
+        book && book !== "all" ? Number(book) : null,
+        book && book !== "all" ? passage.trim() || null : null,
+      );
+      await refreshLists();
+      setOpenDialog(false);
+      await openProject(made.id, { search: true });
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={openDialog} onOpenChange={start}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" disabled={sermons.length === 0} title="An audio Bible from the sermons shown">
+          <BookPlus /> New audio Bible
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New audio Bible from these sermons</DialogTitle>
+          <DialogDescription>
+            From the {sermons.length.toLocaleString()} sermon{sermons.length === 1 ? "" : "s"} the readings shown are of
+            {filter.speakers?.length ? ` (${filter.speakers.join(", ")})` : ""}: their transcripts, audio, and titles. It's
+            searched as soon as it's made, then you choose the readings.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="nname">Name</Label>
+            <Input id="nname" placeholder="Named after what it's of, if left empty" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Translation</Label>
+              <Select value={bibleId} onValueChange={setBibleId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Choose a translation" />
+                </SelectTrigger>
+                <SelectContent>
+                  {translations.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name} {b.abbreviation && `(${b.abbreviation})`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Book</Label>
+              <Select value={book} onValueChange={setBook} disabled={books.length === 0}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Choose a book" />
+                </SelectTrigger>
+                <SelectContent>
+                  {books.map((b) => (
+                    <SelectItem key={b.id} value={String(b.id)}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="all">The whole Bible</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {book && book !== "all" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="npassage">Verses (optional)</Label>
+              <Input id="npassage" placeholder="All of the book, or some: 2:14-17, 7:24-8:2" value={passage} onChange={(e) => setPassage(e.target.value)} />
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button disabled={!bibleId || !book || busy} onClick={create}>
+            {busy && <Loader2 className="animate-spin" />} Make it and search
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 /** Every verse read in the project's sermons, by sermon or by verse */
@@ -406,9 +544,14 @@ export function ReadingsPanel() {
               {overview.translations.map(([t, n]) => `${t} ${n.toLocaleString()}`).join(" · ")} (the translation each fits best)
             </span>
           )}
+          {overview && (
+            <span className="ml-auto">
+              <NewProjectFrom project={project} overview={overview} filter={filter} />
+            </span>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="outline" className="ml-auto" disabled={!overview}>
+              <Button size="sm" variant="outline" className={cn(!overview && "ml-auto")} disabled={!overview}>
                 <Download /> Export
               </Button>
             </DropdownMenuTrigger>

@@ -81,6 +81,11 @@ impl Names {
         Names { translations, books }
     }
 
+    /// These names, with translations' abbreviations given anew
+    pub fn with_translations(self, translations: std::collections::HashMap<String, String>) -> Self {
+        Names { translations, ..self }
+    }
+
     /// A translation's abbreviation (its id, if it isn't known)
     pub fn translation(&self, id: &str) -> String {
         self.translations.get(id).cloned().unwrap_or_else(|| id.to_string())

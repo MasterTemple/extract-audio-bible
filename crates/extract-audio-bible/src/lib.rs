@@ -13,6 +13,7 @@ mod e2e_test;
 pub mod error;
 pub mod export;
 pub mod files;
+pub mod hls;
 pub mod matcher;
 pub mod project;
 pub mod readings;
@@ -33,8 +34,8 @@ pub use export::{
 pub use files::{Disk, Files, Memory};
 pub use matcher::{Match, MatchKind, Run};
 pub use project::{
-    Added, ExportMode, FileMetadata, Keyed, Leveling, MatchSet, Metadata, Part, Project, ProjectChanges, ProjectKind,
-    Selection, Settings, Source,
+    Added, ExportMode, FileMetadata, Keyed, Leveling, MatchSet, Metadata, Part, Passage, Project, ProjectChanges,
+    ProjectKind, Selection, Settings, Source, parse_reference,
 };
 pub use readings::{ReadingRow, reading_rows};
 pub use said::{FindOptions, Said, find_in, search_transcripts};

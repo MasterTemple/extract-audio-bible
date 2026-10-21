@@ -53,6 +53,15 @@ export function SourcesPanel() {
     return p ? [valuesOf(p, "speaker"), valuesOf(p, "series")] : [[], []];
   }, [sources, files]);
 
+  // Searched as soon as it's shown, when it was just made from another project's sermons
+  const analyzeNow = useRef<() => Promise<void>>(async () => undefined);
+  const searchOnOpen = useApp((s) => s.searchOnOpen);
+  useEffect(() => {
+    if (!searchOnOpen) return;
+    useApp.setState({ searchOnOpen: false });
+    void analyzeNow.current();
+  }, [searchOnOpen]);
+
   if (!project) return null;
 
   const add = async (directory: boolean) => {
@@ -89,7 +98,7 @@ export function SourcesPanel() {
     }
   };
 
-  const analyze = async () => {
+  const analyze = (analyzeNow.current = async () => {
     await flush();
     setProgress({ done: 0, total: project.sources.length, message: "Starting" });
     try {
@@ -106,7 +115,7 @@ export function SourcesPanel() {
     } finally {
       setProgress(null);
     }
-  };
+  });
 
   const remove = (id: string) => {
     const used = Object.values(project.selections).filter((s) => s.sourceId === id).length;

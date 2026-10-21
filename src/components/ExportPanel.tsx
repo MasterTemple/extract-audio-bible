@@ -15,10 +15,10 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { api, errorMessage, type BookOutline, type ExportedFile, type Metadata, type Progress as ProgressEvent, type Settings } from "@/lib/api";
 import { useApp } from "@/lib/store";
-import { bookName, fileName, formatTime, verseKey, versesNeeded } from "@/lib/refs";
+import { bookName, fileName, formatTime, projectReference, verseKey, versesNeeded } from "@/lib/refs";
 
 const PLACEHOLDERS =
-  "{book} {osis} {bookNumber} {bookNumber2} {chapter} {chapter2} {chapter3} {chapters} {verse} {verse2} {verse3} {verses} {translation} {abbreviation}";
+  "{passage} {book} {osis} {bookNumber} {bookNumber2} {chapter} {chapter2} {chapter3} {chapters} {verse} {verse2} {verse3} {verses} {translation} {abbreviation}";
 
 /** Where a preview is filled in from: a chapter of the project, and a verse of it */
 interface Sample {
@@ -27,6 +27,8 @@ interface Sample {
   verse: number;
   translation: string;
   abbreviation: string;
+  /** The project's passage ("2 Corinthians 2:14-17"), if it has one */
+  passage: string | null;
 }
 
 /** A template filled in as the export fills it (no verse for a chapter's file) */
@@ -47,6 +49,7 @@ function fill(template: string, s: Sample, verse: number | null) {
     verses: String(s.book.chapters[s.chapter - 1] ?? 0),
     translation: s.translation,
     abbreviation: s.abbreviation,
+    passage: s.passage ?? `${s.book.name} ${s.chapter}`,
   };
   return template.replace(/\{(\w+)\}/g, (all, key: string) => values[key] ?? all);
 }
@@ -95,7 +98,7 @@ export function ExportPanel() {
     const out: { book: number; chapter: number; chosen: number; total: number }[] = [];
     for (const b of outline.filter((x) => project.book === null || x.id === project.book)) {
       for (let c = 1; c <= b.chapters.length; c++) {
-        const needed = versesNeeded(b, c);
+        const needed = versesNeeded(b, c, project);
         const chosen = needed.filter((v) => project.selections[verseKey(b.id, c, v)]).length;
         if (chosen === 0) continue;
         if (project.metadata.onlyComplete && chosen < needed.length) continue;
@@ -122,9 +125,10 @@ export function ExportPanel() {
         book: sampleBook,
         chapter: sampleChapter,
         verse:
-          versesNeeded(sampleBook, sampleChapter).find((v) => project.selections[verseKey(sampleBook.id, sampleChapter, v)]) ?? 1,
+          versesNeeded(sampleBook, sampleChapter, project).find((v) => project.selections[verseKey(sampleBook.id, sampleChapter, v)]) ?? 1,
         translation: bible?.name ?? "",
         abbreviation: bible?.abbreviation ?? "",
+        passage: project.passage ? projectReference(project, outline) : null,
       }
     : null;
   /** How a field previews: a tag of a chapter's file (or a verse's), or a file's path */
@@ -360,14 +364,20 @@ export function ExportPanel() {
               <div className="sm:col-span-2">
                 <Field
                   label="Files to write"
-                  hint={verseFiles ? "Verse files go in a folder per chapter (John 3), each with only its own silence before and after." : undefined}
+                  hint={
+                    verseFiles
+                      ? project.passage
+                        ? "Verse files go in a folder for the passage, an album numbered in its order, each with only its own silence before and after."
+                        : "Verse files go in a folder per chapter (John 3), each with only its own silence before and after."
+                      : undefined
+                  }
                 >
                   <Select value={meta.exportMode} onValueChange={(v) => setMeta({ exportMode: v as Metadata["exportMode"] })}>
                     <SelectTrigger className="w-64">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="chapter">A file per chapter</SelectItem>
+                      <SelectItem value="chapter">{project.passage ? "One file for the passage" : "A file per chapter"}</SelectItem>
                       <SelectItem value="verse">A file per verse</SelectItem>
                       <SelectItem value="both">Both</SelectItem>
                     </SelectContent>
@@ -375,7 +385,7 @@ export function ExportPanel() {
                 </Field>
               </div>
               {chapterFiles &&
-                text("filenameTemplate", "Chapter file name", "{bookNumber2}_{osis}_{chapter3}", undefined, "file")}
+                text("filenameTemplate", project.passage ? "Passage file name" : "Chapter file name", "{bookNumber2}_{osis}_{chapter3}", undefined, "file")}
               {verseFiles && (
                 <>
                   {text(

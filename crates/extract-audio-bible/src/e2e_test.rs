@@ -119,6 +119,7 @@ fn export_e2e() {
         scope: Default::default(),
         bible_id: "kjv".into(),
         book: Some(43),
+        passage: None,
         created_at: 0,
         updated_at: 0,
         sources: vec![Source {

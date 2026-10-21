@@ -2,7 +2,7 @@
 
 A desktop app (Tauri 2, Rust and React/TypeScript with shadcn/ui) that builds an audio Bible from the Scripture readings in your sermons. A project usually covers one book, the one a preacher is preaching through, and can cover the whole Bible.
 
-1. **Projects**: each one has a translation and a book (or the whole Bible). Only that book is searched for in the sermons.
+1. **Projects**: each one has a translation and a book (or the whole Bible), or some of a book's verses (2 Corinthians 2:14-17), exported as one file and an album of its verses. Only that book is searched for in the sermons. A project can be made from the sermons an every-verse project's readings show (a speaker's, say).
 2. **Translations**: import the text the sermons read from. USFM, USX, OSIS, ThML and GBF are read with `logoxide-text` (book names and numbers come from `topos-bible`). Your own text also works as JSON, CSV/TSV (`book, chapter, verse, text`), or plain lines like `John 3:16 For God so loved…`.
 3. **Sermons**: add audio files with their WhisperX JSON (or Let's Church transcript), or a whole folder. Files are paired by name (`sermon.mp3` goes with `sermon.json`), and transcripts may be gzipped (`sermon.json.gz`).
 4. **Search**: every verse is looked for in every transcript. Results are *exact*, *close* (a word changed, added or skipped) or *partial*, and must be at least as accurate as the project's minimum accuracy (85% by default). Verses read one after another are joined into runs.
@@ -67,5 +67,9 @@ meet so the reading plays back without a break.
 
 Transcripts are WhisperX JSON or Let's Church transcripts (`paragraphs`); segments or paragraphs
 without word times have their words spread evenly over their time.
+
+A sermon's audio can be a file or a URL (downloaded once, when it's first needed), or an HLS stream
+(`.m3u8`, as Let's Church serves it), read a stretch at a time: a reading needs only the few
+segments it's in.
 
 MP3s are encoded in pure Rust (`rusty_mp3`), so export works in WebAssembly too.

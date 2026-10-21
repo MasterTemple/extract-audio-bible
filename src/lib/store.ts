@@ -54,7 +54,10 @@ interface AppState extends Indexed {
 
   setTab: (tab: Tab) => void;
   refreshLists: () => Promise<void>;
-  openProject: (id: string) => Promise<void>;
+  /** Opens a project; with `search`, on its Sermons tab, searching them at once */
+  openProject: (id: string, options?: { search?: boolean }) => Promise<void>;
+  /** Whether the Sermons tab is to search the sermons as soon as it's shown */
+  searchOnOpen: boolean;
   closeProject: () => void;
   /** Sets the project as the backend changed it (adding or searching sermons), as a step to undo */
   setProject: (project: Project, label: string) => void;
@@ -296,7 +299,9 @@ export const useApp = create<AppState>((set, get) => {
       set({ bibles, projects });
     },
 
-    openProject: async (id) => {
+    searchOnOpen: false,
+
+    openProject: async (id, options) => {
       await get().flush();
       const project = await api.getProject(id);
       saved = project;
@@ -328,9 +333,11 @@ export const useApp = create<AppState>((set, get) => {
         ...emptyIndex(),
         bookText: {},
         book: first?.id ?? null,
-        chapter: first ? 1 : null,
+        // A passage opens at its first chapter
+        chapter: first ? (project.passage && first.id === project.book ? project.passage.startChapter : 1) : null,
         verse: null,
-        tab: project.sources.length === 0 ? "sources" : project.kind === "readings" ? "readings" : "verses",
+        tab: project.sources.length === 0 || options?.search ? "sources" : project.kind === "readings" ? "readings" : "verses",
+        searchOnOpen: !!options?.search,
         past: [],
         future: [],
       });
@@ -340,7 +347,7 @@ export const useApp = create<AppState>((set, get) => {
       readFor = sermonsKey(project);
       if (first) {
         void get().loadBook(first.id);
-        void get().loadChapter(first.id, 1);
+        void get().loadChapter(first.id, get().chapter ?? 1);
       }
     },
 

@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { api, type Match, type Project, type Selection, type VerseTime } from "@/lib/api";
 import { partsOf, useApp } from "@/lib/store";
 import { play, stop, usePlayer } from "@/lib/player";
-import { audioPathOf, bookName, chapterStatus, verseKey, versesNeeded, sourceColor, sourceTitle, runLabel } from "@/lib/refs";
+import { audioPathOf, bookName, chapterStatus, passageHasChapter, verseKey, versesNeeded, sourceColor, sourceTitle, runLabel } from "@/lib/refs";
 
 /** Whether `b` carries on straight from `a` in the same sermon (no cut between them) */
 export function continues(a: Selection | undefined, b: Selection | undefined): boolean {
@@ -90,7 +90,7 @@ export function ChapterView() {
   const b = outline.find((x) => x.id === book);
   const text = book ? bookText[book]?.[chapter! - 1] : undefined;
 
-  const verses = useMemo(() => (b && chapter ? versesNeeded(b, chapter) : []), [b, chapter]);
+  const verses = useMemo(() => (b && chapter ? versesNeeded(b, chapter, project) : []), [b, chapter, project]);
   const playId = `chapter:${book}.${chapter}`;
   // The verse being heard while the chapter plays
   const [timeline, setTimeline] = useState<{ id: string; times: VerseTime[] } | null>(null);
@@ -122,6 +122,7 @@ export function ChapterView() {
       c = 1;
     }
     if (project.book !== null && target.id !== project.book) return;
+    if (!passageHasChapter(project, target.id, c)) return;
     go(target.id, c);
   };
 

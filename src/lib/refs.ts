@@ -1,4 +1,4 @@
-import type { BookOutline, FileMetadata, Project, Run, Source } from "./api";
+import type { BookOutline, FileMetadata, Passage, Project, Run, Source } from "./api";
 
 export const verseKey = (book: number, chapter: number, verse: number) => `${book}.${chapter}.${verse}`;
 
@@ -83,10 +83,37 @@ export function sourceTitle(project: Project, source: Source | undefined): strin
 }
 
 /** Verses of a chapter that need audio (bridged verses have no text of their own) */
-export function versesNeeded(outline: BookOutline, chapter: number): number[] {
+export function versesNeeded(outline: BookOutline, chapter: number, project?: Project | null): number[] {
   const count = outline.chapters[chapter - 1] ?? 0;
   const empty = new Set(outline.empty[chapter - 1] ?? []);
-  return Array.from({ length: count }, (_, i) => i + 1).filter((v) => !empty.has(v));
+  return Array.from({ length: count }, (_, i) => i + 1).filter((v) => !empty.has(v) && inPassage(project, outline.id, chapter, v));
+}
+
+/** Whether a verse is in the project's passage (any verse is, when it has none, or for another book) */
+export function inPassage(project: Project | null | undefined, book: number, chapter: number, verse: number): boolean {
+  const p = project?.passage;
+  if (!p || project?.book !== book) return true;
+  const at = chapter * 1000 + verse;
+  return at >= p.startChapter * 1000 + p.startVerse && at <= p.endChapter * 1000 + p.endVerse;
+}
+
+/** Whether the project's passage has any of a chapter's verses (any chapter does, when it has none) */
+export function passageHasChapter(project: Project | null | undefined, book: number, chapter: number): boolean {
+  const p = project?.passage;
+  return !p || project?.book !== book || (chapter >= p.startChapter && chapter <= p.endChapter);
+}
+
+/** A passage's verses: "2:14-17", "7:24-8:2", or "3:16" */
+export function passageLabel(p: Passage): string {
+  if (p.startChapter !== p.endChapter) return `${p.startChapter}:${p.startVerse}-${p.endChapter}:${p.endVerse}`;
+  return p.startVerse !== p.endVerse ? `${p.startChapter}:${p.startVerse}-${p.endVerse}` : `${p.startChapter}:${p.startVerse}`;
+}
+
+/** What a project is of: "2 Corinthians 2:14-17", "1 Thessalonians", or null for the whole Bible */
+export function projectReference(project: Project, outline: BookOutline[]): string | null {
+  if (project.book === null) return null;
+  const book = outline.find((b) => b.id === project.book)?.name ?? "Book";
+  return project.passage ? `${book} ${passageLabel(project.passage)}` : book;
 }
 
 export interface ChapterStatus {
@@ -105,7 +132,7 @@ export function chapterStatus(
   verseCounts: Map<string, number>,
 ): ChapterStatus {
   const status: ChapterStatus = { total: 0, selected: 0, withMatches: 0, needsTrim: 0, matches: 0 };
-  for (const v of versesNeeded(outline, chapter)) {
+  for (const v of versesNeeded(outline, chapter, project)) {
     const key = verseKey(outline.id, chapter, v);
     status.total++;
     const sel = project.selections[key];

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FileText, FolderOpen, Loader2, Trash2, Upload } from "lucide-react";
+import { FileText, FolderOpen, Loader2, Pencil, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api, errorMessage } from "@/lib/api";
+import { api, errorMessage, type BibleSummary } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { fileName } from "@/lib/refs";
 
@@ -129,11 +129,77 @@ function ImportBibleDialog() {
   );
 }
 
+/** Renaming a translation: its name, abbreviation, and language, wherever it's shown */
+function EditBibleDialog({ bible }: { bible: BibleSummary }) {
+  const refreshLists = useApp((s) => s.refreshLists);
+  const [openDialog, setOpenDialog] = useState(false);
+  const [name, setName] = useState(bible.name);
+  const [abbreviation, setAbbreviation] = useState(bible.abbreviation);
+  const [language, setLanguage] = useState(bible.language ?? "");
+  const [busy, setBusy] = useState(false);
+
+  const start = (open: boolean) => {
+    if (open) {
+      setName(bible.name);
+      setAbbreviation(bible.abbreviation);
+      setLanguage(bible.language ?? "");
+    }
+    setOpenDialog(open);
+  };
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.renameBible(bible.id, name, abbreviation, language || null);
+      await refreshLists();
+      setOpenDialog(false);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={openDialog} onOpenChange={start}>
+      <DialogTrigger asChild>
+        <Button size="icon-sm" variant="ghost" title="Rename">
+          <Pencil />
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rename {bible.name}</DialogTitle>
+          <DialogDescription>Its name and abbreviation are what projects, readings, and exported files call it.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-[1fr_8rem_8rem]">
+          <div className="space-y-1.5">
+            <Label htmlFor="ename">Name</Label>
+            <Input id="ename" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="eabbr">Abbreviation</Label>
+            <Input id="eabbr" value={abbreviation} onChange={(e) => setAbbreviation(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="elang">Language</Label>
+            <Input id="elang" placeholder="en" value={language} onChange={(e) => setLanguage(e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button disabled={!name.trim() || busy} onClick={save}>
+            {busy && <Loader2 className="animate-spin" />} Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function BibleList() {
   const { bibles, projects, refreshLists } = useApp();
 
   const remove = async (id: string, label: string) => {
-    const using = projects.filter((p) => p.bibleId === id).length;
+    const using = projects.filter((p) => p.bibleId === id || p.translations.includes(id)).length;
     if (using > 0) {
       toast.error(`${label} is used by ${using} project${using > 1 ? "s" : ""}`);
       return;
@@ -168,7 +234,8 @@ export function BibleList() {
             <Badge variant="secondary" className="uppercase">
               {b.format}
             </Badge>
-            <Button size="icon-sm" variant="ghost" onClick={() => remove(b.id, b.name)}>
+            <EditBibleDialog bible={b} />
+            <Button size="icon-sm" variant="ghost" title="Delete" onClick={() => remove(b.id, b.name)}>
               <Trash2 />
             </Button>
           </div>

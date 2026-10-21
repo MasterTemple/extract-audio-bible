@@ -100,7 +100,7 @@ extract-audio-bible export 1thess -o audio-bible/
 |---|---|
 | `import PATHS… -o FILE` | Reads a Bible's text and saves it as JSON, noting on stderr what it left out (files not read, books passed over; `warnings` with `--json`) |
 | `find --bible BIBLE [--translation BIBLE]… [--testament T] [--genre G]… [--book B]… [--exclude-…] [--csv] TRANSCRIPTS…` | The verses read in transcripts, with their times and translations (no project) |
-| `init DIR --bible BIBLE [--book B] [--name N]` | Starts a project for a book (or, with no `--book`, the whole Bible) |
+| `init DIR --bible BIBLE [--book B] [--name N]` | Starts a project for a book (or, with no `--book`, the whole Bible), or some of its verses (`--book "2 Cor 2:14-17"`, or across chapters, `"Romans 7:24-8:2"`): a passage is exported as one file, and its verses as an album of their own |
 | `init DIR --bible BIBLE --readings [--translation BIBLE]… [--testament T] [--genre G]… [--book B]… [--exclude-…] [--name N]` | Starts a project finding every verse read, in these translations and books (`--translation` alone means `--readings`) |
 | `add DIR PATHS…` | Adds sermons from files or folders: audio files with the transcript of the same name, and transcripts alone (to search, or with `audioUrl` set, to download audio for); JSON that isn't a transcript is skipped |
 | `sermons DIR [--info FILE]` | Lists the sermons with their ids, titles, passages, speakers, and series; `--info` first reads them by id from JSON (`{"<id>": {"title": "…", "passage": "…", "speaker": "…", "series": "…"}}`), field by field. A sermon's id is the one its transcript gives (a Let's Church media id) once searched, or its file's name |

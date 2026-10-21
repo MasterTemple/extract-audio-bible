@@ -124,6 +124,19 @@ async fn delete_bible(state: State<'_, AppState>, id: String) -> Result<()> {
     .await
 }
 
+/// Renames a translation (its name, abbreviation, and language), wherever it's kept and shown
+#[tauri::command]
+async fn rename_bible(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    abbreviation: String,
+    language: Option<String>,
+) -> Result<BibleSummary> {
+    let store = state.store.clone();
+    blocking(move || store.rename_bible(&id, &name, &abbreviation, language)).await
+}
+
 #[tauri::command]
 async fn bible_outline(state: State<'_, AppState>, id: String) -> Result<Vec<BookOutline>> {
     let store = state.store.clone();
@@ -148,21 +161,37 @@ async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectSummary>
     blocking(move || store.projects()).await
 }
 
+/// An audio Bible of a book, some of its verses (`passage`, like "2:14-17"), or the whole Bible
 #[tauri::command]
 async fn create_project(
     state: State<'_, AppState>,
     name: String,
     bible_id: String,
     book: Option<u8>,
+    passage: Option<String>,
 ) -> Result<Project> {
     let store = state.store.clone();
     blocking(move || {
         let bible = store.bible(&bible_id)?;
-        let project = Project::new(new_id(), &name, &bible, book);
+        let project = audio_bible(new_id(), &name, &bible, book, passage.as_deref())?;
         store.save_project(&project)?;
         Ok(project)
     })
     .await
+}
+
+/// An audio Bible of a book, some of its verses (`passage`, like "2:14-17", if given), or the whole Bible
+fn audio_bible(id: String, name: &str, bible: &Bible, book: Option<u8>, passage: Option<&str>) -> Result<Project> {
+    let passage = passage.map(str::trim).filter(|p| !p.is_empty());
+    match (book, passage) {
+        (Some(book), Some(passage)) => {
+            let of = bible.book(book).ok_or_else(|| AppError::msg("No such book"))?;
+            let passage = extract_audio_bible::Passage::parse(passage, of)?;
+            Ok(Project::passage(id, name, bible, book, passage))
+        }
+        (None, Some(_)) => Err(AppError::msg("Choose the book the verses are of")),
+        (book, None) => Ok(Project::new(id, name, bible, book)),
+    }
 }
 
 /// A project finding every verse read in its sermons, in any of some translations, in some books
@@ -180,6 +209,30 @@ async fn create_readings_project(
         let project = Project::readings(new_id(), &name, &bibles.iter().collect::<Vec<_>>(), scope)?;
         store.save_project(&project)?;
         Ok(project)
+    })
+    .await
+}
+
+/**
+An audio Bible of one translation and book (some of its verses, or the whole Bible) from some of another project's
+sermons (those a filter of its readings kept, say): their transcripts and audio, what's known of
+them, and where audio is downloaded from, ready to search
+*/
+#[tauri::command]
+async fn create_project_from(
+    state: State<'_, AppState>,
+    project_id: String,
+    source_ids: Vec<String>,
+    name: String,
+    bible_id: String,
+    book: Option<u8>,
+    passage: Option<String>,
+) -> Result<Project> {
+    let store = state.store.clone();
+    blocking(move || {
+        let bible = store.bible(&bible_id)?;
+        let project = audio_bible(new_id(), &name, &bible, book, passage.as_deref())?;
+        store.project_from(&project_id, &source_ids, project)
     })
     .await
 }
@@ -676,6 +729,18 @@ async fn audio_peaks(state: State<'_, AppState>, audio_path: String, start: f64,
     let cache = state.store.cache_dir().join("peaks");
     let files = state.store.audio_files();
     blocking(move || {
+        // A stream's waveform is of the stretch shown alone (all of it would be every segment)
+        if extract_audio_bible::hls::is_playlist(&audio_path) {
+            let start = start.max(0.0);
+            let duration = extract_audio_bible::hls::read(&files, &audio_path)?.duration();
+            let pcm = audio::decode_range(&files, &audio_path, start, end.min(duration))?;
+            return Ok(Peaks {
+                start,
+                per_second: audio::PEAKS_PER_SECOND,
+                peaks: audio::peaks_of(&pcm),
+                duration,
+            });
+        }
         let (all, duration) = cached_peaks(&files.local(&audio_path)?, &cache)?;
         let per = audio::PEAKS_PER_SECOND as f64;
         let s = ((start.max(0.0)) * per) as usize;
@@ -909,6 +974,7 @@ pub fn run() {
             list_bibles,
             import_bible,
             delete_bible,
+            rename_bible,
             bible_outline,
             book_text,
             list_projects,
@@ -928,6 +994,7 @@ pub fn run() {
             transcript_words,
             transcript,
             create_readings_project,
+            create_project_from,
             genres,
             scope_books,
             search_transcripts,

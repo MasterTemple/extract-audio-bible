@@ -20,6 +20,8 @@ export function Home() {
   const chosenBible = bibleId || bibles[0]?.id || "";
   const [books, setBooks] = useState<BookOutline[]>([]);
   const [book, setBook] = useState<string>("");
+  // Only some of the book's verses ("2:14-17"), if given
+  const [passage, setPassage] = useState("");
   const [kind, setKind] = useState<ProjectKind>("audioBible");
   // For finding every verse read: the translations (every one, until chosen) and books
   const [picked, setPicked] = useState<string[] | null>(null);
@@ -37,7 +39,7 @@ export function Home() {
       const project =
         kind === "readings"
           ? await api.createReadingsProject(name, translations, scope)
-          : await api.createProject(name, chosenBible, book && book !== "all" ? Number(book) : null);
+          : await api.createProject(name, chosenBible, book && book !== "all" ? Number(book) : null, passage.trim() || null);
       await openProject(project.id);
     } catch (e) {
       toast.error(errorMessage(e));
@@ -213,6 +215,15 @@ export function Home() {
                   Only this book is searched for in the sermons. You can change it later.
                 </p>
               </div>
+              {book && book !== "all" && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="ppassage">Verses (optional)</Label>
+                  <Input id="ppassage" placeholder="All of the book, or some: 2:14-17, 7:24-8:2" value={passage} onChange={(e) => setPassage(e.target.value)} />
+                  <p className="text-xs text-muted-foreground">
+                    Only these verses: exported as one file for the passage, or its verses as an album of their own.
+                  </p>
+                </div>
+              )}
               <Button disabled={!chosenBible || !book} onClick={create}>
                 <Plus /> Create project
               </Button>

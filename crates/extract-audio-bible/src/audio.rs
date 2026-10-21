@@ -113,8 +113,12 @@ fn decode_from(opened: &mut Opened, mut each: impl FnMut(f64, &[f32]) -> bool) -
     Ok(())
 }
 
-/// The audio from `start` to `end` seconds, mono, at the file's own rate
+/// The audio from `start` to `end` seconds, mono, at the file's own rate (of an HLS stream, read
+/// from the segments it's in)
 pub fn decode_range(files: &dyn Files, path: &str, start: f64, end: f64) -> Result<Pcm> {
+    if crate::hls::is_playlist(path) {
+        return crate::hls::decode_range(files, path, start, end);
+    }
     let mut opened = open(files, path)?;
     let rate = opened.rate;
     let start = start.max(0.0);
@@ -156,6 +160,15 @@ pub fn decode_range(files: &dyn Files, path: &str, start: f64, end: f64) -> Resu
 
 /// Peaks per second of audio drawn
 pub const PEAKS_PER_SECOND: u32 = 50;
+
+/// Loudest sample of every 1/50 s of some audio
+pub fn peaks_of(pcm: &Pcm) -> Vec<f32> {
+    let per = (pcm.rate / PEAKS_PER_SECOND).max(1) as usize;
+    pcm.samples
+        .chunks(per)
+        .map(|c| c.iter().fold(0f32, |m, s| m.max(s.abs())))
+        .collect()
+}
 
 /// Loudest sample of every 1/50 s of the whole file, and its length in seconds (it decodes the
 /// whole file: about two seconds for an hour of audio)
