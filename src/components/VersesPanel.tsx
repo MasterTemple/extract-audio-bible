@@ -43,7 +43,7 @@ function ChapterCell({ status, n, active, onClick }: { status: ChapterStatus; n:
 }
 
 function Navigator() {
-  const { project, outline, matchesByVerse, book, chapter, go } = useApp();
+  const { project, outline, verseCounts, book, chapter, go } = useApp();
   const [filter, setFilter] = useState("");
   const [onlyMatched, setOnlyMatched] = useState(true);
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set(book ? [book] : []));
@@ -52,7 +52,7 @@ function Navigator() {
     const map = new Map<number, { chapters: ChapterStatus[]; total: ChapterStatus }>();
     if (!project) return map;
     for (const b of outline) {
-      const chapters = b.chapters.map((_, i) => chapterStatus(project, b, i + 1, matchesByVerse));
+      const chapters = b.chapters.map((_, i) => chapterStatus(project, b, i + 1, verseCounts));
       const total = chapters.reduce(
         (a, s) => ({
           total: a.total + s.total,
@@ -66,7 +66,7 @@ function Navigator() {
       map.set(b.id, { chapters, total });
     }
     return map;
-  }, [project, outline, matchesByVerse]);
+  }, [project, outline, verseCounts]);
 
   const focus = project?.book ?? null;
   const books = outline.filter((b) => {

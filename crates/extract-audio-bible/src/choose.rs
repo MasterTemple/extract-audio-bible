@@ -274,6 +274,7 @@ mod tests {
             translation: "b".into(),
             also_in: vec![],
             also_at: vec![],
+            said: String::new(),
         }
     }
 

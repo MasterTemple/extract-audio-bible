@@ -4,12 +4,12 @@ A desktop app (Tauri 2, Rust and React/TypeScript with shadcn/ui) that builds an
 
 1. **Projects**: each one has a translation and a book (or the whole Bible). Only that book is searched for in the sermons.
 2. **Translations**: import the text the sermons read from. USFM, USX, OSIS, ThML and GBF are read with `logoxide-text` (book names and numbers come from `topos-bible`). Your own text also works as JSON, CSV/TSV (`book, chapter, verse, text`), or plain lines like `John 3:16 For God so loved…`.
-3. **Sermons**: add audio files with their WhisperX JSON (or Let's Church transcript), or a whole folder. Files are paired by name (`sermon.mp3` goes with `sermon.json`).
+3. **Sermons**: add audio files with their WhisperX JSON (or Let's Church transcript), or a whole folder. Files are paired by name (`sermon.mp3` goes with `sermon.json`), and transcripts may be gzipped (`sermon.json.gz`).
 4. **Search**: every verse is looked for in every transcript. Results are *exact*, *close* (a word changed, added or skipped) or *partial*, and must be at least as accurate as the project's minimum accuracy (85% by default). Verses read one after another are joined into runs.
 5. **Verses**: the navigator shows each chapter's status (complete, partly chosen, needs trimming, has readings). For each verse you can listen to every reading with its context, see the transcript around it, choose a reading (or a whole run at once), trim it on the waveform, add silence before or after it, change its volume, or mark it as still needing a trim.
 6. **Export**: tagged MP3s, one per chapter, one per verse, or both (ID3v2.4: title and album templates, artist, narrator, genre, year, copyright, cover art and more). Options include a gap between all verses, fades at cuts, an overall volume, and leveling. Leveling can bring each reading to a target level, or normalize the whole export with one change so readings keep their levels relative to each other.
 
-Everything is saved as JSON in the app's data folder (`~/.local/share/extract-audio-bible` on Linux).
+Everything is saved in the app's data folder (`~/.local/share/extract-audio-bible` on Linux), or a project's own folder (**Open folder**): Bibles and projects as JSON, and each project's readings in SQLite (`readings.sqlite`), which the app reads a chapter, a sermon, or a page at a time, and which `sqlite3`, Python, or DuckDB can read too.
 
 ## Without the app
 

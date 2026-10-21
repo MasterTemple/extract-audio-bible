@@ -91,7 +91,7 @@ const Paragraph = memo(function Paragraph({ from, words, marks, now, target, fou
 
 /** A sermon's whole transcript: its readings marked, and played from any word */
 export function TranscriptView() {
-  const { project, reading, openTranscript, matchSet, outline, go } = useApp();
+  const { project, reading, openTranscript, summary, outline, go } = useApp();
   const player = usePlayer();
   const source = project?.sources.find((s) => s.id === reading?.sourceId);
   const [data, setData] = useState<{ path: string; full: Full } | null>(null);
@@ -113,19 +113,35 @@ export function TranscriptView() {
   }, [path]);
   const full = data?.path === path ? data?.full : undefined;
 
+  // This sermon's readings, read again after a search
+  const projectId = project?.id;
+  const openId = source?.id;
+  const [readings, setReadings] = useState<{ sourceId: string; matches: Match[] } | null>(null);
+  useEffect(() => {
+    if (!projectId || !openId) return;
+    let live = true;
+    api.sermonMatches(projectId, openId).then(
+      (set) => live && setReadings({ sourceId: openId, matches: set.matches }),
+      (e) => live && setError(errorMessage(e)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [projectId, openId, summary]);
+
   // The readings found in this sermon, by word
   const marks = useMemo(() => {
     const out = new Map<number, Mark>();
     if (!project || !source) return out;
     const chosen = new Set(Object.values(project.selections).flatMap((s) => partsOf(s).map((p) => p.matchId)));
-    const found = matchSet.matches.filter((m) => m.sourceId === source.id);
+    const these = readings?.sourceId === source.id ? [...readings.matches] : [];
     // Chosen ones last, so they win where readings overlap
-    found.sort((a, b) => Number(chosen.has(a.id)) - Number(chosen.has(b.id)));
-    for (const m of found) {
+    these.sort((a, b) => Number(chosen.has(a.id)) - Number(chosen.has(b.id)));
+    for (const m of these) {
       for (let i = m.wordStart; i <= m.wordEnd; i++) out.set(i, { match: m, chosen: chosen.has(m.id), first: i === m.wordStart });
     }
     return out;
-  }, [project, source, matchSet]);
+  }, [project, source, readings]);
 
   const paragraphs = useMemo(() => {
     if (!full) return [];
@@ -149,7 +165,7 @@ export function TranscriptView() {
     }
     let live = true;
     const timer = setTimeout(() => {
-      api.searchTranscripts(p, query, [sourceId], 5000).then(
+      api.searchTranscripts(p.id, query, [sourceId], 5000).then(
         (r) => {
           if (!live) return;
           setHits(r.found);

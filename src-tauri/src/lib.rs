@@ -14,9 +14,7 @@ use std::{
 use extract_audio_bible::{
     Bible, ChapterRef, ClipOptions, Disk, ExportedFile, MatchSet, Project, Transcript, Word, audio,
     bible::{BibleSummary, BookOutline},
-    export, matcher,
-    project::now,
-    scripture_quotes,
+    db, export, matcher, scripture_quotes,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State, ipc::Response};
@@ -29,21 +27,23 @@ use crate::{
 /// The Bibles last searched for, ready to search again, by their ids joined with `+`
 type CachedEngine = Arc<Mutex<Option<(String, Arc<scripture_quotes::Engine>)>>>;
 
+/// Transcripts read, by path, kept to read again
+type Transcripts = Arc<Mutex<HashMap<String, Arc<Transcript>>>>;
+
 struct AppState {
     store: Store,
-    transcripts: Mutex<HashMap<String, Arc<Transcript>>>,
+    transcripts: Transcripts,
     engine: CachedEngine,
 }
 
-impl AppState {
-    fn transcript(&self, path: &str) -> Result<Arc<Transcript>> {
-        if let Some(t) = lock(&self.transcripts).get(path) {
-            return Ok(t.clone());
-        }
-        let t = Arc::new(Transcript::open(&Disk, path)?);
-        lock(&self.transcripts).insert(path.to_string(), t.clone());
-        Ok(t)
+/// A transcript, read once and kept (call it off the main thread: the first read is slow)
+fn transcript_of(cache: &Transcripts, path: &str) -> Result<Arc<Transcript>> {
+    if let Some(t) = lock(cache).get(path) {
+        return Ok(t.clone());
     }
+    let t = Arc::new(Transcript::open(&Disk, path)?);
+    lock(cache).insert(path.to_string(), t.clone());
+    Ok(t)
 }
 
 /// A cache's lock, even if a thread panicked holding it: what it holds is whole either way
@@ -141,8 +141,9 @@ async fn book_text(state: State<'_, AppState>, bible_id: String, book: u8) -> Re
 // ---------------------------------------------------------------- Projects
 
 #[tauri::command]
-fn list_projects(state: State<AppState>) -> Result<Vec<ProjectSummary>> {
-    state.store.projects()
+async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectSummary>> {
+    let store = state.store.clone();
+    blocking(move || store.projects()).await
 }
 
 #[tauri::command]
@@ -183,61 +184,169 @@ async fn create_readings_project(
 
 /// topos's genres (groups of books), in order
 #[tauri::command]
-fn genres() -> Vec<extract_audio_bible::Genre> {
-    extract_audio_bible::BookScope::genres()
+async fn genres() -> Result<Vec<extract_audio_bible::Genre>> {
+    blocking(|| Ok(extract_audio_bible::BookScope::genres())).await
 }
 
 /// The books a scope searches, by number, or none for every book (an error if it names a genre
 /// or book topos doesn't know, or leaves nothing)
 #[tauri::command]
-fn scope_books(scope: extract_audio_bible::BookScope) -> Result<Option<Vec<u8>>> {
-    Ok(scope.books()?.map(|books| books.into_iter().collect()))
+async fn scope_books(scope: extract_audio_bible::BookScope) -> Result<Option<Vec<u8>>> {
+    blocking(move || Ok(scope.books()?.map(|books| books.into_iter().collect()))).await
 }
 
-/// Every reading found, as rows, and written to `path` as CSV or JSON if given
+// ---------------------------------------------------------------- Readings, read as they're shown
+
+/**
+How many readings a project has, and of which verses. Readies its readings database first: made
+from the readings it kept as JSON before (which can take a while, once), and its list of sermons
+kept as the project has them
+*/
 #[tauri::command]
-async fn reading_rows(
-    state: State<'_, AppState>,
-    project: Project,
-    path: Option<String>,
-) -> Result<Vec<extract_audio_bible::ReadingRow>> {
+async fn match_summary(state: State<'_, AppState>, project_id: String) -> Result<db::Summary> {
     let store = state.store.clone();
     blocking(move || {
-        let matches = store.matches(&project.id)?;
-        let bibles = project
-            .bibles_searched()
-            .iter()
-            .map(|id| store.bible(id))
-            .collect::<Result<Vec<_>>>()?;
-        let rows = extract_audio_bible::reading_rows(&project, &matches, &bibles.iter().collect::<Vec<_>>(), &Disk);
-        if let Some(path) = path {
-            let text = if path.to_ascii_lowercase().ends_with(".json") {
-                serde_json::to_string_pretty(&rows)?
-            } else {
-                extract_audio_bible::readings::to_csv(&rows)
-            };
-            std::fs::write(&path, text).map_err(|e| file_error(&path, e))?;
+        let project = store.project(&project_id)?;
+        if !store.prepare_readings(&project)? {
+            return Ok(db::Summary::default());
         }
-        Ok(rows)
+        let readings = store
+            .readings(&project_id)?
+            .ok_or_else(|| AppError::msg("No readings"))?;
+        Ok(readings.summary()?)
+    })
+    .await
+}
+
+/// A project's readings database, if it's been searched
+fn readings_of(store: &Store, project_id: &str) -> Result<Option<db::Readings>> {
+    store.readings(project_id)
+}
+
+/// A chapter's readings, best first within each verse, with the runs they're in and those runs'
+/// other readings
+#[tauri::command]
+async fn chapter_matches(state: State<'_, AppState>, project_id: String, book: u8, chapter: u16) -> Result<MatchSet> {
+    let store = state.store.clone();
+    blocking(move || match readings_of(&store, &project_id)? {
+        Some(readings) => Ok(readings.chapter(book, chapter)?),
+        None => Ok(MatchSet::default()),
+    })
+    .await
+}
+
+/// A sermon's readings as said, with its runs
+#[tauri::command]
+async fn sermon_matches(state: State<'_, AppState>, project_id: String, source_id: String) -> Result<MatchSet> {
+    let store = state.store.clone();
+    blocking(move || match readings_of(&store, &project_id)? {
+        Some(readings) => Ok(readings.sermon(&source_id)?),
+        None => Ok(MatchSet::default()),
+    })
+    .await
+}
+
+/// The readings a filter keeps, counted and grouped by sermon and by book and chapter
+#[tauri::command]
+async fn readings_overview(
+    state: State<'_, AppState>,
+    project_id: String,
+    filter: db::RowFilter,
+) -> Result<db::Overview> {
+    let store = state.store.clone();
+    blocking(move || match readings_of(&store, &project_id)? {
+        Some(readings) => Ok(readings.overview(&filter)?),
+        None => Ok(db::Overview::default()),
+    })
+    .await
+}
+
+/// The readings a filter keeps of one group (a sermon, a chapter), as rows
+#[tauri::command]
+async fn readings_rows(
+    state: State<'_, AppState>,
+    project_id: String,
+    filter: db::RowFilter,
+    group: db::Group,
+) -> Result<Vec<extract_audio_bible::ReadingRow>> {
+    let store = state.store.clone();
+    blocking(move || match readings_of(&store, &project_id)? {
+        Some(readings) => Ok(readings.rows(&filter, &group)?),
+        None => Ok(vec![]),
+    })
+    .await
+}
+
+/// Every reading a filter keeps written to `path`: JSON for a `.json` path, else CSV (written as
+/// it's read). Returns how many
+#[tauri::command]
+async fn export_readings(
+    state: State<'_, AppState>,
+    project_id: String,
+    filter: db::RowFilter,
+    path: String,
+) -> Result<usize> {
+    use std::io::Write;
+    let store = state.store.clone();
+    blocking(move || {
+        let readings = readings_of(&store, &project_id)?.ok_or_else(|| AppError::msg("Search the sermons first"))?;
+        let file = std::fs::File::create(&path).map_err(|e| file_error(&path, e))?;
+        let mut out = std::io::BufWriter::new(file);
+        let mut count = 0;
+        if path.to_ascii_lowercase().ends_with(".json") {
+            let rows = readings.rows(&filter, &db::Group::All)?;
+            count = rows.len();
+            serde_json::to_writer_pretty(&mut out, &rows)?;
+        } else {
+            let mut failed = None;
+            out.write_all(extract_audio_bible::readings::CSV_HEADER.as_bytes())?;
+            readings.rows_each(&filter, &db::Group::All, |row| {
+                if failed.is_none()
+                    && let Err(e) = out.write_all(extract_audio_bible::readings::csv_line(&row).as_bytes())
+                {
+                    failed = Some(e);
+                }
+                count += 1;
+            })?;
+            if let Some(e) = failed {
+                return Err(file_error(&path, e));
+            }
+        }
+        out.flush().map_err(|e| file_error(&path, e))?;
+        Ok(count)
     })
     .await
 }
 
 #[tauri::command]
-fn get_project(state: State<AppState>, id: String) -> Result<Project> {
-    state.store.project(&id)
+async fn get_project(state: State<'_, AppState>, id: String) -> Result<Project> {
+    let store = state.store.clone();
+    blocking(move || store.project(&id)).await
+}
+
+/// Saves what's changed in a project since it was last saved (its parts changed, and its chosen
+/// verses and sermon information entry by entry); returns when it was changed
+#[tauri::command]
+async fn save_changes(
+    state: State<'_, AppState>,
+    project_id: String,
+    changes: extract_audio_bible::ProjectChanges,
+) -> Result<u64> {
+    let store = state.store.clone();
+    blocking(move || store.save_changes(&project_id, changes)).await
 }
 
 #[tauri::command]
-fn save_project(state: State<AppState>, mut project: Project) -> Result<u64> {
-    project.updated_at = now();
-    state.store.save_project(&project)?;
-    Ok(project.updated_at)
+async fn delete_project(state: State<'_, AppState>, id: String) -> Result<()> {
+    let store = state.store.clone();
+    blocking(move || store.delete_project(&id)).await
 }
 
+/// Opens a project kept in a folder of its own (as the command line makes them), where it is
 #[tauri::command]
-fn delete_project(state: State<AppState>, id: String) -> Result<()> {
-    state.store.delete_project(&id)
+async fn open_project_folder(state: State<'_, AppState>, path: String) -> Result<Project> {
+    let store = state.store.clone();
+    blocking(move || store.link_project(Path::new(&path))).await
 }
 
 #[derive(Serialize)]
@@ -255,21 +364,25 @@ struct AddedSources {
 /// name (in the same folder first, then anywhere among what was given); a transcript alone is a
 /// sermon too, and JSON that isn't a transcript is skipped
 #[tauri::command]
-fn add_sources(state: State<AppState>, project_id: String, paths: Vec<String>) -> Result<AddedSources> {
-    let mut project = state.store.project(&project_id)?;
-    let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-    let files: Vec<String> = extract_audio_bible::files::gather(&paths)?
-        .into_iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
-    let added = project.add_sources_from(&Disk, &files);
-    state.store.save_project(&project)?;
-    Ok(AddedSources {
-        project,
-        added: added.added,
-        unpaired: added.unpaired,
-        skipped: added.skipped,
+async fn add_sources(state: State<'_, AppState>, project_id: String, paths: Vec<String>) -> Result<AddedSources> {
+    let store = state.store.clone();
+    blocking(move || {
+        let mut project = store.project(&project_id)?;
+        let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+        let files: Vec<String> = extract_audio_bible::files::gather(&paths)?
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let added = project.add_sources_from(&Disk, &files);
+        store.save_project(&project)?;
+        Ok(AddedSources {
+            project,
+            added: added.added,
+            unpaired: added.unpaired,
+            skipped: added.skipped,
+        })
     })
+    .await
 }
 
 #[derive(Clone, Serialize)]
@@ -284,19 +397,27 @@ struct AnalyzeProgress {
 #[serde(rename_all = "camelCase")]
 struct Analyzed {
     project: Project,
-    matches: MatchSet,
+    /// What was found (each chapter's and sermon's readings are read as they're shown)
+    summary: db::Summary,
     errors: Vec<String>,
 }
 
 /// Find every reading of every verse in every sermon
 #[tauri::command]
-async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project: Project) -> Result<Analyzed> {
+async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project_id: String) -> Result<Analyzed> {
     let store = state.store.clone();
     let cached = state.engine.clone();
     blocking(move || {
-        let mut project = project;
+        let mut project = store.project(&project_id)?;
         let total = project.sources.len();
+        // A few times a second at most: thousands of sermons are searched in seconds
+        let last = Mutex::new(None::<std::time::Instant>);
         let emit = |done: usize, message: String| {
+            let mut last = lock(&last);
+            if done < total && last.is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(100)) {
+                return;
+            }
+            *last = Some(std::time::Instant::now());
             let _ = app.emit("analyze-progress", AnalyzeProgress { done, total, message });
         };
         emit(0, "Reading the Bible text".into());
@@ -324,22 +445,21 @@ async fn analyze(app: tauri::AppHandle, state: State<'_, AppState>, project: Pro
             .iter()
             .map(|(label, e)| format!("{label}: {e}"))
             .collect();
-        store.save_matches(&project.id, &analysis.matches)?;
+        emit(total, "Saving what was found".into());
         store.save_project(&project)?;
+        store.save_matches(&project, &analysis.matches)?;
+        let summary = (store.readings(&project.id)?)
+            .map(|r| r.summary())
+            .transpose()?
+            .unwrap_or_default();
         emit(total, "Done".into());
         Ok(Analyzed {
             project,
-            matches: analysis.matches,
+            summary,
             errors,
         })
     })
     .await
-}
-
-#[tauri::command]
-async fn get_matches(state: State<'_, AppState>, project_id: String) -> Result<MatchSet> {
-    let store = state.store.clone();
-    blocking(move || store.matches(&project_id)).await
 }
 
 #[derive(Serialize)]
@@ -363,13 +483,17 @@ struct FullTranscript {
 /// A whole transcript, in paragraphs
 #[tauri::command]
 async fn transcript(state: State<'_, AppState>, transcript_path: String) -> Result<FullTranscript> {
-    let t = state.transcript(&transcript_path)?;
-    Ok(FullTranscript {
-        id: t.id.clone(),
-        title: t.title.clone(),
-        words: t.words.clone(),
-        paragraphs: t.paragraphs.clone(),
+    let cache = state.transcripts.clone();
+    blocking(move || {
+        let t = transcript_of(&cache, &transcript_path)?;
+        Ok(FullTranscript {
+            id: t.id.clone(),
+            title: t.title.clone(),
+            words: t.words.clone(),
+            paragraphs: t.paragraphs.clone(),
+        })
     })
+    .await
 }
 
 #[derive(Serialize)]
@@ -390,7 +514,7 @@ held, could take hundreds of megabytes, but reading them is quick
 #[tauri::command]
 async fn search_transcripts(
     state: State<'_, AppState>,
-    project: Project,
+    project_id: String,
     phrase: String,
     prefix: bool,
     source_ids: Option<Vec<String>>,
@@ -398,7 +522,9 @@ async fn search_transcripts(
 ) -> Result<SaidIn> {
     use rayon::prelude::*;
     let held = lock(&state.transcripts).clone();
+    let store = state.store.clone();
     blocking(move || {
+        let project = store.project_ref(&project_id)?;
         let options = extract_audio_bible::FindOptions {
             prefix,
             context: 14,
@@ -444,18 +570,22 @@ async fn transcript_words(
     from: i64,
     to: i64,
 ) -> Result<WordWindow> {
-    let t = state.transcript(&transcript_path)?;
-    let from = from.max(0) as usize;
-    let to = (to.max(0) as usize).min(t.words.len().saturating_sub(1));
-    let words = if from <= to {
-        t.words[from..=to].to_vec()
-    } else {
-        vec![]
-    };
-    Ok(WordWindow {
-        from: from as u32,
-        words,
+    let cache = state.transcripts.clone();
+    blocking(move || {
+        let t = transcript_of(&cache, &transcript_path)?;
+        let from = from.max(0) as usize;
+        let to = (to.max(0) as usize).min(t.words.len().saturating_sub(1));
+        let words = if from <= to {
+            t.words[from..=to].to_vec()
+        } else {
+            vec![]
+        };
+        Ok(WordWindow {
+            from: from as u32,
+            words,
+        })
     })
+    .await
 }
 
 #[derive(Serialize)]
@@ -537,12 +667,13 @@ async fn render_clip(state: State<'_, AppState>, request: ClipRequest) -> Result
 #[tauri::command]
 async fn chapter_timeline(
     state: State<'_, AppState>,
-    project: Project,
+    project_id: String,
     book: u8,
     chapter: u16,
 ) -> Result<Vec<export::VerseTime>> {
     let store = state.store.clone();
     blocking(move || {
+        let project = store.project_ref(&project_id)?;
         let bible = store.bible(&project.bible_id)?;
         let book = bible.book(book).ok_or_else(|| AppError::msg("No such book"))?;
         Ok(export::chapter_timeline(&project, book, chapter))
@@ -552,9 +683,10 @@ async fn chapter_timeline(
 
 /// A chapter as it will be exported, as WAV
 #[tauri::command]
-async fn render_chapter(state: State<'_, AppState>, project: Project, book: u8, chapter: u16) -> Result<Response> {
+async fn render_chapter(state: State<'_, AppState>, project_id: String, book: u8, chapter: u16) -> Result<Response> {
     let store = state.store.clone();
     blocking(move || {
+        let project = store.project_ref(&project_id)?;
         let bible = store.bible(&project.bible_id)?;
         let book = bible.book(book).ok_or_else(|| AppError::msg("No such book"))?;
         let pcm = export::render_chapter(&project, book, chapter, 24_000, &store.audio_files())?;
@@ -565,26 +697,33 @@ async fn render_chapter(state: State<'_, AppState>, project: Project, book: u8, 
 
 /// Titles and passages by file id, from a JSON file (`{"<file id>": {"title": …, "passage": …}}`)
 #[tauri::command]
-fn read_file_metadata(path: String) -> Result<std::collections::BTreeMap<String, extract_audio_bible::FileMetadata>> {
-    let bytes = std::fs::read(&path).map_err(|e| file_error(&path, e))?;
-    serde_json::from_slice(&bytes).map_err(|e| {
-        AppError::msg(format!(
-            "{path}: expected {{\"file id\": {{\"title\": …, \"passage\": …}}}}: {e}"
-        ))
+async fn read_file_metadata(
+    path: String,
+) -> Result<std::collections::BTreeMap<String, extract_audio_bible::FileMetadata>> {
+    blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|e| file_error(&path, e))?;
+        serde_json::from_slice(&bytes).map_err(|e| {
+            AppError::msg(format!(
+                "{path}: expected {{\"file id\": {{\"title\": …, \"passage\": …}}}}: {e}"
+            ))
+        })
     })
+    .await
 }
 
 /// A verse as it will be exported (all its readings, one after another), as WAV
 #[tauri::command]
 async fn render_verse(
     state: State<'_, AppState>,
-    project: Project,
+    project_id: String,
     book: u8,
     chapter: u16,
     verse: u16,
 ) -> Result<Response> {
-    let files = state.store.audio_files();
+    let store = state.store.clone();
+    let files = store.audio_files();
     blocking(move || {
+        let project = store.project_ref(&project_id)?;
         let key = export::verse_key(book, chapter, verse);
         let pcm = extract_audio_bible::render_verse(&project, &key, 44_100, &files)?
             .ok_or_else(|| AppError::msg("No reading is chosen for this verse"))?;
@@ -594,20 +733,25 @@ async fn render_verse(
 }
 
 #[tauri::command]
-async fn chapters_to_export(state: State<'_, AppState>, project: Project) -> Result<Vec<ChapterRef>> {
+async fn chapters_to_export(state: State<'_, AppState>, project_id: String) -> Result<Vec<ChapterRef>> {
     let store = state.store.clone();
-    blocking(move || Ok(export::chapters_to_export(&project, &store.bible(&project.bible_id)?))).await
+    blocking(move || {
+        let project = store.project_ref(&project_id)?;
+        Ok(export::chapters_to_export(&project, &store.bible(&project.bible_id)?))
+    })
+    .await
 }
 
 #[tauri::command]
 async fn export_chapters(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    project: Project,
+    project_id: String,
     chapters: Option<Vec<ChapterRef>>,
 ) -> Result<Vec<ExportedFile>> {
     let store = state.store.clone();
     blocking(move || {
+        let project = store.project_ref(&project_id)?;
         let bible = store.bible(&project.bible_id)?;
         let chapters = chapters.unwrap_or_else(|| export::chapters_to_export(&project, &bible));
         if chapters.is_empty() {
@@ -640,7 +784,7 @@ pub fn run() {
             std::fs::create_dir_all(&root)?;
             app.manage(AppState {
                 store: Store::new(root),
-                transcripts: Mutex::new(HashMap::new()),
+                transcripts: Arc::default(),
                 engine: Arc::default(),
             });
             Ok(())
@@ -654,17 +798,22 @@ pub fn run() {
             list_projects,
             create_project,
             get_project,
-            save_project,
+            save_changes,
             delete_project,
+            open_project_folder,
             add_sources,
             analyze,
-            get_matches,
+            match_summary,
+            chapter_matches,
+            sermon_matches,
+            readings_overview,
+            readings_rows,
+            export_readings,
             transcript_words,
             transcript,
             create_readings_project,
             genres,
             scope_books,
-            reading_rows,
             search_transcripts,
             audio_peaks,
             render_clip,

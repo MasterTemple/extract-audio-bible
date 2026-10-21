@@ -1,8 +1,8 @@
 //! `extract-audio-bible`: build an audio Bible from sermon readings, from the command line.
 //!
-//! A project is a folder: `project.json` (sermons, chosen readings, settings), `matches.json`
-//! (every reading found), and `bible.json` (the translation's text), in the same formats the app
-//! uses.
+//! A project is a folder: `project.json` (sermons, chosen readings, settings), `readings.sqlite`
+//! (every reading found), and `bible.json` (the translation's text; others searched in
+//! `bibles/<id>.json`), in the same formats the app uses.
 
 use std::{
     io::Write,
@@ -12,8 +12,8 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use extract_audio_bible::{
-    Bible, ChapterRef, ClipOptions, Disk, Downloading, ExportMode, MatchSet, Project, Transcript, audio, bible, export,
-    matcher,
+    Bible, ChapterRef, ClipOptions, Disk, Downloading, ExportMode, MatchSet, Project, Transcript, audio, bible, db,
+    export, matcher,
     project::{now, stable_id},
 };
 use serde::Serialize;
@@ -62,37 +62,38 @@ enum Command {
         /// Only these books ("John", "1 Thess"); with genres, they add up
         #[arg(long = "book")]
         books: Vec<String>,
-        /// Only these genres, topos's book groups ("Gospels", "Pauline Epistles", "pentateuch")
-        #[arg(long = "genre")]
-        genres: Vec<String>,
-        /// Only this testament (the books and genres given are then within it)
-        #[arg(long = "testament", value_enum)]
-        testaments: Vec<TestamentArg>,
-        #[arg(long = "exclude-book")]
-        exclude_books: Vec<String>,
-        #[arg(long = "exclude-genre")]
-        exclude_genres: Vec<String>,
-        #[arg(long = "exclude-testament", value_enum)]
-        exclude_testaments: Vec<TestamentArg>,
+        #[command(flatten)]
+        scope: ScopeArgs,
         /// Print every reading as CSV (sermon, reference, translation, times, kind, words said…)
         #[arg(long)]
         csv: bool,
         /// How faithfully a verse must be read (0–1)
         #[arg(long, default_value_t = 0.85)]
         min_accuracy: f32,
-        /// Transcripts (WhisperX or Let's Church JSON)
+        /// Transcripts (WhisperX or Let's Church JSON, gzipped or not)
         #[arg(required = true)]
         transcripts: Vec<PathBuf>,
     },
-    /// Start a project in a folder
+    /// Start a project in a folder: an audio Bible, or every verse read in its sermons
+    /// (`--readings`, or with `--translation`). The app opens the folder as it is ("Open folder")
     Init {
         dir: PathBuf,
         /// A Bible's JSON (from `import`), or its files
         #[arg(long, required = true, num_args = 1..)]
         bible: Vec<PathBuf>,
-        /// The book being built ("1 Thessalonians"); the whole Bible if left out
+        /// Find every verse read in the sermons rather than build an audio Bible
         #[arg(long)]
-        book: Option<String>,
+        readings: bool,
+        /// Another translation to search too, for every verse read (a Bible's JSON, or a folder
+        /// or file of its text); each reading is of the translation it fits best
+        #[arg(long = "translation")]
+        translations: Vec<PathBuf>,
+        /// The book being built ("1 Thessalonians"; the whole Bible if left out), or for every
+        /// verse read, only these books (again for others; with genres, they add up)
+        #[arg(long = "book")]
+        books: Vec<String>,
+        #[command(flatten)]
+        scope: ScopeArgs,
         #[arg(long, default_value = "")]
         name: String,
     },
@@ -142,6 +143,14 @@ enum Command {
     },
     /// Find every reading of the project's verses in its sermons
     Search { dir: PathBuf },
+    /// Every reading found (by `search`), as a table: CSV, or JSON with --json or to a `.json`
+    /// file (the rows the app's readings export)
+    Table {
+        dir: PathBuf,
+        /// Write it here instead of printing it (`.json` for JSON, else CSV)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Choose the best reading for each verse that has none
     Choose {
         dir: PathBuf,
@@ -242,6 +251,44 @@ enum Command {
         #[arg(long)]
         mode: Option<Mode>,
     },
+}
+
+/// The books searched for every verse read, besides those named (`--book`)
+#[derive(clap::Args)]
+struct ScopeArgs {
+    /// Only these genres, topos's book groups ("Gospels", "Pauline Epistles", "pentateuch")
+    #[arg(long = "genre")]
+    genres: Vec<String>,
+    /// Only this testament (the books and genres given are then within it)
+    #[arg(long = "testament", value_enum)]
+    testaments: Vec<TestamentArg>,
+    #[arg(long = "exclude-book")]
+    exclude_books: Vec<String>,
+    #[arg(long = "exclude-genre")]
+    exclude_genres: Vec<String>,
+    #[arg(long = "exclude-testament", value_enum)]
+    exclude_testaments: Vec<TestamentArg>,
+}
+
+impl ScopeArgs {
+    fn is_empty(&self) -> bool {
+        self.genres.is_empty()
+            && self.testaments.is_empty()
+            && self.exclude_books.is_empty()
+            && self.exclude_genres.is_empty()
+            && self.exclude_testaments.is_empty()
+    }
+
+    fn with_books(self, books: Vec<String>) -> extract_audio_bible::BookScope {
+        extract_audio_bible::BookScope {
+            testaments: self.testaments.into_iter().map(Into::into).collect(),
+            genres: self.genres,
+            books,
+            exclude_testaments: self.exclude_testaments.into_iter().map(Into::into).collect(),
+            exclude_genres: self.exclude_genres,
+            exclude_books: self.exclude_books,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -364,11 +411,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
             bible,
             translations,
             books,
-            genres,
-            testaments,
-            exclude_books,
-            exclude_genres,
-            exclude_testaments,
+            scope,
             csv,
             min_accuracy,
             transcripts,
@@ -377,14 +420,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
             for path in &translations {
                 bibles.push(load_bible(std::slice::from_ref(path), out)?);
             }
-            let scope = extract_audio_bible::BookScope {
-                testaments: testaments.into_iter().map(Into::into).collect(),
-                genres,
-                books,
-                exclude_testaments: exclude_testaments.into_iter().map(Into::into).collect(),
-                exclude_genres,
-                exclude_books,
-            };
+            let scope = scope.with_books(books);
             // A project of these transcripts alone, searched as the app searches
             let mut project = Project::readings("find", "", &bibles.iter().collect::<Vec<_>>(), scope)?;
             project.settings.min_accuracy = min_accuracy;
@@ -458,15 +494,39 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 text.trim_end().to_string()
             })
         }
-        Command::Init { dir, bible, book, name } => {
-            let bible = load_bible(&bible, out)?;
-            let book = book.as_deref().map(|b| book_id(&bible, b)).transpose()?;
+        Command::Init {
+            dir,
+            bible,
+            readings,
+            translations,
+            books,
+            scope,
+            name,
+        } => {
             if dir.join("project.json").exists() {
                 bail!("{} already has a project", dir.display());
             }
-            let project = Project::new(stable_id(&format!("{}{}", dir.display(), now())), &name, &bible, book);
+            let mut bibles = vec![load_bible(&bible, out)?];
+            for path in &translations {
+                bibles.push(load_bible(std::slice::from_ref(path), out)?);
+            }
+            let id = stable_id(&format!("{}{}", dir.display(), now()));
+            let project = if readings || !translations.is_empty() {
+                Project::readings(id, &name, &bibles.iter().collect::<Vec<_>>(), scope.with_books(books))?
+            } else {
+                if books.len() > 1 || !scope.is_empty() {
+                    bail!(
+                        "an audio Bible is of one book (or the whole Bible): give --readings to find every verse read in some"
+                    );
+                }
+                let book = books.first().map(|b| book_id(&bibles[0], b)).transpose()?;
+                Project::new(id, &name, &bibles[0], book)
+            };
             std::fs::create_dir_all(&dir)?;
-            write_json(&dir.join("bible.json"), &bible)?;
+            write_json(&dir.join("bible.json"), &bibles[0])?;
+            for other in &bibles[1..] {
+                write_json(&dir.join("bibles").join(format!("{}.json", other.id)), other)?;
+            }
             write_json(&dir.join("project.json"), &project)?;
             out.result(&project, || format!("Started {} in {}", project.name, dir.display()))
         }
@@ -547,7 +607,11 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 .collect();
             // Where each reading begins, by word
             let mut begins: std::collections::HashMap<usize, Vec<String>> = Default::default();
-            for m in p.matches.matches.iter().filter(|m| m.source_id == source.id) {
+            let found = match p.database()? {
+                Some(readings) => readings.sermon(&source.id)?.matches,
+                None => vec![],
+            };
+            for m in &found {
                 let osis = p
                     .bible
                     .book(m.book)
@@ -657,13 +721,61 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 )
             })
         }
+        Command::Table { dir, output } => {
+            let p = Folder::open(&dir)?;
+            let readings = p
+                .database()?
+                .ok_or_else(|| anyhow!("no readings yet: run `search` first"))?;
+            let (filter, all) = (db::RowFilter::default(), db::Group::All);
+            let json = match &output {
+                Some(output) => output.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")),
+                None => out.json,
+            };
+            if json {
+                let rows = readings.rows(&filter, &all)?;
+                return match output {
+                    Some(output) => {
+                        write_json(&output, &rows)?;
+                        out.result(&serde_json::json!({ "rows": rows.len(), "output": output }), || {
+                            format!("Wrote {} to {}", plural(rows.len(), "reading"), output.display())
+                        })
+                    }
+                    None => out.result(&rows, String::new),
+                };
+            }
+            // CSV is written as it's read
+            let mut sink: Box<dyn Write> = match &output {
+                Some(output) => Box::new(std::io::BufWriter::new(
+                    std::fs::File::create(output).with_context(|| format!("writing {}", output.display()))?,
+                )),
+                None => Box::new(std::io::BufWriter::new(std::io::stdout().lock())),
+            };
+            sink.write_all(extract_audio_bible::readings::CSV_HEADER.as_bytes())?;
+            let (mut count, mut failed) = (0, None);
+            readings.rows_each(&filter, &all, |row| {
+                if failed.is_none()
+                    && let Err(e) = sink.write_all(extract_audio_bible::readings::csv_line(&row).as_bytes())
+                {
+                    failed = Some(e);
+                }
+                count += 1;
+            })?;
+            if let Some(e) = failed {
+                return Err(e.into());
+            }
+            sink.flush()?;
+            if let Some(output) = output {
+                out.note(format!("Wrote {} to {}", plural(count, "reading"), output.display()));
+            }
+            Ok(())
+        }
         Command::Choose {
             dir,
             chapters,
             min_score,
             replace,
         } => {
-            let mut p = Folder::open(&dir)?;
+            let mut p = Folder::open(&dir)?.with_matches()?;
             let chapters = p.chapters(&chapters, true)?;
             let chosen = choose(&mut p, &chapters, min_score, replace)?;
             p.save()?;
@@ -671,7 +783,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
             out.result(&chosen, || format!("Chose readings for {}", plural(count, "verse")))
         }
         Command::Status { dir } => {
-            let p = Folder::open(&dir)?;
+            let p = Folder::open(&dir)?.with_matches()?;
             let status = status(&p);
             out.result(&status, || {
                 let mut text = String::new();
@@ -690,7 +802,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
             })
         }
         Command::Readings { dir, verse } => {
-            let p = Folder::open(&dir)?;
+            let p = Folder::open(&dir)?.with_matches()?;
             let (c, v) = p.verse(&verse)?;
             let key = export::verse_key(c.book, c.chapter, v);
             let chosen = p.project.selections.get(&key).map(|s| s.parts()).unwrap_or_default();
@@ -735,7 +847,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
             })
         }
         Command::Select { dir, verse, readings } => {
-            let mut p = Folder::open(&dir)?;
+            let mut p = Folder::open(&dir)?.with_matches()?;
             let (c, v) = p.verse(&verse)?;
             let listed = p.readings(&c, v);
             let mut picked: Vec<extract_audio_bible::Match> = vec![];
@@ -899,7 +1011,9 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 dir: dir.clone(),
                 project,
                 bible,
+                others: vec![],
                 matches: MatchSet::default(),
+                searched: false,
             };
             let added = add_sermons(&mut p.project, &sermons)?;
             out.note(plural(p.project.sources.len(), "sermon"));
@@ -934,7 +1048,12 @@ struct Folder {
     dir: PathBuf,
     project: Project,
     bible: Bible,
+    /// The other translations it searches, for every verse read (`bibles/<id>.json`)
+    others: Vec<Bible>,
+    /// Its readings, once read ([`Folder::with_matches`]) or found ([`search`])
     matches: MatchSet,
+    /// Whether the sermons were searched again, so `save` writes every reading
+    searched: bool,
 }
 
 impl Folder {
@@ -946,24 +1065,54 @@ impl Folder {
     fn open(dir: &Path) -> Result<Self> {
         let project: Project = read_json(&dir.join("project.json"))
             .with_context(|| format!("{} isn't a project folder (start one with `init`)", dir.display()))?;
-        let bible = read_json(&dir.join("bible.json"))?;
-        let matches = if dir.join("matches.json").exists() {
-            read_json(&dir.join("matches.json"))?
-        } else {
-            MatchSet::default()
-        };
+        let bible: Bible = read_json(&dir.join("bible.json"))?;
+        let others = (project.bibles_searched().iter())
+            .filter(|id| **id != bible.id)
+            .map(|id| read_json(&dir.join("bibles").join(format!("{id}.json"))))
+            .collect::<Result<Vec<Bible>>>()?;
         Ok(Folder {
             dir: dir.to_path_buf(),
             project,
             bible,
-            matches,
+            others,
+            matches: MatchSet::default(),
+            searched: false,
         })
     }
 
+    /// With every reading read, for what goes through them all
+    fn with_matches(mut self) -> Result<Self> {
+        if let Some(readings) = self.database()? {
+            self.matches = readings.all()?;
+        }
+        Ok(self)
+    }
+
+    /// Its readings database (made from `matches.json` the first time, if it has that), if it's
+    /// been searched
+    fn database(&self) -> Result<Option<db::Readings>> {
+        let bibles = || Ok(self.translations().into_iter().cloned().collect());
+        Ok(db::open_in(&self.dir, &self.project, &Disk, bibles)?)
+    }
+
+    /// Every translation it searches, its own first
+    fn translations(&self) -> Vec<&Bible> {
+        std::iter::once(&self.bible).chain(&self.others).collect()
+    }
+
+    /// Writes the project, and its readings when the sermons were searched (else the readings
+    /// database's list of sermons, if it's changed)
     fn save(&mut self) -> Result<()> {
         self.project.updated_at = now();
         write_json(&self.dir.join("project.json"), &self.project)?;
-        write_json(&self.dir.join("matches.json"), &self.matches)
+        if self.searched {
+            db::Readings::write(&db::path(&self.dir), &self.project, &self.translations(), &self.matches)?;
+            let _ = std::fs::remove_file(self.dir.join(db::LEGACY_FILE));
+            self.searched = false;
+        } else if let Some(mut readings) = self.database()? {
+            readings.sync_sermons(&self.project)?;
+        }
+        Ok(())
     }
 
     /// Chapters named like "5" (in the project's book) or "1 Thess 5"; with none, every chapter
@@ -1044,7 +1193,8 @@ struct Searched {
 }
 
 fn search(p: &mut Folder, out: &Out) -> Result<Searched> {
-    let analysis = extract_audio_bible::analyze(&mut p.project, &p.bible, &Disk, &|done, total, label| {
+    let engine = matcher::engine_of(p.translations())?;
+    let analysis = extract_audio_bible::analyze_with(&mut p.project, &engine, &Disk, &|done, total, label| {
         out.note(format!("[{done}/{total}] {label}"));
     })?;
     let errors: Vec<String> = analysis
@@ -1056,6 +1206,7 @@ fn search(p: &mut Folder, out: &Out) -> Result<Searched> {
         out.note(format!("couldn't search {e}"));
     }
     p.matches = analysis.matches;
+    p.searched = true;
     Ok(Searched {
         sermons: p.project.sources.len(),
         readings: p.matches.matches.len(),

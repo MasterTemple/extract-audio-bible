@@ -176,7 +176,7 @@ export function ExportPanel() {
     setResults([]);
     setProgress({ done: 0, total: chapters.length, current: "" });
     try {
-      const files = await api.exportChapters(useApp.getState().project!, null);
+      const files = await api.exportChapters(useApp.getState().project!.id, null);
       setResults(files);
       toast.success(`Exported ${files.length} chapter${files.length === 1 ? "" : "s"}`);
     } catch (e) {

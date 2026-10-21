@@ -74,9 +74,14 @@ pub struct Transcript {
 }
 
 impl Transcript {
-    /// A transcript file (WhisperX JSON, or a Let's Church transcript)
+    /// A transcript file (WhisperX JSON, or a Let's Church transcript), gzipped or not
     pub fn open(files: &dyn Files, path: &str) -> Result<Self> {
-        Self::parse(&String::from_utf8_lossy(&files.read(path)?)).map_err(|e| Error::invalid(format!("{path}: {e}")))
+        Self::from_bytes(&files.read(path)?).map_err(|e| Error::invalid(format!("{path}: {e}")))
+    }
+
+    /// A transcript's JSON as bytes, gzipped (`.json.gz`) or not
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        Self::parse(&String::from_utf8_lossy(&gunzip(bytes)?))
     }
 
     /// A transcript's JSON
@@ -203,8 +208,8 @@ fn at_pauses(words: &[Word]) -> Vec<usize> {
         .collect()
 }
 
-/// Whether JSON is a transcript: WhisperX's segments or words, or a Let's Church transcript's
-/// paragraphs (read quickly, without keeping them)
+/// Whether JSON (gzipped or not) is a transcript: WhisperX's segments or words, or a Let's Church
+/// transcript's paragraphs (read quickly, without keeping them)
 pub fn is_transcript(json: &[u8]) -> bool {
     #[derive(Deserialize)]
     struct Probe {
@@ -212,7 +217,21 @@ pub fn is_transcript(json: &[u8]) -> bool {
         segments: Option<Vec<serde::de::IgnoredAny>>,
         word_segments: Option<Vec<serde::de::IgnoredAny>>,
     }
-    serde_json::from_slice::<Probe>(json).is_ok_and(|p| p.segments.is_some() || p.word_segments.is_some())
+    gunzip(json).is_ok_and(|json| {
+        serde_json::from_slice::<Probe>(&json).is_ok_and(|p| p.segments.is_some() || p.word_segments.is_some())
+    })
+}
+
+/// Bytes as they are, or unzipped when they're gzip's (known by its magic number, whatever the
+/// file's name)
+fn gunzip(bytes: &[u8]) -> Result<std::borrow::Cow<'_, [u8]>> {
+    if !bytes.starts_with(&[0x1f, 0x8b]) {
+        return Ok(bytes.into());
+    }
+    let mut out = vec![];
+    std::io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(bytes), &mut out)
+        .map_err(|e| Error::invalid(format!("not gzip: {e}")))?;
+    Ok(out.into())
 }
 
 /// Give untimed words times between their timed neighbors, spread evenly
@@ -294,5 +313,21 @@ mod tests {
         assert_eq!(t.paragraphs, [0, 2]);
         let from_words = Transcript::from_words(t.words.clone());
         assert_eq!(from_words.paragraphs, [0]);
+    }
+
+    #[test]
+    fn gzipped() {
+        use std::io::Write;
+        let json = br#"{"segments": [{"start": 0.0, "end": 2.0, "text": "Jesus wept."}]}"#;
+        let mut gz = flate2::write::GzEncoder::new(vec![], flate2::Compression::default());
+        gz.write_all(json).unwrap();
+        let gz = gz.finish().unwrap();
+        assert!(is_transcript(&gz));
+        assert_eq!(Transcript::from_bytes(&gz).unwrap().words.len(), 2);
+        let mut files = crate::Memory::new();
+        files.insert("s.json.gz", gz.clone());
+        assert_eq!(Transcript::open(&files, "s.json.gz").unwrap().words.len(), 2);
+        assert!(Transcript::from_bytes(&gz[..gz.len() / 2]).is_err());
+        assert!(!is_transcript(&gz[..gz.len() / 2]));
     }
 }

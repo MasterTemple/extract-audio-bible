@@ -10,6 +10,8 @@ categories = ["multimedia::audio", "text-processing"]
 
 [dependencies]
 id3 = "1.17.2"
+# Reading gzipped transcripts (`.json.gz`), in pure Rust so WebAssembly can too
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 logoxide-text = "0.1"
 rusty_mp3 = "1.0.1"
 scripture-quotes = { path = "../scripture-quotes" }
@@ -22,7 +24,10 @@ thiserror = "2.0.21"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rayon = "1.12.0"
 ureq = { version = "3.4", optional = true }
+rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
 
 [features]
 # Downloading sermon audio given by URL (`Downloading`): native only
 download = ["dep:ureq"]
+# Keeping a project's readings in SQLite (`db`, `readings.sqlite`): native only
+sqlite = ["dep:rusqlite"]

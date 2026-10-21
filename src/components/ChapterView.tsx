@@ -61,14 +61,31 @@ async function renderChapter(p: Project, book: number, chapter: number): Promise
     p.settings,
     p.sources.map((s) => [s.id, audioPathOf(p, s)]),
   ]);
-  if (rendered?.key !== key) rendered = { key, wav: await api.renderChapter(p, book, chapter) };
+  if (rendered?.key !== key) rendered = { key, wav: await api.renderChapter(p.id, book, chapter) };
   // Playing takes the bytes it's given, so it gets a copy
   return rendered.wav.slice(0);
 }
 
 export function ChapterView() {
-  const { project, outline, book, chapter, verse, bookText, matchesByVerse, runById, matchById, go, setVerse, selectMany, update, flush } =
-    useApp();
+  const {
+    project,
+    outline,
+    book,
+    chapter,
+    verse,
+    bookText,
+    matchesByVerse,
+    verseCounts,
+    loadedChapters,
+    loadChapter,
+    runById,
+    matchById,
+    go,
+    setVerse,
+    selectMany,
+    update,
+    flush,
+  } = useApp();
   const player = usePlayer();
   const b = outline.find((x) => x.id === book);
   const text = book ? bookText[book]?.[chapter! - 1] : undefined;
@@ -83,8 +100,13 @@ export function ChapterView() {
   useEffect(() => {
     if (hearing !== null) rows.current.get(hearing)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [hearing]);
+  // Each chapter's readings are read when it's shown
+  useEffect(() => {
+    if (book && chapter) void loadChapter(book, chapter);
+  }, [book, chapter, loadChapter]);
   if (!project || !b || !chapter) return null;
-  const status = chapterStatus(project, b, chapter, matchesByVerse);
+  const status = chapterStatus(project, b, chapter, verseCounts);
+  const loaded = loadedChapters.has(`${b.id}.${chapter}`);
 
   const nav = (delta: number) => {
     const idx = outline.findIndex((x) => x.id === b.id);
@@ -127,7 +149,7 @@ export function ChapterView() {
     await flush();
     const p = useApp.getState().project!;
     if (player.id !== playId) {
-      api.chapterTimeline(p, b.id, chapter).then(
+      api.chapterTimeline(p.id, b.id, chapter).then(
         (times) => setTimeline({ id: playId, times }),
         () => setTimeline(null),
       );
@@ -161,7 +183,7 @@ export function ChapterView() {
         <div className="ml-auto flex items-center gap-1.5">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" disabled={!loaded} title={loaded ? undefined : "Reading this chapter's readings…"}>
                 <Sparkles /> Choose best
               </Button>
             </DropdownMenuTrigger>
@@ -197,6 +219,8 @@ export function ChapterView() {
               const key = verseKey(b.id, chapter, v);
               const sel = project.selections[key];
               const matches = matchesByVerse.get(key) ?? [];
+              // Until the chapter's readings are read, how many there are
+              const found = loaded ? matches.length : (verseCounts.get(key) ?? 0);
               const prevSel = i > 0 ? project.selections[verseKey(b.id, chapter, verses[i - 1])] : undefined;
               const nextSel = i < verses.length - 1 ? project.selections[verseKey(b.id, chapter, verses[i + 1])] : undefined;
               const joinUp = continues(prevSel, sel);
@@ -238,7 +262,7 @@ export function ChapterView() {
                     <span className="pt-0.5 text-right text-xs font-semibold text-muted-foreground tabular-nums">
                       {hearing === v ? <Volume2 className="ml-auto size-3.5 text-primary" /> : v}
                     </span>
-                    <span className={cn("text-[15px] leading-relaxed", !sel && matches.length === 0 && "text-muted-foreground")}>
+                    <span className={cn("text-[15px] leading-relaxed", !sel && found === 0 && "text-muted-foreground")}>
                       {text[v - 1]}
                     </span>
                     <span className="flex flex-col items-end gap-1 pt-0.5">
@@ -272,13 +296,15 @@ export function ChapterView() {
                           <CheckCircle2 className="size-4 text-emerald-600" />
                         </span>
                       ) : null}
-                      {matches.length > 0 ? (
+                      {found > 0 ? (
                         <span className="flex items-center gap-1 text-[11px] whitespace-nowrap text-muted-foreground">
                           {bestRun && !sel && <Link2 className="size-3" />}
                           <span
                             className={cn(
                               "rounded px-1.5 py-0.5 font-medium tabular-nums",
-                              counts.exact > 0
+                              !loaded
+                                ? "bg-muted text-muted-foreground"
+                                : counts.exact > 0
                                 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
                                 : counts.close > 0
                                   ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300"
@@ -286,7 +312,7 @@ export function ChapterView() {
                             )}
                             title={`${counts.exact} exact · ${counts.close} close · ${counts.partial} partial`}
                           >
-                            {matches.length} {matches.length === 1 ? "reading" : "readings"}
+                            {found} {found === 1 ? "reading" : "readings"}
                           </span>
                         </span>
                       ) : (

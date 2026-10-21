@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { api, type Part, type Selection } from "@/lib/api";
-import { partsOf, useApp } from "@/lib/store";
+import { partsOf, savedProjectId, useApp } from "@/lib/store";
 import { usePeaks, useWords } from "@/lib/hooks";
 import { play, sourceTime, usePlayer } from "@/lib/player";
 import { audioPathOf, fileName, formatTime, sourceColor, sourceTitle } from "@/lib/refs";
@@ -330,7 +330,7 @@ export function ClipEditor({ verseKey, selection, verseText }: { verseKey: strin
           size="sm"
           variant="ghost"
           title={`${joined ? "Every part, one after another, with" : "With"} its volume, leveling, fades, and silence, as the export will be`}
-          onClick={() => play(exportId, () => api.renderVerse(project, book, chapter, verse), clipStart, selection.padBefore + before)}
+          onClick={() => play(exportId, async () => api.renderVerse(await savedProjectId(), book, chapter, verse), clipStart, selection.padBefore + before)}
         >
           {icon(exportId, Volume2)} As exported
         </Button>

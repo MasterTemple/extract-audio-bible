@@ -7,8 +7,11 @@ import {
   type BookOutline,
   type FileMetadata,
   type Match,
+  type Keyed,
   type MatchSet,
   type Project,
+  type ProjectChanges,
+  type Summary,
   type ProjectSummary,
   type Part,
   type Run,
@@ -18,6 +21,7 @@ import { verseKey } from "./refs";
 
 export type Tab = "verses" | "readings" | "sources" | "search" | "export" | "bibles";
 
+/** The readings of the chapters loaded so far (each chapter's are read when it's shown) */
 interface Indexed {
   matchesByVerse: Map<string, Match[]>;
   matchById: Map<string, Match>;
@@ -29,7 +33,12 @@ interface AppState extends Indexed {
   projects: ProjectSummary[];
   project: Project | null;
   outline: BookOutline[];
-  matchSet: MatchSet;
+  /** How many readings there are, and of which verses */
+  summary: Summary;
+  /** Each verse's count of readings, by verse key */
+  verseCounts: Map<string, number>;
+  /** The chapters whose readings are loaded (`book.chapter`) */
+  loadedChapters: Set<string>;
   /** Book id → chapters of verse text */
   bookText: Record<number, string[][]>;
   tab: Tab;
@@ -56,7 +65,10 @@ interface AppState extends Indexed {
   update: (recipe: (p: Project) => Project, label: string, merge?: string) => void;
   undo: () => void;
   redo: () => void;
-  setMatches: (set: MatchSet) => void;
+  /** Reads the readings again (after a search, or when sermons were added or taken out), from `summary` if given */
+  resetMatches: (summary?: Summary) => Promise<void>;
+  /** Reads a chapter's readings, if they aren't yet */
+  loadChapter: (book: number, chapter: number) => Promise<void>;
   loadBook: (book: number) => Promise<string[][] | undefined>;
   go: (book: number, chapter: number, verse?: number | null) => void;
   setVerse: (verse: number | null) => void;
@@ -79,19 +91,63 @@ interface AppState extends Indexed {
   flush: () => Promise<void>;
 }
 
-function index(set: MatchSet): Indexed {
-  const matchesByVerse = new Map<string, Match[]>();
-  const matchById = new Map<string, Match>();
-  for (const m of set.matches) {
-    const key = verseKey(m.book, m.chapter, m.verse);
-    const list = matchesByVerse.get(key);
-    if (list) list.push(m);
-    else matchesByVerse.set(key, [m]);
-    matchById.set(m.id, m);
-  }
-  for (const list of matchesByVerse.values()) list.sort((a, b) => b.score - a.score);
-  return { matchesByVerse, matchById, runById: new Map(set.runs.map((r) => [r.id, r])) };
+const EMPTY_SUMMARY: Summary = { analyzedAt: 0, readings: 0, runs: 0, verses: [] };
+
+function emptyIndex(): Indexed {
+  return { matchesByVerse: new Map(), matchById: new Map(), runById: new Map() };
 }
+
+/** The readings loaded, with a chapter's added (a run's readings of other chapters come with it) */
+function withChapter(had: Indexed, set: MatchSet): Indexed {
+  const matchesByVerse = new Map(had.matchesByVerse);
+  const matchById = new Map(had.matchById);
+  const touched = new Set<string>();
+  for (const m of set.matches) {
+    if (matchById.has(m.id)) continue;
+    const key = verseKey(m.book, m.chapter, m.verse);
+    matchesByVerse.set(key, [...(matchesByVerse.get(key) ?? []), m]);
+    matchById.set(m.id, m);
+    touched.add(key);
+  }
+  for (const key of touched) matchesByVerse.get(key)!.sort((a, b) => b.score - a.score);
+  const runById = new Map(had.runById);
+  for (const r of set.runs) runById.set(r.id, r);
+  return { matchesByVerse, matchById, runById };
+}
+
+function countsOf(summary: Summary): Map<string, number> {
+  return new Map(summary.verses.map(([b, c, v, n]) => [verseKey(b, c, v), n]));
+}
+
+/** The entries of a map that changed (by reference: what's unchanged is the same object), or null if none did */
+function keyed<T>(from: Record<string, T> | undefined, to: Record<string, T> | undefined): Keyed<T> | null {
+  if (from === to) return null;
+  const set: Record<string, T> = {};
+  const removed: string[] = [];
+  for (const [key, value] of Object.entries(to ?? {})) if (from?.[key] !== value) set[key] = value;
+  for (const key of Object.keys(from ?? {})) if (!to || !(key in to)) removed.push(key);
+  return Object.keys(set).length > 0 || removed.length > 0 ? { set, removed } : null;
+}
+
+/**
+ * What changed from one version of a project to the next, or null if nothing did. Changes copy only
+ * what they change, so a part that's the same object is unchanged
+ */
+function changesOf(from: Project, to: Project): ProjectChanges | null {
+  const changes: Record<string, unknown> = {};
+  for (const key of Object.keys(to) as (keyof Project)[]) {
+    if (key === "id" || key === "createdAt" || key === "updatedAt" || key === "selections" || key === "files") continue;
+    if (to[key] !== from[key]) changes[key] = to[key] ?? null;
+  }
+  const selections = keyed(from.selections, to.selections);
+  if (selections) changes.selections = selections;
+  const files = keyed(from.files, to.files);
+  if (files) changes.files = files;
+  return Object.keys(changes).length > 0 ? (changes as ProjectChanges) : null;
+}
+
+/** The project's sermons, as a key to tell when they change */
+const sermonsKey = (p: Project | null) => (p ? p.sources.map((s) => s.id).join() : "");
 
 export function selectionFor(m: Match, previous?: Selection): Selection {
   return {
@@ -131,7 +187,6 @@ function begins(m: Match): number {
 /** A project as it was before a change, to go back to */
 export interface Step {
   project: Project;
-  matchSet: MatchSet;
   /** What the change was ("choose a reading") */
   label: string;
 }
@@ -143,22 +198,42 @@ const MERGE_WITHIN = 1000;
 
 const LAST_PROJECT = "cab:lastProject";
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+/** The project as the backend has it (last read or saved), to send only what's changed since */
+let saved: Project | null = null;
+/** The save under way: saves are made one after another, in order */
+let saving: Promise<void> = Promise.resolve();
+/** Counts what's been opened or searched, so readings read for an earlier one are dropped */
+let generation = 0;
+/** Chapters being read, by `book.chapter` */
+const loading = new Map<string, Promise<void>>();
+/** The sermons the readings loaded were read for */
+let readFor = "";
 /** The last change recorded, to merge with */
 let lastChange: { merge: string; at: number } | null = null;
 
 export const useApp = create<AppState>((set, get) => {
-  const save = async () => {
+  /** Sends what's changed since the last save (after any save under way): the project as it is now */
+  const save = () => {
     saveTimer = null;
     const project = get().project;
-    if (!project) return;
-    set({ saving: true });
-    try {
-      await api.saveProject(project);
-    } catch (e) {
-      toast.error(`Couldn't save: ${errorMessage(e)}`);
-    } finally {
-      set({ saving: false });
-    }
+    saving = saving.then(async () => {
+      if (!project || saved?.id !== project.id) return;
+      const changes = changesOf(saved, project);
+      if (!changes) return;
+      set({ saving: true });
+      try {
+        await api.saveChanges(project.id, changes);
+        saved = project;
+        // Saving keeps what's read of the readings to the project's sermons
+        if (sermonsKey(project) !== readFor && get().project === project) void get().resetMatches();
+      } catch (e) {
+        // What wasn't saved is sent with the next save
+        toast.error(`Couldn't save: ${errorMessage(e)}`);
+      } finally {
+        set({ saving: false });
+      }
+    });
+    return saving;
   };
 
   const scheduleSave = () => {
@@ -168,13 +243,13 @@ export const useApp = create<AppState>((set, get) => {
 
   /** Keeps the project as it is now, to undo the change about to be made */
   const record = (label: string, merge?: string) => {
-    const { project, matchSet, past } = get();
+    const { project, past } = get();
     if (!project) return;
     const now = Date.now();
     const merging = merge !== undefined && lastChange?.merge === merge && now - lastChange.at < MERGE_WITHIN;
     lastChange = merge === undefined ? null : { merge, at: now };
     if (merging) return;
-    set({ past: [...past, { project, matchSet, label }].slice(-HISTORY), future: [] });
+    set({ past: [...past, { project, label }].slice(-HISTORY), future: [] });
   };
 
   /** Goes to a step, keeping where it came from on `to`'s side */
@@ -183,14 +258,13 @@ export const useApp = create<AppState>((set, get) => {
     const steps = state[from];
     const step = steps[steps.length - 1];
     if (!step || !state.project) return;
-    const here: Step = { project: state.project, matchSet: state.matchSet, label: step.label };
+    const here: Step = { project: state.project, label: step.label };
     const other = from === "past" ? "future" : "past";
     lastChange = null;
     set({
       [from]: steps.slice(0, -1),
       [other]: [...state[other], here],
       project: step.project,
-      ...(step.matchSet !== state.matchSet ? { matchSet: step.matchSet, ...index(step.matchSet) } : {}),
     });
     scheduleSave();
     toast(`${from === "past" ? "Undid" : "Redid"}: ${step.label}`);
@@ -201,8 +275,10 @@ export const useApp = create<AppState>((set, get) => {
     projects: [],
     project: null,
     outline: [],
-    matchSet: { analyzedAt: 0, matches: [], runs: [] },
-    ...index({ analyzedAt: 0, matches: [], runs: [] }),
+    summary: EMPTY_SUMMARY,
+    verseCounts: new Map(),
+    loadedChapters: new Set(),
+    ...emptyIndex(),
     bookText: {},
     tab: "verses",
     book: null,
@@ -223,7 +299,17 @@ export const useApp = create<AppState>((set, get) => {
     openProject: async (id) => {
       await get().flush();
       const project = await api.getProject(id);
-      const [outline, matchSet] = await Promise.all([api.bibleOutline(project.bibleId), api.getMatches(id)]);
+      saved = project;
+      // Readings kept as JSON before are moved into the readings database the first time, which takes a while
+      const slow = setTimeout(() => toast.loading("Reading the project's readings…", { id: "summary" }), 800);
+      let outline: BookOutline[];
+      let summary: Summary;
+      try {
+        [outline, summary] = await Promise.all([api.bibleOutline(project.bibleId), api.matchSummary(id)]);
+      } finally {
+        clearTimeout(slow);
+        toast.dismiss("summary");
+      }
       try {
         localStorage.setItem(LAST_PROJECT, id);
       } catch {
@@ -231,13 +317,15 @@ export const useApp = create<AppState>((set, get) => {
       }
       const first =
         outline.find((b) => b.id === project.book) ??
-        outline.find((b) => matchSet.matches.some((m) => m.book === b.id)) ??
+        outline.find((b) => summary.verses.some(([book]) => book === b.id)) ??
         outline[0];
       set({
         project,
         outline,
-        matchSet,
-        ...index(matchSet),
+        summary,
+        verseCounts: countsOf(summary),
+        loadedChapters: new Set(),
+        ...emptyIndex(),
         bookText: {},
         book: first?.id ?? null,
         chapter: first ? 1 : null,
@@ -247,22 +335,48 @@ export const useApp = create<AppState>((set, get) => {
         future: [],
       });
       lastChange = null;
-      if (first) void get().loadBook(first.id);
+      generation++;
+      loading.clear();
+      readFor = sermonsKey(project);
+      if (first) {
+        void get().loadBook(first.id);
+        void get().loadChapter(first.id, 1);
+      }
     },
 
     closeProject: () => {
-      void get().flush();
+      // Saved before it's closed (with what it's saved against)
+      void get().flush().then(() => {
+        if (!get().project) saved = null;
+      });
       try {
         localStorage.removeItem(LAST_PROJECT);
       } catch {
         // ignore
       }
-      set({ project: null, outline: [], bookText: {}, book: null, chapter: null, verse: null, past: [], future: [] });
+      generation++;
+      loading.clear();
+      set({
+        project: null,
+        outline: [],
+        summary: EMPTY_SUMMARY,
+        verseCounts: new Map(),
+        loadedChapters: new Set(),
+        ...emptyIndex(),
+        bookText: {},
+        book: null,
+        chapter: null,
+        verse: null,
+        past: [],
+        future: [],
+      });
       void get().refreshLists();
     },
 
     setProject: (project, label) => {
       record(label);
+      // As the backend changed and saved it
+      saved = project;
       set({ project });
     },
 
@@ -279,7 +393,44 @@ export const useApp = create<AppState>((set, get) => {
     undo: () => travel("past"),
     redo: () => travel("future"),
 
-    setMatches: (matchSet) => set({ matchSet, ...index(matchSet) }),
+    resetMatches: async (given) => {
+      const project = get().project;
+      if (!project) return;
+      const at = ++generation;
+      loading.clear();
+      readFor = sermonsKey(project);
+      try {
+        const summary = given ?? (await api.matchSummary(project.id));
+        if (at !== generation) return;
+        set({ summary, verseCounts: countsOf(summary), loadedChapters: new Set(), ...emptyIndex() });
+        const { book, chapter } = get();
+        if (book && chapter) await get().loadChapter(book, chapter);
+      } catch (e) {
+        toast.error(`Couldn't read the readings: ${errorMessage(e)}`);
+      }
+    },
+
+    loadChapter: (book, chapter) => {
+      const key = `${book}.${chapter}`;
+      const project = get().project;
+      if (!project || get().loadedChapters.has(key)) return Promise.resolve();
+      const pending = loading.get(key);
+      if (pending) return pending;
+      const at = generation;
+      const read = api.chapterMatches(project.id, book, chapter).then(
+        (found) => {
+          loading.delete(key);
+          if (at !== generation) return;
+          set((s) => ({ ...withChapter(s, found), loadedChapters: new Set(s.loadedChapters).add(key) }));
+        },
+        (e) => {
+          loading.delete(key);
+          toast.error(`Couldn't read ${key}'s readings: ${errorMessage(e)}`);
+        },
+      );
+      loading.set(key, read);
+      return read;
+    },
 
     loadBook: async (book) => {
       const have = get().bookText[book];
@@ -294,6 +445,7 @@ export const useApp = create<AppState>((set, get) => {
     go: (book, chapter, verse = null) => {
       set({ book, chapter, verse, tab: "verses" });
       void get().loadBook(book);
+      void get().loadChapter(book, chapter);
     },
 
     setVerse: (verse) => set({ verse }),
@@ -386,11 +538,20 @@ export const useApp = create<AppState>((set, get) => {
     flush: async () => {
       if (saveTimer) {
         clearTimeout(saveTimer);
-        await save();
+        void save();
       }
+      await saving;
     },
   };
 });
+
+/** The open project's id, once what's changed in it is saved: for what reads the project as the backend has it */
+export async function savedProjectId(): Promise<string> {
+  await useApp.getState().flush();
+  const project = useApp.getState().project;
+  if (!project) throw new Error("No project is open");
+  return project.id;
+}
 
 export function lastProjectId(): string | null {
   try {

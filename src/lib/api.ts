@@ -194,6 +194,18 @@ export interface Project {
   files?: Record<string, FileMetadata>;
 }
 
+/** Entries of a map changed: those set (added or changed), and those taken out */
+export interface Keyed<T> {
+  set: Record<string, T>;
+  removed: string[];
+}
+
+/** What's changed in a project since it was saved: each part given replaces its own, and chosen verses and sermon information change entry by entry */
+export type ProjectChanges = Partial<Omit<Project, "id" | "createdAt" | "updatedAt" | "selections" | "files">> & {
+  selections?: Keyed<Selection>;
+  files?: Keyed<FileMetadata>;
+};
+
 export interface ProjectSummary {
   id: string;
   name: string;
@@ -205,6 +217,8 @@ export interface ProjectSummary {
   updatedAt: number;
   sourceCount: number;
   selectionCount: number;
+  /** The folder it's kept in, when it was opened from one rather than made here */
+  folder: string | null;
 }
 
 export type MatchKind = "exact" | "close" | "partial";
@@ -241,6 +255,8 @@ export interface Match {
   alsoIn?: string[];
   /** Other verses worded the same (`book.chapter.verse`), when the sermon doesn't say which */
   alsoAt?: string[];
+  /** The words said, as the transcript has them (empty from searches before it was kept) */
+  said?: string;
 }
 
 export interface Run {
@@ -260,6 +276,70 @@ export interface MatchSet {
   analyzedAt: number;
   matches: Match[];
   runs: Run[];
+}
+
+/** How many readings a project has, and of which verses (each chapter's are read as it's shown) */
+export interface Summary {
+  /** When the sermons were last searched (0 if never) */
+  analyzedAt: number;
+  readings: number;
+  runs: number;
+  /** Each verse that has readings: [book, chapter, verse, readings] */
+  verses: [number, number, number, number][];
+}
+
+/** Which readings to list: each given part narrows them */
+export interface RowFilter {
+  kind?: MatchKind | null;
+  /** The translation each fits best, by abbreviation */
+  translation?: string | null;
+  speakers?: string[];
+  series?: string[];
+  /** Words its reference has ("Romans 8") */
+  reference?: string;
+}
+
+/** Which of the readings filtered to list: a sermon's, a chapter's, or all */
+export type RowGroup = { by: "sermon"; id: string } | { by: "chapter"; book: number; chapter: number } | { by: "all" };
+
+export interface SermonGroup {
+  id: string;
+  title: string;
+  speaker: string | null;
+  series: string | null;
+  readings: number;
+  verses: number;
+}
+
+export interface ChapterGroup {
+  chapter: number;
+  readings: number;
+  verses: number;
+}
+
+export interface BookGroup {
+  book: number;
+  name: string;
+  readings: number;
+  verses: number;
+  chapters: ChapterGroup[];
+}
+
+/** The readings filtered, counted, and grouped (each group's rows are read when it's opened) */
+export interface Overview {
+  /** All of them, unfiltered */
+  readings: number;
+  verses: number;
+  books: number;
+  sermons: number;
+  /** How many each translation fits best, most first (unfiltered) */
+  translations: [string, number][];
+  speakers: string[];
+  series: string[];
+  /** How many the filter keeps */
+  shown: number;
+  bySermon: SermonGroup[];
+  byBook: BookGroup[];
 }
 
 export interface Word {
@@ -309,16 +389,33 @@ export const api = {
   genres: () => invoke<Genre[]>("genres"),
   /** The books a scope searches, or null for every book; an error if it leaves nothing or names something unknown */
   scopeBooks: (scope: BookScope) => invoke<number[] | null>("scope_books", { scope }),
-  /** Every reading found, as rows, and written to `path` (CSV, or JSON for a .json path) if given */
-  readingRows: (project: Project, path: string | null) => invoke<ReadingRow[]>("reading_rows", { project, path }),
+  /** The readings a filter keeps, counted and grouped by sermon and by book and chapter */
+  readingsOverview: (projectId: string, filter: RowFilter) => invoke<Overview>("readings_overview", { projectId, filter }),
+  /** The readings a filter keeps of one group (a sermon's, a chapter's), as rows */
+  readingsRows: (projectId: string, filter: RowFilter, group: RowGroup) =>
+    invoke<ReadingRow[]>("readings_rows", { projectId, filter, group }),
+  /** Every reading a filter keeps written to `path` (CSV, or JSON for a .json path); how many */
+  exportReadings: (projectId: string, filter: RowFilter, path: string) =>
+    invoke<number>("export_readings", { projectId, filter, path }),
   getProject: (id: string) => invoke<Project>("get_project", { id }),
-  saveProject: (project: Project) => invoke<number>("save_project", { project }),
+  /** Saves what's changed since the project was last saved; when it was changed */
+  saveChanges: (projectId: string, changes: ProjectChanges) => invoke<number>("save_changes", { projectId, changes }),
+  /** Deletes a project made here; one opened from a folder is only closed, its folder kept */
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),
+  /** Opens a project kept in a folder of its own (as the command line makes them), where it is */
+  openProjectFolder: (path: string) => invoke<Project>("open_project_folder", { path }),
   addSources: (projectId: string, paths: string[]) =>
     invoke<{ project: Project; added: number; unpaired: string[]; skipped: string[] }>("add_sources", { projectId, paths }),
-  analyze: (project: Project) =>
-    invoke<{ project: Project; matches: MatchSet; errors: string[] }>("analyze", { project }),
-  getMatches: (projectId: string) => invoke<MatchSet>("get_matches", { projectId }),
+  /** Searches the project as it was last saved */
+  analyze: (projectId: string) =>
+    invoke<{ project: Project; summary: Summary; errors: string[] }>("analyze", { projectId }),
+  /** How many readings there are, and of which verses (made from the readings kept as JSON before, the first time) */
+  matchSummary: (projectId: string) => invoke<Summary>("match_summary", { projectId }),
+  /** A chapter's readings (best first in each verse), with their runs and those runs' other readings */
+  chapterMatches: (projectId: string, book: number, chapter: number) =>
+    invoke<MatchSet>("chapter_matches", { projectId, book, chapter }),
+  /** A sermon's readings as said, with its runs */
+  sermonMatches: (projectId: string, sourceId: string) => invoke<MatchSet>("sermon_matches", { projectId, sourceId }),
   transcriptWords: (transcriptPath: string, from: number, to: number) =>
     invoke<{ from: number; words: Word[] }>("transcript_words", { transcriptPath, from, to }),
   audioPeaks: (audioPath: string, start: number, end: number) =>
@@ -337,8 +434,9 @@ export const api = {
     targetDb?: number | null;
     gainDb?: number;
   }) => invoke<ArrayBuffer>("render_clip", { request }),
-  renderChapter: (project: Project, book: number, chapter: number) =>
-    invoke<ArrayBuffer>("render_chapter", { project, book, chapter }),
+  // These read the project as it was last saved: save it first (the store's `saved`)
+  renderChapter: (projectId: string, book: number, chapter: number) =>
+    invoke<ArrayBuffer>("render_chapter", { projectId, book, chapter }),
   /** A verse as it will be exported: all its readings, one after another, with its silence */
   /** Titles and passages by file id, from a JSON file (`{"<file id>": {"title": …, "passage": …}}`) */
   readFileMetadata: (path: string) => invoke<Record<string, FileMetadata>>("read_file_metadata", { path }),
@@ -346,16 +444,16 @@ export const api = {
   transcript: (transcriptPath: string) =>
     invoke<{ id: string | null; title: string | null; words: Word[]; paragraphs: number[] }>("transcript", { transcriptPath }),
   /** Where a phrase was said in the project's sermons (or some of them), up to `limit` places; its last word may be the start of one */
-  searchTranscripts: (project: Project, phrase: string, sourceIds: string[] | null, limit: number, prefix = true) =>
-    invoke<{ found: Said[]; more: boolean; errors: string[] }>("search_transcripts", { project, phrase, prefix, sourceIds, limit }),
-  renderVerse: (project: Project, book: number, chapter: number, verse: number) =>
-    invoke<ArrayBuffer>("render_verse", { project, book, chapter, verse }),
+  searchTranscripts: (projectId: string, phrase: string, sourceIds: string[] | null, limit: number, prefix = true) =>
+    invoke<{ found: Said[]; more: boolean; errors: string[] }>("search_transcripts", { projectId, phrase, prefix, sourceIds, limit }),
+  renderVerse: (projectId: string, book: number, chapter: number, verse: number) =>
+    invoke<ArrayBuffer>("render_verse", { projectId, book, chapter, verse }),
   /** When each chosen verse is heard in `renderChapter`'s audio */
-  chapterTimeline: (project: Project, book: number, chapter: number) =>
-    invoke<VerseTime[]>("chapter_timeline", { project, book, chapter }),
-  chaptersToExport: (project: Project) => invoke<ChapterRef[]>("chapters_to_export", { project }),
-  exportChapters: (project: Project, chapters: ChapterRef[] | null) =>
-    invoke<ExportedFile[]>("export_chapters", { project, chapters }),
+  chapterTimeline: (projectId: string, book: number, chapter: number) =>
+    invoke<VerseTime[]>("chapter_timeline", { projectId, book, chapter }),
+  chaptersToExport: (projectId: string) => invoke<ChapterRef[]>("chapters_to_export", { projectId }),
+  exportChapters: (projectId: string, chapters: ChapterRef[] | null) =>
+    invoke<ExportedFile[]>("export_chapters", { projectId, chapters }),
 };
 
 /** How a command fails: its message, shown as is, and what kind of failure it is */

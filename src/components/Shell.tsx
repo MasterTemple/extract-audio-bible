@@ -19,7 +19,7 @@ function typing(target: EventTarget | null): boolean {
 }
 
 export function Shell() {
-  const { project, bibles, tab, setTab, saving, closeProject, outline, past, future, undo, redo, matchSet } = useApp();
+  const { project, bibles, tab, setTab, saving, closeProject, outline, past, future, undo, redo, summary } = useApp();
   const readings = project?.kind === "readings";
 
   // Ctrl+Z undoes, Ctrl+Shift+Z and Ctrl+Y redo (⌘ on a Mac), except while typing
@@ -68,7 +68,7 @@ export function Shell() {
                 {(project.translations ?? [project.bibleId])
                   .map((id) => bibles.find((b) => b.id === id)?.abbreviation || bibles.find((b) => b.id === id)?.name || id)
                   .join(", ")}{" "}
-                · {matchSet.matches.length.toLocaleString()} readings found
+                · {summary.readings.toLocaleString()} readings found
               </>
             ) : (
               <>

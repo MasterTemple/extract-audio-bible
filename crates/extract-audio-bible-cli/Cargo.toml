@@ -11,7 +11,7 @@ name = "extract-audio-bible"
 path = "src/main.rs"
 
 [dependencies]
-extract-audio-bible = { path = "../extract-audio-bible", features = ["download"] }
+extract-audio-bible = { path = "../extract-audio-bible", features = ["download", "sqlite"] }
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

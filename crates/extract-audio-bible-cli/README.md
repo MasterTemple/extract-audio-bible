@@ -35,6 +35,19 @@ Included testaments limit the search; included genres and books add up within th
 excluded is left out. With `--csv`, each reading is a row: the sermon, the reference, the
 translation, the times, how it was read, and the words said.
 
+To keep what's found, and look through it in the app, make it a project:
+
+```sh
+extract-audio-bible init readings --bible esv.json --translation nasb.json --translation kjv/ --testament new
+extract-audio-bible add readings transcripts/        # .json or .json.gz
+extract-audio-bible sermons readings --info info.json
+extract-audio-bible search readings
+extract-audio-bible table readings -o readings.csv   # or readings.json
+```
+
+The app opens the folder where it is (**Open folder** under Projects), and what it changes there
+the command line sees.
+
 ## Audio downloaded by id
 
 A sermon can be a transcript alone, its audio downloaded when it's first needed (rendering or
@@ -51,8 +64,22 @@ or its file's name (`sermons` lists them).
 ## A step at a time
 
 A project is a folder holding `project.json` (its sermons, chosen readings, settings, and export
-metadata), `matches.json` (every reading found), and `bible.json`: the same formats the app keeps,
-so they can be read and edited by anything.
+metadata), `readings.sqlite` (every reading found), and `bible.json` (with every verse read, the
+other translations it searches are in `bibles/<id>.json`): the same formats the app keeps, so they
+can be read by anything, and the app can open the folder as it is. A folder made before keeps its
+readings in `matches.json`, which is moved into `readings.sqlite` the first time it's opened.
+
+`readings.sqlite` is SQLite, so `sqlite3`, Python's `sqlite3`, DuckDB, and the like read it as it
+is. `readings_table` has every reading as `table` gives them:
+
+```sh
+sqlite3 -header -csv readings/readings.sqlite \
+  "select reference, translation, sermon, said from readings_table where speaker = 'Zac Poonen'"
+```
+
+Its tables are `readings` (each reading; `verse_key` is `book × 1000000 + chapter × 1000 + verse`,
+`active` whether its sermon is still in the project), `runs`, `sermons`, `books`, `translations`,
+and counts by verse, chapter, and sermon.
 
 ```sh
 extract-audio-bible import bsb/ -o bsb.json --name "Berean Standard Bible" --abbreviation BSB
@@ -74,11 +101,13 @@ extract-audio-bible export 1thess -o audio-bible/
 | `import PATHS… -o FILE` | Reads a Bible's text and saves it as JSON, noting on stderr what it left out (files not read, books passed over; `warnings` with `--json`) |
 | `find --bible BIBLE [--translation BIBLE]… [--testament T] [--genre G]… [--book B]… [--exclude-…] [--csv] TRANSCRIPTS…` | The verses read in transcripts, with their times and translations (no project) |
 | `init DIR --bible BIBLE [--book B] [--name N]` | Starts a project for a book (or, with no `--book`, the whole Bible) |
+| `init DIR --bible BIBLE --readings [--translation BIBLE]… [--testament T] [--genre G]… [--book B]… [--exclude-…] [--name N]` | Starts a project finding every verse read, in these translations and books (`--translation` alone means `--readings`) |
 | `add DIR PATHS…` | Adds sermons from files or folders: audio files with the transcript of the same name, and transcripts alone (to search, or with `audioUrl` set, to download audio for); JSON that isn't a transcript is skipped |
 | `sermons DIR [--info FILE]` | Lists the sermons with their ids, titles, passages, speakers, and series; `--info` first reads them by id from JSON (`{"<id>": {"title": "…", "passage": "…", "speaker": "…", "series": "…"}}`), field by field. A sermon's id is the one its transcript gives (a Let's Church media id) once searched, or its file's name |
 | `transcript DIR SERMON` | A sermon's whole transcript (by its id or file name), in paragraphs with their times, the readings found marked where they begin (`[1Thess 5:15]` chosen, `<…>` not) |
 | `grep DIR PHRASE [--prefix] [--context N] [--limit N] [--speaker S]… [--series S]…` | Where a phrase was said in the sermons (or only those by some speakers, in some series), with its words in order whatever their case, accents, or punctuation, numbers spelled out ("70 times 7" finds "seventy times seven") |
 | `search DIR` | Finds every reading of the project's verses in its sermons |
+| `table DIR [-o FILE]` | Every reading found, as CSV (JSON with `--json` or a `.json` file): the sermon, its speaker and series, the reference, the translation (and others it fits), the times, how it was read, and the words said |
 | `choose DIR [--chapter C]… [--min-score S] [--replace]` | Chooses the best reading for each verse without one (0.9 exact, 0.75 exact and close, 0 anything) |
 | `status DIR` | Each chapter's chosen and missing verses |
 | `readings DIR VERSE` | A verse's readings (`5:15`, or `"1 Thess 5:15"`), numbered best first, marking those chosen |

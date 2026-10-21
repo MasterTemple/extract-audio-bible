@@ -379,7 +379,108 @@ pub fn stable_id(text: &str) -> String {
     format!("{:012x}", h.finish() & 0xffff_ffff_ffff)
 }
 
+/**
+Changes to a project, as an editor sends them while it's edited (rather than all of it, which with
+thousands of sermons is megabytes): each part given replaces the project's, and its chosen verses
+and what's known of its sermons change entry by entry
+*/
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectChanges {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ProjectKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bible_id: Option<String>,
+    /// `Some(None)` for the whole Bible (`null`), `None` (left out) for no change
+    #[serde(deserialize_with = "given", skip_serializing_if = "Option::is_none")]
+    pub book: Option<Option<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translations: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<BookScope>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<Source>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selections: Option<Keyed<Selection>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings: Option<Settings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Metadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<Keyed<FileMetadata>>,
+}
+
+/// Entries of a map changed: those set (added or changed), and those taken out, by key
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Keyed<T> {
+    pub set: BTreeMap<String, T>,
+    pub removed: Vec<String>,
+}
+
+impl<T> Default for Keyed<T> {
+    fn default() -> Self {
+        Keyed {
+            set: BTreeMap::new(),
+            removed: vec![],
+        }
+    }
+}
+
+impl<T> Keyed<T> {
+    fn apply(self, map: &mut BTreeMap<String, T>) {
+        for key in &self.removed {
+            map.remove(key);
+        }
+        map.extend(self.set);
+    }
+}
+
+/// A field given (even as `null`) is `Some`, so `null` can be told from left out
+fn given<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(d: D) -> std::result::Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
+}
+
 impl Project {
+    /// The project with `changes` made (see [`ProjectChanges`])
+    pub fn apply(&mut self, changes: ProjectChanges) {
+        let ProjectChanges {
+            name,
+            kind,
+            bible_id,
+            book,
+            translations,
+            scope,
+            sources,
+            selections,
+            settings,
+            metadata,
+            files,
+        } = changes;
+        fn set<T>(field: &mut T, value: Option<T>) {
+            if let Some(value) = value {
+                *field = value;
+            }
+        }
+        set(&mut self.name, name);
+        set(&mut self.kind, kind);
+        set(&mut self.bible_id, bible_id);
+        set(&mut self.book, book);
+        set(&mut self.translations, translations);
+        set(&mut self.scope, scope);
+        set(&mut self.sources, sources);
+        set(&mut self.settings, settings);
+        set(&mut self.metadata, metadata);
+        if let Some(selections) = selections {
+            selections.apply(&mut self.selections);
+        }
+        if let Some(files) = files {
+            files.apply(&mut self.files);
+        }
+    }
+
     /**
     A new project drawing on `bible`, for one `book` or the whole Bible. With no name, it's
     named after the book and translation ("John (ESV)")
@@ -655,21 +756,30 @@ fn url_encode(text: &str) -> String {
 /// The audio files a sermon can be
 pub const AUDIO: [&str; 7] = ["mp3", "m4a", "wav", "flac", "ogg", "aac", "mp4"];
 
+/// A file's extension, lowercase (a gzipped transcript's, `.json.gz`, is `json`)
 fn ext(p: &str) -> String {
-    Path::new(p)
+    let ext = Path::new(p)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
-        .to_ascii_lowercase()
+        .to_ascii_lowercase();
+    if ext == "gz" && p.to_ascii_lowercase().ends_with(".json.gz") {
+        return "json".into();
+    }
+    ext
 }
 
-/// A file's name without its extensions (`sermon.mp3.json` and `sermon.json` are `sermon`)
+/// A file's name without its extensions (`sermon.mp3.json`, `sermon.json`, and `sermon.json.gz`
+/// are `sermon`)
 fn base_name(p: &str) -> String {
     let mut stem = Path::new(p)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
+    if stem.to_ascii_lowercase().ends_with(".json.gz") {
+        stem.truncate(stem.len() - ".gz".len());
+    }
     while let Some((s, ext)) = stem.rsplit_once('.') {
         if ext.eq_ignore_ascii_case("json") || AUDIO.contains(&ext.to_ascii_lowercase().as_str()) {
             stem = s.to_string();
@@ -683,6 +793,57 @@ fn base_name(p: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changes_made_part_by_part() {
+        let bible = Bible {
+            id: "b".into(),
+            name: "Test".into(),
+            abbreviation: "T".into(),
+            language: None,
+            format: "text".into(),
+            books: vec![],
+        };
+        let mut p = Project::new("p", "", &bible, Some(43));
+        p.add_sources(&["a.json".into(), "b.json".into()]);
+        let selection = |id: &str| Selection {
+            match_id: id.into(),
+            source_id: "s".into(),
+            start: 0.0,
+            end: 1.0,
+            trim_start: 0.0,
+            trim_end: 0.0,
+            pad_before: 0.0,
+            pad_after: 0.0,
+            gain_db: 0.0,
+            needs_trim: false,
+            note: String::new(),
+            joined: vec![],
+        };
+        p.selections.insert("43.3.16".into(), selection("old"));
+        p.selections.insert("43.3.17".into(), selection("kept"));
+        let sources = p.sources.clone();
+
+        // As an editor sends them: only what changed, `null` meaning none
+        let changes: ProjectChanges = serde_json::from_str(
+            r#"{"name": "John", "selections": {"set": {"43.3.18": {"matchId": "new", "sourceId": "s", "start": 2, "end": 3,
+                "trimStart": 0, "trimEnd": 0, "padBefore": 0, "padAfter": 0, "gainDb": 0, "needsTrim": false, "note": ""}},
+                "removed": ["43.3.16"]}, "files": {"set": {"a": {"speaker": "Paul"}}}, "book": null}"#,
+        )
+        .unwrap();
+        p.apply(changes);
+        assert_eq!((p.name.as_str(), p.book), ("John", None));
+        assert_eq!(p.selections.keys().collect::<Vec<_>>(), ["43.3.17", "43.3.18"]);
+        assert_eq!(p.files["a"].speaker.as_deref(), Some("Paul"));
+        assert_eq!(p.sources.len(), sources.len());
+
+        // Left out is left as it is
+        p.apply(serde_json::from_str(r#"{"files": {"removed": ["a"]}}"#).unwrap());
+        assert_eq!((p.name.as_str(), p.book, p.selections.len()), ("John", None, 2));
+        assert!(p.files.is_empty());
+        p.apply(serde_json::from_str(r#"{"book": 44}"#).unwrap());
+        assert_eq!(p.book, Some(44));
+    }
 
     #[test]
     fn pairs_audio_with_transcripts() {
@@ -786,6 +947,32 @@ mod tests {
         p.identify(&id, Some("xyz"), None);
         assert_eq!(p.audio_path(&p.sources[1]), "https://example.com/audio/xyz.mp3");
         assert_eq!(p.add_sources(&paths).added, 0);
+    }
+
+    #[test]
+    fn gzipped_transcripts() {
+        let bible = Bible {
+            id: "b".into(),
+            name: "Test".into(),
+            abbreviation: "T".into(),
+            language: None,
+            format: "text".into(),
+            books: vec![],
+        };
+        let mut p = Project::new("p", "", &bible, None);
+        let paths: Vec<String> = ["a/one.mp3", "a/one.json.gz", "b/Two.JSON.GZ", "c/three.gz"]
+            .map(String::from)
+            .into();
+        let added = p.add_sources(&paths);
+        assert_eq!((added.added, added.unpaired.len()), (2, 0));
+        assert_eq!(
+            (p.sources[0].audio_path.as_str(), p.sources[0].transcript_path.as_str()),
+            ("a/one.mp3", "a/one.json.gz")
+        );
+        assert_eq!(
+            (p.sources[0].file_id(), p.sources[1].file_id()),
+            ("one".into(), "Two".into())
+        );
     }
 
     #[test]

@@ -8,19 +8,28 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
-import { api, errorMessage, type MatchKind, type ReadingRow } from "@/lib/api";
+import { api, errorMessage, type MatchKind, type Overview, type Project, type ReadingRow, type RowFilter, type RowGroup } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { play, usePlayer } from "@/lib/player";
 import { audioPathOf, formatTime, kindLabel, sourceColor } from "@/lib/refs";
 import { kindClass } from "./MatchCard";
 import { MultiSelect } from "./MultiSelect";
 
-/** Past this many sermons, or verses, the list starts folded (by sermon, or by book) */
+/** Past this many sermons, or readings, the list starts folded (by sermon, or by book and chapter) */
 const FOLD_SERMONS = 15;
-const FOLD_VERSES = 150;
+const FOLD_READINGS = 500;
+/** A reference typed in opens everything it finds, up to this many readings */
+const OPEN_FOUND_UP_TO = 2000;
+/** Sermons listed at first, and more each time more are asked for */
+const SERMON_PAGE = 100;
 
 /** What's folded in each project's views, kept while other tabs are open */
 const folded = new Map<string, Set<string>>();
+
+/** Each group's rows as read, by what they were read for (the project, its search, the filter, the group) */
+const rowCache = new Map<string, ReadingRow[]>();
+
+const testamentOf = (book: number) => (book <= 39 ? "Old Testament" : book <= 66 ? "New Testament" : "Other books");
 
 /** A level of the list that folds: its name, and how much is in it */
 function Fold({
@@ -28,25 +37,26 @@ function Fold({
   onToggle,
   depth,
   label,
-  rows,
+  readings,
+  verses,
   children,
 }: {
   open: boolean;
   onToggle: () => void;
   depth: number;
   label: React.ReactNode;
-  rows: ReadingRow[];
+  readings: number;
+  verses: number;
   children?: React.ReactNode;
 }) {
-  const verses = new Set(rows.map((r) => `${r.book}.${r.chapter}.${r.verse}`)).size;
   return (
     <div className="flex items-center gap-1.5" style={{ paddingLeft: depth * 16 }}>
       <button className="flex min-w-0 items-center gap-1.5 rounded px-1 py-1 text-left hover:bg-muted" onClick={onToggle}>
         <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
         <span className={cn("truncate", depth === 0 ? "text-sm font-semibold" : "text-sm font-medium")}>{label}</span>
         <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-          {rows.length.toLocaleString()} reading{rows.length === 1 ? "" : "s"}
-          {verses !== rows.length && ` · ${verses.toLocaleString()} verse${verses === 1 ? "" : "s"}`}
+          {readings.toLocaleString()} reading{readings === 1 ? "" : "s"}
+          {verses !== readings && ` · ${verses.toLocaleString()} verse${verses === 1 ? "" : "s"}`}
         </span>
       </button>
       {children}
@@ -54,21 +64,70 @@ function Fold({
   );
 }
 
-const testamentOf = (book: number) => (book <= 39 ? "Old Testament" : book <= 66 ? "New Testament" : "Other books");
-const bookOf = (r: ReadingRow) => r.reference.replace(/ \d+:\d+$/, "");
+/** A group's readings, read when it's opened, given to `children` once they're here */
+function GroupRows({
+  project,
+  filter,
+  group,
+  readFor,
+  children,
+}: {
+  project: Project;
+  filter: RowFilter;
+  group: RowGroup;
+  /** What the readings were read for (changes when they're searched again or filtered) */
+  readFor: string;
+  children: (rows: ReadingRow[]) => React.ReactNode;
+}) {
+  const key = `${readFor}|${JSON.stringify(group)}`;
+  const [rows, setRows] = useState<{ key: string; rows: ReadingRow[] } | null>(() => {
+    const cached = rowCache.get(key);
+    return cached ? { key, rows: cached } : null;
+  });
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const cached = rowCache.get(key);
+    if (cached) {
+      setRows({ key, rows: cached });
+      return;
+    }
+    let live = true;
+    api.readingsRows(project.id, filter, group).then(
+      (found) => {
+        rowCache.set(key, found);
+        if (live) setRows({ key, rows: found });
+      },
+      (e) => live && setError(errorMessage(e)),
+    );
+    return () => {
+      live = false;
+    };
+    // `key` covers the project, the filter, and the group
+  }, [key]);
+  if (error) return <p className="px-2 py-1 text-sm text-destructive">{error}</p>;
+  if (rows?.key !== key)
+    return (
+      <div className="flex items-center gap-2 px-8 py-1.5 text-xs text-muted-foreground">
+        <Loader2 className="size-3.5 animate-spin" /> Reading…
+      </div>
+    );
+  return <>{children(rows.rows)}</>;
+}
 
 /** Every verse read in the project's sermons, by sermon or by verse */
 export function ReadingsPanel() {
-  const { project, matchSet, openTranscript, setTab } = useApp();
+  const { project, summary, openTranscript, setTab } = useApp();
   const player = usePlayer();
-  const [rows, setRows] = useState<ReadingRow[] | null>(null);
+  const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<"sermon" | "verse">("sermon");
-  const [filter, setFilter] = useState("");
+  const [filterText, setFilterText] = useState("");
+  const [reference, setReference] = useState("");
   const [kind, setKind] = useState<MatchKind | "all">("all");
   const [translation, setTranslation] = useState("all");
   const [speakers, setSpeakers] = useState<string[]>([]);
   const [series, setSeries] = useState<string[]>([]);
+  const [sermonsShown, setSermonsShown] = useState(SERMON_PAGE);
   // What's folded: sermons (`s:id`), testaments (`t:name`), books (`b:id`), chapters (`c:book.chapter`)
   const [fold, setFold] = useState<Set<string> | null>(() => (project ? folded.get(project.id) ?? null : null));
   const changeFold = (next: Set<string>) => {
@@ -76,98 +135,74 @@ export function ReadingsPanel() {
     if (project) folded.set(project.id, next);
   };
 
-  // The rows (with the words said) come from the saved readings and the transcripts
-  const sources = project?.sources;
-  const files = project?.files;
+  // A reference is looked for once typing pauses
   useEffect(() => {
-    const p = useApp.getState().project;
-    if (!p) return;
+    const t = setTimeout(() => setReference(filterText.trim()), 250);
+    return () => clearTimeout(t);
+  }, [filterText]);
+
+  const filter: RowFilter = useMemo(
+    () => ({
+      kind: kind === "all" ? null : kind,
+      translation: translation === "all" ? null : translation,
+      speakers,
+      series,
+      reference,
+    }),
+    [kind, translation, speakers, series, reference],
+  );
+  const projectId = project?.id;
+  const readFor = `${projectId}|${summary.analyzedAt}|${summary.readings}|${JSON.stringify(filter)}`;
+
+  // The readings counted and grouped; each group's are read when it's opened
+  useEffect(() => {
+    if (!projectId || summary.analyzedAt === 0) return;
     let live = true;
     setError(null);
-    api.readingRows(p, null).then(
-      (r) => live && setRows(r),
+    rowCache.clear();
+    api.readingsOverview(projectId, filter).then(
+      (o) => {
+        if (!live) return;
+        setOverview(o);
+        setSermonsShown(SERMON_PAGE);
+      },
       (e) => live && setError(errorMessage(e)),
     );
     return () => {
       live = false;
     };
-  }, [matchSet, sources, files]);
+    // `readFor` covers the project, its search, and the filter
+  }, [readFor]);
 
-  const kept = useMemo(() => {
-    const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
-    const among = (value: string | null, wanted: string[]) => wanted.length === 0 || (!!value && wanted.includes(value.trim()));
-    return (rows ?? []).filter(
-      (r) =>
-        (kind === "all" || r.kind === kind) &&
-        (translation === "all" || r.translation === translation) &&
-        among(r.speaker, speakers) &&
-        among(r.series, series) &&
-        words.every((w) => r.reference.toLowerCase().includes(w)),
-    );
-  }, [rows, filter, kind, translation, speakers, series]);
-
-  // The speakers and series the readings' sermons have
-  const [speakerList, seriesList] = useMemo(() => {
-    const of = (pick: (r: ReadingRow) => string | null) =>
-      [...new Set((rows ?? []).map(pick).filter((v): v is string => !!v?.trim()).map((v) => v.trim()))].sort((a, b) => a.localeCompare(b));
-    return [of((r) => r.speaker), of((r) => r.series)];
-  }, [rows]);
-
-  const bySermon = useMemo(() => {
-    const groups = new Map<string, ReadingRow[]>();
-    for (const r of kept) {
-      const list = groups.get(r.sourceId);
-      if (list) list.push(r);
-      else groups.set(r.sourceId, [r]);
-    }
-    return [...groups.entries()];
-  }, [kept]);
-
-  const byVerse = useMemo(() => {
-    const groups = new Map<string, ReadingRow[]>();
-    for (const r of kept) {
-      const key = `${r.book}.${r.chapter}.${r.verse}`;
-      const list = groups.get(key);
-      if (list) list.push(r);
-      else groups.set(key, [r]);
-    }
-    return [...groups.values()].sort((a, b) => a[0].book - b[0].book || a[0].chapter - b[0].chapter || a[0].verse - b[0].verse);
-  }, [kept]);
-
-  const translations = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const r of rows ?? []) counts.set(r.translation, (counts.get(r.translation) ?? 0) + 1);
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [rows]);
-
-  // Testament, then book, then chapter, then each verse's readings
+  // Testament, then book, then chapter (each chapter's verses read when it's opened)
   const tree = useMemo(() => {
-    const testaments: { name: string; rows: ReadingRow[]; books: { id: number; name: string; rows: ReadingRow[]; chapters: { chapter: number; rows: ReadingRow[]; verses: ReadingRow[][] }[] }[] }[] = [];
-    for (const verse of byVerse) {
-      const r = verse[0];
-      const tName = testamentOf(r.book);
+    const testaments: { name: string; readings: number; verses: number; books: Overview["byBook"] }[] = [];
+    for (const b of overview?.byBook ?? []) {
+      const name = testamentOf(b.book);
       let t = testaments[testaments.length - 1];
-      if (t?.name !== tName) testaments.push((t = { name: tName, rows: [], books: [] }));
-      let b = t.books[t.books.length - 1];
-      if (b?.id !== r.book) t.books.push((b = { id: r.book, name: bookOf(r), rows: [], chapters: [] }));
-      let c = b.chapters[b.chapters.length - 1];
-      if (c?.chapter !== r.chapter) b.chapters.push((c = { chapter: r.chapter, rows: [], verses: [] }));
-      c.verses.push(verse);
-      for (const list of [t.rows, b.rows, c.rows]) list.push(...verse);
+      if (t?.name !== name) testaments.push((t = { name, readings: 0, verses: 0, books: [] }));
+      t.books.push(b);
+      t.readings += b.readings;
+      t.verses += b.verses;
     }
     return testaments;
-  }, [byVerse]);
+  }, [overview]);
 
   // Until something is folded or unfolded, a long list starts folded
   const shut = useMemo(() => {
     if (fold) return fold;
     const start = new Set<string>();
-    if (bySermon.length > FOLD_SERMONS) for (const [id] of bySermon) start.add(`s:${id}`);
-    if (byVerse.length > FOLD_VERSES) for (const t of tree) for (const b of t.books) start.add(`b:${b.id}`);
+    if (!overview) return start;
+    if (overview.bySermon.length > FOLD_SERMONS) for (const g of overview.bySermon) start.add(`s:${g.id}`);
+    if (overview.shown > FOLD_READINGS)
+      for (const b of overview.byBook) {
+        start.add(`b:${b.book}`);
+        for (const c of b.chapters) start.add(`c:${b.book}.${c.chapter}`);
+      }
     return start;
-  }, [fold, bySermon, byVerse, tree]);
-  // A reference typed in shows everything it finds
-  const searching = filter.trim() !== "";
+  }, [fold, overview]);
+  // A reference typed in shows everything it finds, when that isn't too much to read
+  const searching = reference !== "" && (overview?.shown ?? 0) <= OPEN_FOUND_UP_TO;
   const isOpen = (key: string) => searching || !shut.has(key);
   const toggle = (key: string) => {
     const next = new Set(shut);
@@ -177,13 +212,13 @@ export function ReadingsPanel() {
   };
   const foldAll = () => {
     const next = new Set(shut);
-    if (view === "sermon") for (const [id] of bySermon) next.add(`s:${id}`);
+    if (view === "sermon") for (const g of overview?.bySermon ?? []) next.add(`s:${g.id}`);
     else
       for (const t of tree) {
         next.add(`t:${t.name}`);
         for (const b of t.books) {
-          next.add(`b:${b.id}`);
-          for (const c of b.chapters) next.add(`c:${b.id}.${c.chapter}`);
+          next.add(`b:${b.book}`);
+          for (const c of b.chapters) next.add(`c:${b.book}.${c.chapter}`);
         }
       }
     changeFold(next);
@@ -195,10 +230,10 @@ export function ReadingsPanel() {
 
   if (!project) return null;
 
-  if (matchSet.analyzedAt === 0 || (rows && rows.length === 0 && !error)) {
+  if (summary.analyzedAt === 0 || (overview && overview.readings === 0 && !error)) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-        {project.sources.length === 0 ? "Add sermons, then search them." : matchSet.analyzedAt === 0 ? "Search the sermons to find the verses read." : "No verses were found in these sermons."}
+        {project.sources.length === 0 ? "Add sermons, then search them." : summary.analyzedAt === 0 ? "Search the sermons to find the verses read." : "No verses were found in these sermons."}
         <Button variant="outline" onClick={() => setTab("sources")}>
           Go to Sermons
         </Button>
@@ -206,15 +241,16 @@ export function ReadingsPanel() {
     );
   }
 
-  const exportAs = async (format: "csv" | "json") => {
+  const filtered = overview !== null && overview.shown !== overview.readings;
+  const exportAs = async (format: "csv" | "json", only: RowFilter) => {
     const path = await save({
       defaultPath: `${project.name}.${format}`,
       filters: [{ name: format === "csv" ? "CSV" : "JSON", extensions: [format] }],
     });
     if (!path) return;
     try {
-      const written = await api.readingRows(project, path);
-      toast.success(`Exported ${written.length.toLocaleString()} readings`);
+      const written = await api.exportReadings(project.id, only, path);
+      toast.success(`Exported ${written.toLocaleString()} readings`);
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -307,38 +343,54 @@ export function ReadingsPanel() {
     );
   };
 
-  const verses = new Set((rows ?? []).map((r) => `${r.book}.${r.chapter}.${r.verse}`)).size;
-  const books = new Set((rows ?? []).map((r) => r.book)).size;
-  const sermons = new Set((rows ?? []).map((r) => r.sourceId)).size;
+  /** A chapter's readings, by verse */
+  const byVerse = (rows: ReadingRow[]) => {
+    const verses: ReadingRow[][] = [];
+    for (const r of rows) {
+      const last = verses[verses.length - 1];
+      if (last && last[0].verse === r.verse) last.push(r);
+      else verses.push([r]);
+    }
+    return verses.map(verseRow);
+  };
+
+  const sermons = overview?.bySermon ?? [];
 
   return (
     <div className="flex h-full flex-col">
       <div className="space-y-3 border-b px-6 py-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-          {rows ? (
+          {overview ? (
             <span>
-              <span className="font-semibold">{rows.length.toLocaleString()}</span> readings of{" "}
-              <span className="font-semibold">{verses.toLocaleString()}</span> verses in {books} books, in {sermons} sermons
+              <span className="font-semibold">{overview.readings.toLocaleString()}</span> readings of{" "}
+              <span className="font-semibold">{overview.verses.toLocaleString()}</span> verses in {overview.books} books, in{" "}
+              {overview.sermons.toLocaleString()} sermons
             </span>
           ) : (
             <span className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" /> Reading the transcripts…
+              <Loader2 className="size-4 animate-spin" /> Counting the readings…
             </span>
           )}
-          {translations.length > 1 && (
+          {overview && overview.translations.length > 1 && (
             <span className="text-xs text-muted-foreground">
-              {translations.map(([t, n]) => `${t} ${n.toLocaleString()}`).join(" · ")} (the translation each fits best)
+              {overview.translations.map(([t, n]) => `${t} ${n.toLocaleString()}`).join(" · ")} (the translation each fits best)
             </span>
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="outline" className="ml-auto" disabled={!rows}>
+              <Button size="sm" variant="outline" className="ml-auto" disabled={!overview}>
                 <Download /> Export
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => exportAs("csv")}>CSV (a spreadsheet)</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => exportAs("json")}>JSON</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => exportAs("csv", {})}>CSV (a spreadsheet)</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => exportAs("json", {})}>JSON</DropdownMenuItem>
+              {filtered && (
+                <>
+                  <DropdownMenuItem onClick={() => exportAs("csv", filter)}>CSV of what's shown</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportAs("json", filter)}>JSON of what's shown</DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -349,7 +401,7 @@ export function ReadingsPanel() {
           </ToggleGroup>
           <div className="relative w-64">
             <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input className="h-8 pl-8 text-sm" placeholder="Filter by reference (Romans 8)" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <Input className="h-8 pl-8 text-sm" placeholder="Filter by reference (Romans 8)" value={filterText} onChange={(e) => setFilterText(e.target.value)} />
           </div>
           <Select value={kind} onValueChange={(v) => setKind(v as MatchKind | "all")}>
             <SelectTrigger size="sm" className="w-36">
@@ -362,14 +414,14 @@ export function ReadingsPanel() {
               <SelectItem value="partial">Partial</SelectItem>
             </SelectContent>
           </Select>
-          {translations.length > 1 && (
+          {overview && overview.translations.length > 1 && (
             <Select value={translation} onValueChange={setTranslation}>
               <SelectTrigger size="sm" className="w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Every translation</SelectItem>
-                {translations.map(([t]) => (
+                {overview.translations.map(([t]) => (
                   <SelectItem key={t} value={t}>
                     {t}
                   </SelectItem>
@@ -377,29 +429,27 @@ export function ReadingsPanel() {
               </SelectContent>
             </Select>
           )}
-          {speakerList.length > 0 && (
+          {overview && overview.speakers.length > 0 && (
             <MultiSelect
               className="w-56"
-              options={speakerList.map((v) => ({ value: v, label: v }))}
+              options={overview.speakers.map((v) => ({ value: v, label: v }))}
               value={speakers}
               onChange={setSpeakers}
               placeholder="Every speaker"
               searchPlaceholder="Search speakers…"
             />
           )}
-          {seriesList.length > 0 && (
+          {overview && overview.series.length > 0 && (
             <MultiSelect
               className="w-56"
-              options={seriesList.map((v) => ({ value: v, label: v }))}
+              options={overview.series.map((v) => ({ value: v, label: v }))}
               value={series}
               onChange={setSeries}
               placeholder="Every series"
               searchPlaceholder="Search series…"
             />
           )}
-          {rows && kept.length !== rows.length && (
-            <span className="text-xs text-muted-foreground">{kept.length.toLocaleString()} shown</span>
-          )}
+          {filtered && <span className="text-xs text-muted-foreground">{overview.shown.toLocaleString()} shown</span>}
           <div className="ml-auto flex items-center gap-1">
             {searching && <span className="text-xs text-muted-foreground">Showing everything found</span>}
             <Button size="sm" variant="ghost" disabled={searching} onClick={unfoldAll} title="Open every sermon, or every testament, book, and chapter">
@@ -415,69 +465,92 @@ export function ReadingsPanel() {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl space-y-1 p-6">
-          {view === "sermon"
-            ? bySermon.map(([sourceId, list]) => {
-                const open = isOpen(`s:${sourceId}`);
+          {view === "sermon" ? (
+            <>
+              {sermons.slice(0, sermonsShown).map((g) => {
+                const open = isOpen(`s:${g.id}`);
                 return (
-                  <section key={sourceId} className={cn("rounded-lg border bg-background px-2 py-1", open && "pb-2")}>
+                  <section key={g.id} className={cn("rounded-lg border bg-background px-2 py-1", open && "pb-2")}>
                     <Fold
                       open={open}
-                      onToggle={() => toggle(`s:${sourceId}`)}
+                      onToggle={() => toggle(`s:${g.id}`)}
                       depth={0}
-                      rows={list}
+                      readings={g.readings}
+                      verses={g.verses}
                       label={
                         <span className="flex items-center gap-2">
-                          <span className="size-2.5 shrink-0 rounded-full" style={{ background: sourceColor(project, sourceId) }} />
-                          {list[0].sermon}
-                          {(list[0].speaker || list[0].series) && (
-                            <span className="text-xs font-normal text-muted-foreground">
-                              {[list[0].speaker, list[0].series].filter(Boolean).join(" · ")}
-                            </span>
+                          <span className="size-2.5 shrink-0 rounded-full" style={{ background: sourceColor(project, g.id) }} />
+                          {g.title}
+                          {(g.speaker || g.series) && (
+                            <span className="text-xs font-normal text-muted-foreground">{[g.speaker, g.series].filter(Boolean).join(" · ")}</span>
                           )}
                         </span>
                       }
                     >
-                      <Button size="xs" variant="ghost" className="ml-auto" onClick={() => openTranscript(sourceId)}>
+                      <Button size="xs" variant="ghost" className="ml-auto" onClick={() => openTranscript(g.id)}>
                         <FileText /> Transcript
                       </Button>
                     </Fold>
-                    {open && <div className="space-y-0.5 pt-1">{list.map(sermonRow)}</div>}
-                  </section>
-                );
-              })
-            : tree.map((t) => {
-                const tOpen = isOpen(`t:${t.name}`);
-                return (
-                  <section key={t.name} className="rounded-lg border bg-background px-2 py-1">
-                    <Fold open={tOpen} onToggle={() => toggle(`t:${t.name}`)} depth={0} rows={t.rows} label={t.name} />
-                    {tOpen &&
-                      t.books.map((b) => {
-                        const bOpen = isOpen(`b:${b.id}`);
-                        return (
-                          <div key={b.id}>
-                            <Fold open={bOpen} onToggle={() => toggle(`b:${b.id}`)} depth={1} rows={b.rows} label={b.name} />
-                            {bOpen &&
-                              b.chapters.map((c) => {
-                                const cOpen = isOpen(`c:${b.id}.${c.chapter}`);
-                                return (
-                                  <div key={c.chapter}>
-                                    <Fold
-                                      open={cOpen}
-                                      onToggle={() => toggle(`c:${b.id}.${c.chapter}`)}
-                                      depth={2}
-                                      rows={c.rows}
-                                      label={`${b.name} ${c.chapter}`}
-                                    />
-                                    {cOpen && <div className="space-y-1 pt-0.5 pb-1.5 pl-16">{c.verses.map(verseRow)}</div>}
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        );
-                      })}
+                    {open && (
+                      <GroupRows project={project} filter={filter} group={{ by: "sermon", id: g.id }} readFor={readFor}>
+                        {(rows) => <div className="space-y-0.5 pt-1">{rows.map(sermonRow)}</div>}
+                      </GroupRows>
+                    )}
                   </section>
                 );
               })}
+              {sermons.length > sermonsShown && (
+                <Button variant="outline" className="w-full" onClick={() => setSermonsShown((n) => n + SERMON_PAGE * 2)}>
+                  Show {Math.min(SERMON_PAGE * 2, sermons.length - sermonsShown).toLocaleString()} more sermons (
+                  {(sermons.length - sermonsShown).toLocaleString()} not shown)
+                </Button>
+              )}
+            </>
+          ) : (
+            tree.map((t) => {
+              const tOpen = isOpen(`t:${t.name}`);
+              return (
+                <section key={t.name} className="rounded-lg border bg-background px-2 py-1">
+                  <Fold open={tOpen} onToggle={() => toggle(`t:${t.name}`)} depth={0} readings={t.readings} verses={t.verses} label={t.name} />
+                  {tOpen &&
+                    t.books.map((b) => {
+                      const bOpen = isOpen(`b:${b.book}`);
+                      return (
+                        <div key={b.book}>
+                          <Fold open={bOpen} onToggle={() => toggle(`b:${b.book}`)} depth={1} readings={b.readings} verses={b.verses} label={b.name} />
+                          {bOpen &&
+                            b.chapters.map((c) => {
+                              const cOpen = isOpen(`c:${b.book}.${c.chapter}`);
+                              return (
+                                <div key={c.chapter}>
+                                  <Fold
+                                    open={cOpen}
+                                    onToggle={() => toggle(`c:${b.book}.${c.chapter}`)}
+                                    depth={2}
+                                    readings={c.readings}
+                                    verses={c.verses}
+                                    label={`${b.name} ${c.chapter}`}
+                                  />
+                                  {cOpen && (
+                                    <GroupRows
+                                      project={project}
+                                      filter={filter}
+                                      group={{ by: "chapter", book: b.book, chapter: c.chapter }}
+                                      readFor={readFor}
+                                    >
+                                      {(rows) => <div className="space-y-1 pt-0.5 pb-1.5 pl-16">{byVerse(rows)}</div>}
+                                    </GroupRows>
+                                  )}
+                                </div>
+                              );
+                            })}
+                        </div>
+                      );
+                    })}
+                </section>
+              );
+            })
+          )}
         </div>
       </div>
     </div>

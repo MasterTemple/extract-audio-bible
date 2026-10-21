@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronUp, X } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, ChevronUp, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { partsOf, useApp } from "@/lib/store";
@@ -6,9 +7,13 @@ import { bookName, verseKey, versesNeeded } from "@/lib/refs";
 import { MatchCard } from "./MatchCard";
 import { ClipEditor } from "./ClipEditor";
 
+/** Readings shown at first, and more each time more are asked for (a verse can have thousands) */
+const PAGE = 50;
+
 export function VerseDetail() {
-  const { project, outline, book, chapter, verse, bookText, matchesByVerse, setVerse } = useApp();
+  const { project, outline, book, chapter, verse, bookText, matchesByVerse, loadedChapters, setVerse } = useApp();
   const b = outline.find((x) => x.id === book);
+  const [shown, setShown] = useState({ key: "", count: PAGE });
   if (!project || !b || !chapter || !verse) return null;
   const key = verseKey(b.id, chapter, verse);
   const text = bookText[b.id]?.[chapter - 1];
@@ -18,6 +23,8 @@ export function VerseDetail() {
   const part = (id: string) => (chosen.includes(id) ? chosen.indexOf(id) : null);
   const order = (id: string) => part(id) ?? Infinity;
   const matches = [...(matchesByVerse.get(key) ?? [])].sort((x, y) => order(x.id) - order(y.id) || y.score - x.score);
+  const loaded = loadedChapters.has(`${b.id}.${chapter}`);
+  const count = shown.key === key ? shown.count : PAGE;
   const verses = versesNeeded(b, chapter);
   const i = verses.indexOf(verse);
 
@@ -69,15 +76,25 @@ export function VerseDetail() {
 
           <div className="space-y-2">
             <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Readings found</div>
-            {matches.length === 0 && (
+            {!loaded && (
+              <div className="flex justify-center p-6">
+                <Loader2 className="animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {loaded && matches.length === 0 && (
               <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
                 This verse wasn't found in any sermon. Lowering the minimum match on the Sermons tab may find partial
                 readings.
               </p>
             )}
-            {matches.map((m) => (
+            {matches.slice(0, count).map((m) => (
               <MatchCard key={m.id} match={m} verseText={text?.[verse - 1] ?? ""} part={part(m.id)} parts={chosen.length} />
             ))}
+            {matches.length > count && (
+              <Button variant="outline" className="w-full" onClick={() => setShown({ key, count: count + PAGE * 4 })}>
+                Show {Math.min(PAGE * 4, matches.length - count).toLocaleString()} more ({(matches.length - count).toLocaleString()} not shown)
+              </Button>
+            )}
           </div>
         </div>
       </ScrollArea>

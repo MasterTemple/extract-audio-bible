@@ -36,6 +36,10 @@ pub enum Error {
     Tag(#[from] id3::Error),
     #[error("Downloading {url}: {message}")]
     Download { url: String, message: String },
+    /// A project's readings database (`readings.sqlite`) that couldn't be read or written
+    #[cfg(feature = "sqlite")]
+    #[error("Readings database: {0}")]
+    Database(#[from] rusqlite::Error),
 }
 
 impl Error {
@@ -57,6 +61,8 @@ impl Error {
             Error::Invalid(_) | Error::Json(_) | Error::Text(_) => ErrorKind::Invalid,
             Error::Audio(_) | Error::Tag(_) => ErrorKind::Audio,
             Error::Download { .. } => ErrorKind::Network,
+            #[cfg(feature = "sqlite")]
+            Error::Database(_) => ErrorKind::Io,
         }
     }
 }

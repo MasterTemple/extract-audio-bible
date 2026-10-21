@@ -66,6 +66,9 @@ pub struct Match {
     /// `19.14.1`), when the sermon doesn't say which
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub also_at: Vec<String>,
+    /// The words said, as the transcript has them (empty from searches before it was kept)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub said: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -186,6 +189,10 @@ pub fn find_matches(
                 also_at: (q.also_at.iter())
                     .map(|r| crate::export::verse_key(r.book.0, r.chapter as u16, r.verse as u16))
                     .collect(),
+                said: (words[ws..=we].iter())
+                    .map(|w| w.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
             }
         })
         .collect();

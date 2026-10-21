@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { BookOpen, FolderOpen, Plus, Trash2 } from "lucide-react";
+import { BookOpen, FolderInput, FolderOpen, Plus, Trash2 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -43,10 +44,26 @@ export function Home() {
     }
   };
 
-  const remove = async (id: string, label: string) => {
-    if (!confirm(`Delete the project “${label}”? Your audio and transcripts are not touched.`)) return;
+  const remove = async (id: string, label: string, folder: string | null) => {
+    const question = folder
+      ? `Close the project “${label}”? Its folder (${folder}) is kept, to open again.`
+      : `Delete the project “${label}”? Your audio and transcripts are not touched.`;
+    if (!confirm(question)) return;
     await api.deleteProject(id);
     await refreshLists();
+  };
+
+  // A project kept in a folder of its own (as the command line makes them), opened where it is
+  const openFolder = async () => {
+    const path = await open({ directory: true });
+    if (typeof path !== "string") return;
+    try {
+      const project = await api.openProjectFolder(path);
+      await refreshLists();
+      await openProject(project.id);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
   };
 
   return (
@@ -69,6 +86,11 @@ export function Home() {
             <CardHeader>
               <CardTitle>Projects</CardTitle>
               <CardDescription>An audio Bible in one translation, or every verse read in some sermons.</CardDescription>
+              <CardAction>
+                <Button size="sm" variant="outline" onClick={openFolder} title="Open a project folder, as the command line makes them">
+                  <FolderInput /> Open folder
+                </Button>
+              </CardAction>
             </CardHeader>
             <CardContent className="space-y-2">
               {projects.length === 0 && <p className="text-sm text-muted-foreground">No projects yet.</p>}
@@ -83,11 +105,21 @@ export function Home() {
                         .join(", ")}{" "}
                       · {p.sourceCount} sermons{p.kind === "readings" ? "" : ` · ${p.selectionCount} verses chosen`}
                     </div>
+                    {p.folder && (
+                      <div className="truncate text-xs text-muted-foreground" title={p.folder}>
+                        {p.folder}
+                      </div>
+                    )}
                   </div>
                   <Button size="sm" onClick={() => openProject(p.id).catch((e) => toast.error(errorMessage(e)))}>
                     <FolderOpen /> Open
                   </Button>
-                  <Button size="icon-sm" variant="ghost" onClick={() => remove(p.id, p.name)}>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    title={p.folder ? "Close (the folder is kept)" : "Delete"}
+                    onClick={() => remove(p.id, p.name, p.folder)}
+                  >
                     <Trash2 />
                   </Button>
                 </div>

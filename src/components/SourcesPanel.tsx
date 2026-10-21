@@ -17,7 +17,7 @@ import { ScopeEditor, TranslationPicker } from "./ScopeEditor";
 import { audioPathOf, fileIdOf, fileMetadataOf, fileName, formatTime, sourceColor, valuesOf } from "@/lib/refs";
 
 export function SourcesPanel() {
-  const { project, update, setProject, setMatches, matchSet, flush, setTab, outline, go, setFileMetadata, openTranscript, bibles } =
+  const { project, update, setProject, resetMatches, summary, flush, setTab, outline, go, setFileMetadata, openTranscript, bibles } =
     useApp();
   const [bookChanged, setBookChanged] = useState(false);
   // Files the last add left out: audio without a transcript, and JSON that isn't one
@@ -37,7 +37,7 @@ export function SourcesPanel() {
       directory,
       filters: directory
         ? undefined
-        : [{ name: "Sermon audio and WhisperX JSON", extensions: ["mp3", "m4a", "wav", "flac", "ogg", "json"] }],
+        : [{ name: "Sermon audio and WhisperX JSON", extensions: ["mp3", "m4a", "wav", "flac", "ogg", "json", "gz"] }],
     });
     if (!picked) return;
     await flush();
@@ -69,12 +69,12 @@ export function SourcesPanel() {
     await flush();
     setProgress({ done: 0, total: project.sources.length, message: "Starting" });
     try {
-      const result = await api.analyze(useApp.getState().project!);
+      const result = await api.analyze(useApp.getState().project!.id);
       setProject(result.project, "search the sermons");
-      setMatches(result.matches);
+      await resetMatches(result.summary);
       for (const e of result.errors) toast.error(e);
       setBookChanged(false);
-      toast.success(`Found ${result.matches.matches.length.toLocaleString()} readings`, {
+      toast.success(`Found ${result.summary.readings.toLocaleString()} readings`, {
         action: { label: "View verses", onClick: () => setTab("verses") },
       });
     } catch (e) {
@@ -92,11 +92,7 @@ export function SourcesPanel() {
       sources: p.sources.filter((s) => s.id !== id),
       selections: Object.fromEntries(Object.entries(p.selections).filter(([, s]) => s.sourceId !== id)),
     }), "remove a sermon");
-    setMatches({
-      ...matchSet,
-      matches: matchSet.matches.filter((m) => m.sourceId !== id),
-      runs: matchSet.runs.filter((r) => r.sourceId !== id),
-    });
+    // Its readings are left out once the project is saved
   };
 
   const stale = project.sources.some((s) => s.wordCount === 0);
@@ -370,15 +366,15 @@ export function SourcesPanel() {
             <div className="flex items-center gap-3">
               <Button disabled={project.sources.length === 0 || progress !== null} onClick={analyze}>
                 {progress ? <Loader2 className="animate-spin" /> : <ScanSearch />}
-                {matchSet.analyzedAt ? "Search again" : "Search sermons"}
+                {summary.analyzedAt ? "Search again" : "Search sermons"}
               </Button>
-              {stale && !progress && matchSet.analyzedAt > 0 && (
+              {stale && !progress && summary.analyzedAt > 0 && (
                 <span className="text-sm text-amber-600">Some sermons haven't been searched yet.</span>
               )}
-              {matchSet.analyzedAt > 0 && !progress && (
+              {summary.analyzedAt > 0 && !progress && (
                 <span className="text-sm text-muted-foreground">
-                  Last searched {new Date(matchSet.analyzedAt).toLocaleString()} ·{" "}
-                  {matchSet.matches.length.toLocaleString()} readings, {matchSet.runs.length.toLocaleString()} passages
+                  Last searched {new Date(summary.analyzedAt).toLocaleString()} ·{" "}
+                  {summary.readings.toLocaleString()} readings, {summary.runs.toLocaleString()} passages
                   read straight through
                 </span>
               )}

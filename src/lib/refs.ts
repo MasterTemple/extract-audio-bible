@@ -1,4 +1,4 @@
-import type { BookOutline, FileMetadata, Match, Project, Run, Source } from "./api";
+import type { BookOutline, FileMetadata, Project, Run, Source } from "./api";
 
 export const verseKey = (book: number, chapter: number, verse: number) => `${book}.${chapter}.${verse}`;
 
@@ -38,6 +38,7 @@ const SERMON_FILES = new Set(["json", "mp3", "m4a", "wav", "flac", "ogg", "aac",
 export function fileIdOf(source: Source): string {
   if (source.fileId) return source.fileId;
   let name = fileName(source.transcriptPath);
+  if (name.toLowerCase().endsWith(".json.gz")) name = name.slice(0, -".gz".length);
   for (let dot = name.lastIndexOf("."); dot > 0 && SERMON_FILES.has(name.slice(dot + 1).toLowerCase()); dot = name.lastIndexOf("."))
     name = name.slice(0, dot);
   return name;
@@ -100,7 +101,8 @@ export function chapterStatus(
   project: Project,
   outline: BookOutline,
   chapter: number,
-  matchesByVerse: Map<string, Match[]>,
+  /** Each verse's count of readings, by verse key */
+  verseCounts: Map<string, number>,
 ): ChapterStatus {
   const status: ChapterStatus = { total: 0, selected: 0, withMatches: 0, needsTrim: 0, matches: 0 };
   for (const v of versesNeeded(outline, chapter)) {
@@ -109,7 +111,7 @@ export function chapterStatus(
     const sel = project.selections[key];
     if (sel) status.selected++;
     if (sel?.needsTrim) status.needsTrim++;
-    const n = matchesByVerse.get(key)?.length ?? 0;
+    const n = verseCounts.get(key) ?? 0;
     if (n > 0) status.withMatches++;
     status.matches += n;
   }

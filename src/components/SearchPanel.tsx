@@ -43,7 +43,7 @@ export function SearchPanel() {
     let live = true;
     const timer = setTimeout(() => {
       setBusy(true);
-      api.searchTranscripts(p, query, among, LIMIT).then(
+      api.searchTranscripts(p.id, query, among, LIMIT).then(
         (r) => {
           if (!live) return;
           setResult({ query, found: r.found, more: r.more });

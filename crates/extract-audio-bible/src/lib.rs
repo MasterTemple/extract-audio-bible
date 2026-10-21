@@ -4,6 +4,8 @@ pub mod analyze;
 pub mod audio;
 pub mod bible;
 pub mod choose;
+#[cfg(feature = "sqlite")]
+pub mod db;
 #[cfg(feature = "download")]
 pub mod download;
 #[cfg(test)]
@@ -31,8 +33,8 @@ pub use export::{
 pub use files::{Disk, Files, Memory};
 pub use matcher::{Match, MatchKind, Run};
 pub use project::{
-    Added, ExportMode, FileMetadata, Leveling, MatchSet, Metadata, Part, Project, ProjectKind, Selection, Settings,
-    Source,
+    Added, ExportMode, FileMetadata, Keyed, Leveling, MatchSet, Metadata, Part, Project, ProjectChanges, ProjectKind,
+    Selection, Settings, Source,
 };
 pub use readings::{ReadingRow, reading_rows};
 pub use said::{FindOptions, Said, find_in, search_transcripts};
