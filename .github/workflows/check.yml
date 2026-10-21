@@ -1,0 +1,33 @@
+# The library, its command line, and the app's interface, checked on every push and pull request.
+# The app's own backend (src-tauri) needs WebKitGTK and GStreamer, so it's built locally.
+name: Check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo test -p scripture-quotes -p extract-audio-bible -p extract-audio-bible-cli --features extract-audio-bible/sqlite
+
+  interface:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit -p .
