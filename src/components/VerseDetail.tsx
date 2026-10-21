@@ -11,7 +11,7 @@ import { ClipEditor } from "./ClipEditor";
 const PAGE = 50;
 
 export function VerseDetail() {
-  const { project, outline, book, chapter, verse, bookText, matchesByVerse, loadedChapters, setVerse } = useApp();
+  const { project, outline, book, chapter, verse, onlySermon, bookText, matchesByVerse, loadedChapters, setVerse } = useApp();
   const b = outline.find((x) => x.id === book);
   const [shown, setShown] = useState({ key: "", count: PAGE });
   if (!project || !b || !chapter || !verse) return null;
@@ -22,7 +22,9 @@ export function VerseDetail() {
   // Where each plays among the chosen readings, if chosen
   const part = (id: string) => (chosen.includes(id) ? chosen.indexOf(id) : null);
   const order = (id: string) => part(id) ?? Infinity;
-  const matches = [...(matchesByVerse.get(key) ?? [])].sort((x, y) => order(x.id) - order(y.id) || y.score - x.score);
+  const every = matchesByVerse.get(key) ?? [];
+  // One sermon's alone, if only its readings are shown
+  const matches = every.filter((m) => !onlySermon || m.sourceId === onlySermon).sort((x, y) => order(x.id) - order(y.id) || y.score - x.score);
   const loaded = loadedChapters.has(`${b.id}.${chapter}`);
   const count = shown.key === key ? shown.count : PAGE;
   const verses = versesNeeded(b, chapter, project);
@@ -36,6 +38,7 @@ export function VerseDetail() {
         </h3>
         <span className="ml-1 text-xs text-muted-foreground">
           {matches.length} {matches.length === 1 ? "reading" : "readings"}
+          {onlySermon && ` of ${every.length}, from one sermon`}
         </span>
         <div className="ml-auto flex">
           <Button variant="ghost" size="icon-sm" disabled={i <= 0} onClick={() => setVerse(verses[i - 1])} title="Previous verse">
@@ -81,7 +84,12 @@ export function VerseDetail() {
                 <Loader2 className="animate-spin text-muted-foreground" />
               </div>
             )}
-            {loaded && matches.length === 0 && (
+            {loaded && matches.length === 0 && onlySermon && every.length > 0 && (
+              <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                This sermon doesn't read this verse. {every.length} other {every.length === 1 ? "reading is" : "readings are"} hidden while only its readings are shown.
+              </p>
+            )}
+            {loaded && every.length === 0 && (
               <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
                 This verse wasn't found in any sermon. Lowering the minimum match on the Sermons tab may find partial
                 readings.

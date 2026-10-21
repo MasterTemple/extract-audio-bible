@@ -158,6 +158,54 @@ pub fn find_book(name: &str) -> Option<BookId> {
         .or_else(|| books().search(&name.replace('_', " ")))
 }
 
+/// A way to finish a reference being typed: what a menu shows, the whole text it becomes, and
+/// its book
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceCompletion {
+    pub label: String,
+    pub text: String,
+    pub book: u8,
+}
+
+/**
+Ways to finish a reference being typed, best first, by topos: a book from a prefix of any of its
+names (`1 Co` → `1 Corinthians`), then its chapters (`John 3` → `John 3`, `John 3:1`, …), then a
+chapter's verses
+*/
+pub fn complete_reference(text: &str, limit: usize) -> Vec<ReferenceCompletion> {
+    use logoxide_text::topos_bible::{
+        matcher::{BibleMatcher, matches::ComplexFilter},
+        segments::autocomplete::CompleteOptions,
+    };
+    static MATCHER: std::sync::OnceLock<BibleMatcher> = std::sync::OnceLock::new();
+    let matcher = MATCHER.get_or_init(|| BibleMatcher::new(bible_data().clone(), ComplexFilter::default()));
+    let mut options = CompleteOptions {
+        limit: Some(limit),
+        ..Default::default()
+    };
+    // `Jude 1:5`, not `Jude 5`, so it reads as a verse wherever it's parsed
+    options.format.chapter_in_single_chapter_books = true;
+    (matcher.complete(text, text.len(), &options).into_iter())
+        .filter_map(|c| {
+            let mut whole = text.to_string();
+            whole.replace_range(c.edit.range.clone(), &c.edit.text);
+            let whole = whole.trim_end().to_string();
+            // The book is what's before the chapter and verses, if any
+            let name = match whole.rsplit_once(' ') {
+                Some((name, rest)) if rest.starts_with(|c: char| c.is_ascii_digit()) => name,
+                _ => &whole,
+            };
+            let book = find_book(name)?.0;
+            Some(ReferenceCompletion {
+                label: c.label,
+                text: whole,
+                book,
+            })
+        })
+        .collect()
+}
+
 /// Verses gathered while importing, before they're put in order
 #[derive(Default)]
 struct Collected(BTreeMap<u8, BTreeMap<u16, BTreeMap<u16, String>>>);
@@ -616,6 +664,20 @@ fn split_reference(line: &str) -> Option<(&str, u16, u16, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn references_completed() {
+        let texts = |typed| {
+            complete_reference(typed, 4)
+                .into_iter()
+                .map(|c| (c.text, c.book))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(texts("2 Co")[0], ("2 Corinthians".to_string(), 47));
+        assert_eq!(texts("jn")[0].1, 43);
+        assert!(texts("John 3").iter().all(|(t, b)| t.starts_with("John 3") && *b == 43));
+        assert!(texts("").is_empty());
+    }
 
     #[test]
     fn lines() {

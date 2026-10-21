@@ -314,8 +314,16 @@ export interface Summary {
 }
 
 /** Which readings to list: each given part narrows them */
+/** A way to finish a reference being typed: what a menu shows, the whole text it becomes, and its book */
+export interface ReferenceCompletion {
+  label: string;
+  text: string;
+  book: number;
+}
+
 export interface RowFilter {
-  kind?: MatchKind | null;
+  /** Only readings of these kinds (none: any) */
+  kinds?: MatchKind[];
   /** The translation each fits best, by abbreviation */
   translation?: string | null;
   speakers?: string[];
@@ -422,6 +430,8 @@ export const api = {
   /** The books a scope searches, or null for every book; an error if it leaves nothing or names something unknown */
   scopeBooks: (scope: BookScope) => invoke<number[] | null>("scope_books", { scope }),
   /** The readings a filter keeps, counted and grouped by sermon and by book and chapter */
+  /** Ways to finish a reference being typed (`2 Co` → `2 Corinthians`), best first */
+  completeReference: (text: string, limit: number) => invoke<ReferenceCompletion[]>("complete_reference", { text, limit }),
   readingsOverview: (projectId: string, filter: RowFilter) => invoke<Overview>("readings_overview", { projectId, filter }),
   /** The readings a filter keeps of one group (a sermon's, a chapter's), as rows */
   readingsRows: (projectId: string, filter: RowFilter, group: RowGroup) =>
@@ -437,7 +447,7 @@ export const api = {
   /** Opens a project kept in a folder of its own (as the command line makes them), where it is */
   openProjectFolder: (path: string) => invoke<Project>("open_project_folder", { path }),
   addSources: (projectId: string, paths: string[]) =>
-    invoke<{ project: Project; added: number; unpaired: string[]; skipped: string[] }>("add_sources", { projectId, paths }),
+    invoke<{ project: Project; added: number; paired: number; unpaired: string[]; skipped: string[] }>("add_sources", { projectId, paths }),
   /** Searches the project as it was last saved */
   analyze: (projectId: string) =>
     invoke<{ project: Project; summary: Summary; errors: string[] }>("analyze", { projectId }),
@@ -471,7 +481,8 @@ export const api = {
     invoke<ArrayBuffer>("render_chapter", { projectId, book, chapter }),
   /** A verse as it will be exported: all its readings, one after another, with its silence */
   /** Titles and passages by file id, from a JSON file (`{"<file id>": {"title": …, "passage": …}}`) */
-  readFileMetadata: (path: string) => invoke<Record<string, FileMetadata>>("read_file_metadata", { path }),
+  /** A text file (a table of sermons' titles to import), as text */
+  readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
   /** A whole transcript, in paragraphs (where each begins, by word) */
   transcript: (transcriptPath: string) =>
     invoke<{ id: string | null; title: string | null; words: Word[]; paragraphs: number[] }>("transcript", { transcriptPath }),

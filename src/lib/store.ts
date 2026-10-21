@@ -45,6 +45,8 @@ interface AppState extends Indexed {
   book: number | null;
   chapter: number | null;
   verse: number | null;
+  /** The sermon whose readings alone are shown, for now (not saved): to see what it reads straight through */
+  onlySermon: string | null;
   saving: boolean;
   /** The transcript open, the time to show in it, and what to find in it */
   reading: { sourceId: string; at: number | null; query: string } | null;
@@ -75,6 +77,7 @@ interface AppState extends Indexed {
   loadBook: (book: number) => Promise<string[][] | undefined>;
   go: (book: number, chapter: number, verse?: number | null) => void;
   setVerse: (verse: number | null) => void;
+  setOnlySermon: (sourceId: string | null) => void;
   /** Opens a sermon's transcript, at a time in it if given, finding a phrase in it if given; null closes it */
   openTranscript: (sourceId: string | null, at?: number | null, query?: string) => void;
   select: (match: Match) => void;
@@ -287,6 +290,7 @@ export const useApp = create<AppState>((set, get) => {
     book: null,
     chapter: null,
     verse: null,
+    onlySermon: null,
     saving: false,
     reading: null,
     past: [],
@@ -336,6 +340,7 @@ export const useApp = create<AppState>((set, get) => {
         // A passage opens at its first chapter
         chapter: first ? (project.passage && first.id === project.book ? project.passage.startChapter : 1) : null,
         verse: null,
+        onlySermon: null,
         tab: project.sources.length === 0 || options?.search ? "sources" : project.kind === "readings" ? "readings" : "verses",
         searchOnOpen: !!options?.search,
         past: [],
@@ -374,6 +379,7 @@ export const useApp = create<AppState>((set, get) => {
         book: null,
         chapter: null,
         verse: null,
+        onlySermon: null,
         past: [],
         future: [],
       });
@@ -456,6 +462,7 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     setVerse: (verse) => set({ verse }),
+    setOnlySermon: (onlySermon) => set({ onlySermon }),
 
     openTranscript: (sourceId, at = null, query = "") => set({ reading: sourceId ? { sourceId, at, query } : null }),
 

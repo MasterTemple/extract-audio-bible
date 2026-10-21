@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { BookPlus, ChevronRight, ChevronsDownUp, ChevronsUpDown, Download, FileText, Loader2, Play, Search, Square } from "lucide-react";
+import { BookPlus, ChevronRight, ChevronsDownUp, ChevronsUpDown, Download, FileText, Loader2, Play, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -26,6 +26,7 @@ import { play, usePlayer } from "@/lib/player";
 import { audioPathOf, formatTime, kindLabel, sourceColor } from "@/lib/refs";
 import { kindClass } from "./MatchCard";
 import { MultiSelect } from "./MultiSelect";
+import { ReferenceInput } from "./ReferenceInput";
 
 /** Past this many sermons, or readings, the list starts folded (by sermon, or by book and chapter) */
 const FOLD_SERMONS = 15;
@@ -287,11 +288,13 @@ export function ReadingsPanel() {
   const { project, summary, openTranscript, setTab } = useApp();
   const player = usePlayer();
   const [overview, setOverview] = useState<Overview | null>(null);
+  // The books and chapters with readings, as last shown without a reference: what's offered as one is typed
+  const [withReadings, setWithReadings] = useState<Map<number, Set<number>> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<"sermon" | "verse">("sermon");
   const [filterText, setFilterText] = useState("");
   const [reference, setReference] = useState("");
-  const [kind, setKind] = useState<MatchKind | "all">("all");
+  const [kinds, setKinds] = useState<MatchKind[]>([]);
   const [translation, setTranslation] = useState("all");
   const [speakers, setSpeakers] = useState<string[]>([]);
   const [series, setSeries] = useState<string[]>([]);
@@ -311,13 +314,13 @@ export function ReadingsPanel() {
 
   const filter: RowFilter = useMemo(
     () => ({
-      kind: kind === "all" ? null : kind,
+      kinds,
       translation: translation === "all" ? null : translation,
       speakers,
       series,
       reference,
     }),
-    [kind, translation, speakers, series, reference],
+    [kinds, translation, speakers, series, reference],
   );
   const projectId = project?.id;
   const readFor = `${projectId}|${summary.analyzedAt}|${summary.readings}|${JSON.stringify(filter)}`;
@@ -333,6 +336,7 @@ export function ReadingsPanel() {
         if (!live) return;
         setOverview(o);
         setSermonsShown(SERMON_PAGE);
+        if (!filter.reference) setWithReadings(new Map(o.byBook.map((b) => [b.book, new Set(b.chapters.map((c) => c.chapter))])));
       },
       (e) => live && setError(errorMessage(e)),
     );
@@ -576,21 +580,30 @@ export function ReadingsPanel() {
             <ToggleGroupItem value="sermon">By sermon</ToggleGroupItem>
             <ToggleGroupItem value="verse">By verse</ToggleGroupItem>
           </ToggleGroup>
-          <div className="relative w-64">
-            <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input className="h-8 pl-8 text-sm" placeholder="Filter by reference (Romans 8)" value={filterText} onChange={(e) => setFilterText(e.target.value)} />
-          </div>
-          <Select value={kind} onValueChange={(v) => setKind(v as MatchKind | "all")}>
-            <SelectTrigger size="sm" className="w-36">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Every kind</SelectItem>
-              <SelectItem value="exact">Exact</SelectItem>
-              <SelectItem value="close">Close</SelectItem>
-              <SelectItem value="partial">Partial</SelectItem>
-            </SelectContent>
-          </Select>
+          <ReferenceInput
+            className="w-64"
+            placeholder="Filter by reference (Romans 8)"
+            value={filterText}
+            onChange={setFilterText}
+            has={(book, chapter) => {
+              const chapters = withReadings?.get(book);
+              return !withReadings || (!!chapters && (chapter === null || chapters.has(chapter)));
+            }}
+          />
+          <ToggleGroup
+            type="multiple"
+            variant="outline"
+            size="sm"
+            value={kinds}
+            onValueChange={(v) => setKinds(v as MatchKind[])}
+            title="Only these kinds of reading (none chosen: every kind)"
+          >
+            {(["exact", "close", "partial"] as const).map((k) => (
+              <ToggleGroupItem key={k} value={k} className="px-2.5">
+                {kindLabel[k]}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
           {overview && overview.translations.length > 1 && (
             <Select value={translation} onValueChange={setTranslation}>
               <SelectTrigger size="sm" className="w-40">

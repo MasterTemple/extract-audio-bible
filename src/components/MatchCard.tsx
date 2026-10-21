@@ -1,4 +1,4 @@
-import { Check, Combine, FileText, Link2, Loader2, Play, Square, Rewind, AudioLines } from "lucide-react";
+import { Check, Combine, FileText, Filter, FilterX, Link2, Loader2, Play, Square, Rewind, AudioLines } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -79,7 +79,7 @@ A reading found for a verse. `part` is where it plays among the verse's chosen r
 if chosen; `parts` is how many there are
 */
 export function MatchCard({ match, verseText, part, parts }: { match: Match; verseText: string; part: number | null; parts: number }) {
-  const { project, outline, runById, matchById, select, selectMany, join, openTranscript } = useApp();
+  const { project, outline, runById, matchById, onlySermon, setOnlySermon, select, selectMany, join, openTranscript } = useApp();
   const selected = part !== null;
   const player = usePlayer();
   const source = project?.sources.find((s) => s.id === match.sourceId);
@@ -177,6 +177,20 @@ export function MatchCard({ match, verseText, part, parts }: { match: Match; ver
         <Button size="sm" variant="ghost" title="Open the whole transcript here" onClick={() => openTranscript(source.id, match.start)}>
           <FileText /> In transcript
         </Button>
+        {onlySermon === source.id ? (
+          <Button size="icon-sm" variant="secondary" title="Show every sermon's readings again" onClick={() => setOnlySermon(null)}>
+            <FilterX />
+          </Button>
+        ) : (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            title="Show only this sermon's readings, in every verse (for now): to see what it reads straight through"
+            onClick={() => setOnlySermon(source.id)}
+          >
+            <Filter />
+          </Button>
+        )}
         <div className="ml-auto">
           {selected ? (
             <Badge className="bg-emerald-600">

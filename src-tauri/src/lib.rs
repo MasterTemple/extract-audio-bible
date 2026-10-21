@@ -301,6 +301,12 @@ async fn sermon_matches(state: State<'_, AppState>, project_id: String, source_i
     .await
 }
 
+/// Ways to finish a reference being typed (`2 Co` → `2 Corinthians`), best first
+#[tauri::command]
+fn complete_reference(text: String, limit: usize) -> Vec<extract_audio_bible::ReferenceCompletion> {
+    extract_audio_bible::complete_reference(&text, limit)
+}
+
 /// The readings a filter keeps, counted and grouped by sermon and by book and chapter
 #[tauri::command]
 async fn readings_overview(
@@ -409,6 +415,8 @@ async fn open_project_folder(state: State<'_, AppState>, path: String) -> Result
 struct AddedSources {
     project: Project,
     added: usize,
+    /// Sermons already in the project, transcripts alone, given the audio added
+    paired: usize,
     /// Audio files that had no transcript
     unpaired: Vec<String>,
     /// JSON files that aren't transcripts
@@ -449,6 +457,7 @@ async fn add_sources(
         Ok(AddedSources {
             project,
             added: added.added,
+            paired: added.paired,
             unpaired: added.unpaired,
             skipped: added.skipped,
         })
@@ -849,18 +858,12 @@ async fn render_chapter(state: State<'_, AppState>, project_id: String, book: u8
     .await
 }
 
-/// Titles and passages by file id, from a JSON file (`{"<file id>": {"title": …, "passage": …}}`)
+/// A text file (a table of sermons' titles to import: CSV, TSV, or JSON), as text
 #[tauri::command]
-async fn read_file_metadata(
-    path: String,
-) -> Result<std::collections::BTreeMap<String, extract_audio_bible::FileMetadata>> {
+async fn read_text_file(path: String) -> Result<String> {
     blocking(move || {
         let bytes = std::fs::read(&path).map_err(|e| file_error(&path, e))?;
-        serde_json::from_slice(&bytes).map_err(|e| {
-            AppError::msg(format!(
-                "{path}: expected {{\"file id\": {{\"title\": …, \"passage\": …}}}}: {e}"
-            ))
-        })
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     })
     .await
 }
@@ -1004,6 +1007,7 @@ pub fn run() {
             match_summary,
             chapter_matches,
             sermon_matches,
+            complete_reference,
             readings_overview,
             readings_rows,
             export_readings,
@@ -1018,7 +1022,7 @@ pub fn run() {
             render_clip,
             render_chapter,
             render_verse,
-            read_file_metadata,
+            read_text_file,
             chapter_timeline,
             chapters_to_export,
             export_chapters,

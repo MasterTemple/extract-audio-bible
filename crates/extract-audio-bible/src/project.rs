@@ -790,7 +790,9 @@ impl Project {
 
     /**
     Adds sermons from file paths: each audio file is paired with the transcript (`.json`) of
-    the same name, in the same folder first, then anywhere among the paths. A transcript without
+    the same name, in the same folder first, then anywhere among the paths, then a sermon already
+    in the project that's a transcript alone (added before from another folder: transcripts in one
+    folder and audio in another, added one after the other). A transcript without
     audio is a sermon too: it can be searched, and its readings found, and its audio is
     downloaded when it's needed if the project says where from ([`Settings::audio_url`]).
     Sermons already in the project are skipped. Returns how many were added and the audio files
@@ -884,7 +886,20 @@ impl Project {
                 .filter(|&i| !used[i] && base_name(transcripts[i]) == base)
                 .min_by_key(|&i| parent(transcripts[i]) != parent(audio));
             let Some(i) = pick else {
-                added.unpaired.push(audio.clone());
+                if self.sources.iter().any(|s| &s.audio_path == audio) {
+                    continue;
+                }
+                // Its transcript may be in the project already, alone, from another folder
+                let alone = (self.sources.iter_mut())
+                    .filter(|s| s.audio_path.is_empty() && base_name(&s.transcript_path) == base)
+                    .min_by_key(|s| parent(&s.transcript_path) != parent(audio));
+                match alone {
+                    Some(source) => {
+                        source.audio_path = audio.clone();
+                        added.paired += 1;
+                    }
+                    None => added.unpaired.push(audio.clone()),
+                }
                 continue;
             };
             used[i] = true;
@@ -920,6 +935,9 @@ impl Project {
 #[serde(rename_all = "camelCase")]
 pub struct Added {
     pub added: usize,
+    /// Sermons already in the project, transcripts alone, given the audio added
+    #[serde(default)]
+    pub paired: usize,
     /// Audio files that had no transcript
     pub unpaired: Vec<String>,
     /// JSON files that aren't transcripts (from [`Project::add_sources_from`])
@@ -1113,6 +1131,43 @@ mod tests {
             ["a/one.mp3", "", ""]
         );
         assert_eq!(p.add_sources(&paths).added, 0);
+    }
+
+    #[test]
+    fn audio_added_after_its_transcripts_from_another_folder_is_paired() {
+        let bible = Bible {
+            id: "b".into(),
+            name: "Test".into(),
+            abbreviation: "T".into(),
+            language: None,
+            format: "text".into(),
+            books: vec![],
+        };
+        let mut p = Project::new("p", "", &bible, None);
+        let added = p.add_sources(&["transcripts/one.json".into(), "transcripts/two.json.gz".into()]);
+        assert_eq!((added.added, added.paired), (2, 0));
+        let ids: Vec<String> = p.sources.iter().map(|s| s.id.clone()).collect();
+
+        let added = p.add_sources(&["audio/one.mp3".into(), "audio/two.m4a".into(), "audio/three.mp3".into()]);
+        // Each transcript's sermon given its audio, none added, and the audio without a transcript left out
+        assert_eq!((added.added, added.paired), (0, 2));
+        assert_eq!(added.unpaired, ["audio/three.mp3"]);
+        assert_eq!(
+            p.sources
+                .iter()
+                .map(|s| (s.audio_path.as_str(), s.transcript_path.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("audio/one.mp3", "transcripts/one.json"),
+                ("audio/two.m4a", "transcripts/two.json.gz")
+            ]
+        );
+        // Still the same sermons, so what's known of them and their readings stay theirs
+        assert_eq!(p.sources.iter().map(|s| s.id.clone()).collect::<Vec<_>>(), ids);
+
+        // Added again, nothing changes
+        let added = p.add_sources(&["audio/one.mp3".into()]);
+        assert_eq!((added.added, added.paired, added.unpaired.len()), (0, 0, 0));
     }
 
     #[test]

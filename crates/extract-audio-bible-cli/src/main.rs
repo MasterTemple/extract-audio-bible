@@ -541,8 +541,12 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 out.note(format!("not a transcript: {f}"));
             }
             out.result(&added, || {
+                let paired = match added.paired {
+                    0 => String::new(),
+                    n => format!(", and gave {} its audio", plural(n, "sermon")),
+                };
                 format!(
-                    "Added {} ({} in the project)",
+                    "Added {}{paired} ({} in the project)",
                     plural(added.added, "sermon"),
                     p.project.sources.len()
                 )

@@ -482,6 +482,8 @@ impl From<FileMetadata> for eab::FileMetadata {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Added {
     pub added: u32,
+    /// Sermons already in the project, transcripts alone, given the audio added
+    pub paired: u32,
     /// Audio files that had no transcript
     pub unpaired: Vec<String>,
     /// JSON files that aren't transcripts (from `addSourcesFrom`)
@@ -492,6 +494,7 @@ impl From<eab::Added> for Added {
     fn from(a: eab::Added) -> Self {
         Added {
             added: a.added as u32,
+            paired: a.paired as u32,
             unpaired: a.unpaired,
             skipped: a.skipped,
         }

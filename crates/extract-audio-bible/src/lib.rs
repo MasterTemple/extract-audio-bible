@@ -22,7 +22,7 @@ pub mod scope;
 pub mod transcript;
 
 pub use analyze::{Analysis, analyze, analyze_with};
-pub use bible::{Bible, BibleBook, Imported, import, import_paths};
+pub use bible::{Bible, BibleBook, Imported, ReferenceCompletion, complete_reference, import, import_paths};
 pub use choose::ChapterStatus;
 #[cfg(feature = "download")]
 pub use download::Downloading;

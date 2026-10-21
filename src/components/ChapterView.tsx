@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Combine, Loader2, Play, Scissors, Sparkles, Square, Trash2, CheckCircle2, Link2, Volume2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Combine, Filter, Loader2, Play, Scissors, Sparkles, Square, Trash2, CheckCircle2, Link2, Volume2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -73,6 +73,8 @@ export function ChapterView() {
     book,
     chapter,
     verse,
+    onlySermon,
+    setOnlySermon,
     bookText,
     matchesByVerse,
     verseCounts,
@@ -107,6 +109,13 @@ export function ChapterView() {
   if (!project || !b || !chapter) return null;
   const status = chapterStatus(project, b, chapter, verseCounts);
   const loaded = loadedChapters.has(`${b.id}.${chapter}`);
+  // A verse's readings shown: only one sermon's, if it alone is shown
+  const shownMatches = (key: string) => {
+    const all = matchesByVerse.get(key) ?? [];
+    return onlySermon ? all.filter((m) => m.sourceId === onlySermon) : all;
+  };
+  const onlySource = onlySermon ? project.sources.find((s) => s.id === onlySermon) : undefined;
+  const readHere = onlySermon ? verses.filter((v) => shownMatches(verseKey(b.id, chapter, v)).length > 0).length : 0;
 
   const nav = (delta: number) => {
     const idx = outline.findIndex((x) => x.id === b.id);
@@ -130,7 +139,8 @@ export function ChapterView() {
   const pick = (minScore: number) => {
     // A transcript alone, with nowhere to download its audio from, can't be part of an audio Bible
     const audible = new Set(project.sources.filter((s) => audioPathOf(project, s)).map((s) => s.id));
-    const picks = autoPick(verses, b.id, chapter, project.selections, matchesByVerse, runLength, minScore, audible);
+    const shown = new Map(verses.map((v) => [verseKey(b.id, chapter, v), shownMatches(verseKey(b.id, chapter, v))]));
+    const picks = autoPick(verses, b.id, chapter, project.selections, shown, runLength, minScore, audible);
     if (picks.length === 0) toast.info("No more readings to choose here");
     else {
       selectMany(picks);
@@ -203,6 +213,21 @@ export function ChapterView() {
           </Button>
         </div>
       </div>
+      {onlySermon && (
+        <div className="flex items-center gap-2 border-b bg-muted/40 px-4 py-1.5 text-xs">
+          <Filter className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="size-2.5 shrink-0 rounded-full" style={{ background: sourceColor(project, onlySermon) }} />
+          <span className="min-w-0 truncate">
+            Only readings from <span className="font-medium">{sourceTitle(project, onlySource)}</span>
+          </span>
+          <span className="shrink-0 text-muted-foreground">
+            {loaded ? `${readHere} of ${verses.length} verses here` : "Reading…"}
+          </span>
+          <Button size="xs" variant="ghost" className="ml-auto shrink-0" onClick={() => setOnlySermon(null)}>
+            <X /> Show every sermon
+          </Button>
+        </div>
+      )}
       {player.id === playId && (
         <div className="h-0.5 bg-muted">
           <div className="h-full bg-primary" style={{ width: `${player.duration ? (player.time / player.duration) * 100 : 0}%` }} />
@@ -219,9 +244,9 @@ export function ChapterView() {
             verses.map((v, i) => {
               const key = verseKey(b.id, chapter, v);
               const sel = project.selections[key];
-              const matches = matchesByVerse.get(key) ?? [];
-              // Until the chapter's readings are read, how many there are
-              const found = loaded ? matches.length : (verseCounts.get(key) ?? 0);
+              const matches = shownMatches(key);
+              // Until the chapter's readings are read, how many there are (of every sermon)
+              const found = loaded ? matches.length : onlySermon ? 0 : (verseCounts.get(key) ?? 0);
               const prevSel = i > 0 ? project.selections[verseKey(b.id, chapter, verses[i - 1])] : undefined;
               const nextSel = i < verses.length - 1 ? project.selections[verseKey(b.id, chapter, verses[i + 1])] : undefined;
               const joinUp = continues(prevSel, sel);

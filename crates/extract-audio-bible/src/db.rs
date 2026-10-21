@@ -186,6 +186,9 @@ The first and last keys of the verses a reference is of: a book (`2 Corinthians`
 chapter (`Romans 8`), chapters (`Psalm 23-24`), a verse (`John 3:16`), or verses (`2:14-17`,
 `7:24-8:2`). `None` if it isn't one
 */
+/// The books of one chapter, by number
+const ONE_CHAPTER: [u8; 5] = [31, 57, 63, 64, 65];
+
 fn reference_keys(text: &str) -> Option<(i64, i64)> {
     let text = text.trim().replace(['–', '—'], "-");
     let (name, verses) = match text.rsplit_once(' ') {
@@ -201,6 +204,12 @@ fn reference_keys(text: &str) -> Option<(i64, i64)> {
         return Some((verse_key(book, 0, 0), verse_key(book, 999, 999)));
     };
     let number = |s: &str| s.parse::<u16>().ok().filter(|&n| (1..1000).contains(&n));
+    // A book of one chapter (Obadiah, Philemon, 2 and 3 John, Jude) is numbered by verse: `Jude 5`
+    let verses = match (ONE_CHAPTER.contains(&book), verses.contains(':')) {
+        (true, false) => format!("1:{}", verses.replace('-', "-1:")),
+        _ => verses.to_string(),
+    };
+    let verses = verses.as_str();
     let (from, to) = verses.split_once('-').map_or((verses, None), |(a, b)| (a, Some(b)));
     let (start_chapter, start_verse) = match from.split_once(':') {
         Some((c, v)) => (number(c)?, Some(number(v)?)),
@@ -249,7 +258,8 @@ pub struct Summary {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RowFilter {
-    pub kind: Option<MatchKind>,
+    /// Only readings of these kinds (none: any)
+    pub kinds: Vec<MatchKind>,
     /// The translation each fits best, by abbreviation (as rows give it)
     pub translation: Option<String>,
     /// Only sermons by these speakers, or in these series (none: any)
@@ -262,7 +272,7 @@ pub struct RowFilter {
 impl RowFilter {
     /// Whether it keeps every reading
     pub fn is_empty(&self) -> bool {
-        self.kind.is_none()
+        self.kinds.is_empty()
             && self.translation.is_none()
             && self.speakers.is_empty()
             && self.series.is_empty()
@@ -852,11 +862,11 @@ impl Readings {
             args.push(value);
             format!("?{}", args.len())
         };
-        if let Some(kind) = filter.kind {
-            parts.push(format!(
-                "r.kind = {}",
-                arg(&mut args, Value::Text(kind_name(kind).into()))
-            ));
+        if !filter.kinds.is_empty() {
+            let kinds: Vec<String> = (filter.kinds.iter())
+                .map(|&kind| arg(&mut args, Value::Text(kind_name(kind).into())))
+                .collect();
+            parts.push(format!("r.kind in ({})", kinds.join(", ")));
         }
         if let Some(abbreviation) = &filter.translation {
             let ids: Vec<String> = (self.names.translation_ids(abbreviation).into_iter())
@@ -877,7 +887,10 @@ impl Readings {
         }
         let words: Vec<String> = filter.reference.split_whitespace().map(str::to_lowercase).collect();
         if let Some((start, end)) = reference_keys(&filter.reference) {
-            let (start, end) = (arg(&mut args, Value::Integer(start)), arg(&mut args, Value::Integer(end)));
+            let (start, end) = (
+                arg(&mut args, Value::Integer(start)),
+                arg(&mut args, Value::Integer(end)),
+            );
             parts.push(format!("r.verse_key between {start} and {end}"));
         } else if !words.is_empty() {
             self.conn.execute_batch(
@@ -1188,6 +1201,10 @@ mod tests {
         assert_eq!(keys("Romans 7:24–8:2"), Some(((45, 7, 24), (45, 8, 2))));
         assert_eq!(keys("Psalm 23-24"), Some(((19, 23, 0), (19, 24, 999))));
         assert_eq!(keys("2 Corinthians 2:14-17"), Some(((47, 2, 14), (47, 2, 17))));
+        // A book of one chapter is numbered by verse
+        assert_eq!(keys("Jude 5"), Some(((65, 1, 5), (65, 1, 5))));
+        assert_eq!(keys("Jude 3-4"), Some(((65, 1, 3), (65, 1, 4))));
+        assert_eq!(keys("Jude 1:5"), keys("Jude 5"));
         // Not references: matched word by word
         assert_eq!(keys("1"), None);
         assert_eq!(keys("John 3:"), None);
@@ -1245,6 +1262,21 @@ mod tests {
             ["a", "b"]
         );
         assert_eq!(overview.by_book.iter().map(|b| b.book).collect::<Vec<_>>(), [1, 43]);
+        // Kinds together keep each one's readings
+        let of_kinds = |kinds: &[MatchKind]| {
+            let only = RowFilter {
+                kinds: kinds.to_vec(),
+                ..Default::default()
+            };
+            db.rows(&only, &Group::All).unwrap().len()
+        };
+        let (exact, close) = (of_kinds(&[MatchKind::Exact]), of_kinds(&[MatchKind::Close]));
+        assert!(exact > 0, "{rows:?}");
+        assert_eq!(of_kinds(&[MatchKind::Exact, MatchKind::Close]), exact + close);
+        assert_eq!(
+            of_kinds(&[MatchKind::Exact, MatchKind::Close, MatchKind::Partial]),
+            rows.len()
+        );
         let pauls = RowFilter {
             speakers: vec!["Paul".into()],
             ..Default::default()

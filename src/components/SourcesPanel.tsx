@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { AudioLines, CloudDownload, FileJson, FilePlus, FileText, FolderPlus, Loader2, ScanSearch, Tags, Trash2 } from "lucide-react";
+import { AudioLines, CloudDownload, FileJson, FilePlus, FileText, FolderPlus, Loader2, ScanSearch, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api, errorMessage, type Progress as ProgressEvent } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { ScopeEditor, TranslationPicker } from "./ScopeEditor";
+import { TitleImporter } from "./TitleImporter";
 import { audioPathOf, fileIdOf, fileMetadataOf, fileName, formatTime, sourceColor, valuesOf } from "@/lib/refs";
 
 export function SourcesPanel() {
@@ -82,28 +83,18 @@ export function SourcesPanel() {
     await flush();
     setAdding({ done: 0, total: 0, message: "Finding the files" });
     try {
-      const result = await api.addSources(project.id, Array.isArray(picked) ? picked : [picked]);
-      setProject(result.project, `add ${result.added} sermon${result.added === 1 ? "" : "s"}`);
+      // Audio left without a transcript before is tried again, with the transcripts added now
+      const paths = [...(Array.isArray(picked) ? picked : [picked]), ...leftOut.unpaired];
+      const result = await api.addSources(project.id, paths);
+      const sermons = (n: number) => `${n.toLocaleString()} sermon${n === 1 ? "" : "s"}`;
+      const paired = result.paired > 0 ? `, and gave ${sermons(result.paired)} ${result.paired === 1 ? "its" : "their"} audio` : "";
+      setProject(result.project, `add ${sermons(result.added)}${paired}`);
       setLeftOut({ unpaired: result.unpaired, skipped: result.skipped });
-      toast.success(`Added ${result.added.toLocaleString()} sermon${result.added === 1 ? "" : "s"}`);
+      toast.success(`Added ${sermons(result.added)}${paired}`);
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
       setAdding(null);
-    }
-  };
-
-  const importInfo = async () => {
-    const path = await open({ filters: [{ name: "Titles and passages (JSON)", extensions: ["json"] }] });
-    if (typeof path !== "string") return;
-    try {
-      const given = await api.readFileMetadata(path);
-      setFileMetadata(given);
-      const ids = new Set(project.sources.map(fileIdOf));
-      const matched = Object.keys(given).filter((id) => ids.has(id)).length;
-      toast.success(`Read ${Object.keys(given).length} sermons' information (${matched} in this project)`);
-    } catch (e) {
-      toast.error(errorMessage(e));
     }
   };
 
@@ -151,14 +142,12 @@ export function SourcesPanel() {
                 name (<code className="text-xs">sermon.mp3</code> + <code className="text-xs">sermon.json</code>). Add
                 files, or a folder to pair everything in it. A transcript alone is a sermon too: it can be searched, and
                 its audio downloaded from where you say below. Titles and passages are kept by each sermon's id (its
-                transcript's, once searched), with their speakers and series, and can be read from JSON:{" "}
-                <code className="text-xs">{'{"<id>": {"title": …, "passage": …, "speaker": …, "series": …}}'}</code>.
+                transcript's, once searched), with their speakers and series, and can be imported from a table (CSV, or
+                JSON), its columns matched to what they are.
               </CardDescription>
             </div>
             <div className="flex shrink-0 gap-2">
-              <Button variant="outline" size="sm" onClick={importInfo} title="Read titles and passages by sermon id from a JSON file">
-                <Tags /> Import titles
-              </Button>
+              <TitleImporter />
               <Button variant="outline" size="sm" disabled={adding !== null} onClick={() => add(false)}>
                 <FilePlus /> Add files
               </Button>
