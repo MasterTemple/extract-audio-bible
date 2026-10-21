@@ -369,17 +369,21 @@ export function ReadingsPanel() {
       }
     return start;
   }, [fold, overview]);
-  // A reference typed in shows everything it finds, when that isn't too much to read
+  // A reference typed in opens everything it finds, when that isn't too much to read; what's
+  // folded then is kept apart, and forgotten when the filter changes
   const searching = reference !== "" && (overview?.shown ?? 0) <= OPEN_FOUND_UP_TO;
-  const isOpen = (key: string) => searching || !shut.has(key);
+  const [foundFold, setFoundFold] = useState<{ readFor: string; shut: Set<string> } | null>(null);
+  const shutNow = searching ? (foundFold?.readFor === readFor ? foundFold.shut : new Set<string>()) : shut;
+  const setShut = (next: Set<string>) => (searching ? setFoundFold({ readFor, shut: next }) : changeFold(next));
+  const isOpen = (key: string) => !shutNow.has(key);
   const toggle = (key: string) => {
-    const next = new Set(shut);
+    const next = new Set(shutNow);
     if (next.has(key)) next.delete(key);
     else next.add(key);
-    changeFold(next);
+    setShut(next);
   };
   const foldAll = () => {
-    const next = new Set(shut);
+    const next = new Set(shutNow);
     if (view === "sermon") for (const g of overview?.bySermon ?? []) next.add(`s:${g.id}`);
     else
       for (const t of tree) {
@@ -389,11 +393,11 @@ export function ReadingsPanel() {
           for (const c of b.chapters) next.add(`c:${b.book}.${c.chapter}`);
         }
       }
-    changeFold(next);
+    setShut(next);
   };
   const unfoldAll = () => {
     const prefixes = view === "sermon" ? ["s:"] : ["t:", "b:", "c:"];
-    changeFold(new Set([...shut].filter((k) => !prefixes.some((p) => k.startsWith(p)))));
+    setShut(new Set([...shutNow].filter((k) => !prefixes.some((p) => k.startsWith(p)))));
   };
 
   if (!project) return null;
@@ -624,11 +628,10 @@ export function ReadingsPanel() {
           )}
           {filtered && <span className="text-xs text-muted-foreground">{overview.shown.toLocaleString()} shown</span>}
           <div className="ml-auto flex items-center gap-1">
-            {searching && <span className="text-xs text-muted-foreground">Showing everything found</span>}
-            <Button size="sm" variant="ghost" disabled={searching} onClick={unfoldAll} title="Open every sermon, or every testament, book, and chapter">
+            <Button size="sm" variant="ghost" onClick={unfoldAll} title="Open every sermon, or every testament, book, and chapter">
               <ChevronsUpDown /> Expand all
             </Button>
-            <Button size="sm" variant="ghost" disabled={searching} onClick={foldAll} title="Fold every sermon, or every testament, book, and chapter">
+            <Button size="sm" variant="ghost" onClick={foldAll} title="Fold every sermon, or every testament, book, and chapter">
               <ChevronsDownUp /> Collapse all
             </Button>
           </div>

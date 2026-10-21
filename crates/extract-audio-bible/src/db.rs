@@ -181,6 +181,47 @@ fn verse_of(key: i64) -> (u8, u16, u16) {
     ((key / 1_000_000) as u8, (key / 1000 % 1000) as u16, (key % 1000) as u16)
 }
 
+/**
+The first and last keys of the verses a reference is of: a book (`2 Corinthians`, `2 Cor`), a
+chapter (`Romans 8`), chapters (`Psalm 23-24`), a verse (`John 3:16`), or verses (`2:14-17`,
+`7:24-8:2`). `None` if it isn't one
+*/
+fn reference_keys(text: &str) -> Option<(i64, i64)> {
+    let text = text.trim().replace(['–', '—'], "-");
+    let (name, verses) = match text.rsplit_once(' ') {
+        Some((name, verses)) if verses.starts_with(|c: char| c.is_ascii_digit()) => (name, Some(verses)),
+        _ => (text.as_str(), None),
+    };
+    // A number alone is a book's number to `find_book`, not what's being typed ("1" of "1 John")
+    if !name.contains(|c: char| c.is_alphabetic()) {
+        return None;
+    }
+    let book = crate::bible::find_book(name)?.0;
+    let Some(verses) = verses else {
+        return Some((verse_key(book, 0, 0), verse_key(book, 999, 999)));
+    };
+    let number = |s: &str| s.parse::<u16>().ok().filter(|&n| (1..1000).contains(&n));
+    let (from, to) = verses.split_once('-').map_or((verses, None), |(a, b)| (a, Some(b)));
+    let (start_chapter, start_verse) = match from.split_once(':') {
+        Some((c, v)) => (number(c)?, Some(number(v)?)),
+        None => (number(from)?, None),
+    };
+    let (end_chapter, end_verse) = match to {
+        None => (start_chapter, start_verse),
+        Some(to) => match to.split_once(':') {
+            Some((c, v)) => (number(c)?, Some(number(v)?)),
+            // `2:14-17` is verses of one chapter; `23-24` is chapters
+            None if start_verse.is_some() => (start_chapter, Some(number(to)?)),
+            None => (number(to)?, None),
+        },
+    };
+    let (start, end) = (
+        verse_key(book, start_chapter, start_verse.unwrap_or(0)),
+        verse_key(book, end_chapter, end_verse.unwrap_or(999)),
+    );
+    (start <= end).then_some((start, end))
+}
+
 /// The first and last keys a chapter's verses could have
 fn chapter_keys(book: u8, chapter: u16) -> (i64, i64) {
     (verse_key(book, chapter, 0), verse_key(book, chapter, 999))
@@ -799,9 +840,10 @@ impl Readings {
     }
 
     /**
-    Where clause (and its arguments) for what `filter` keeps, over `r` (readings). A reference's
-    words are matched against the references of the verses read, here, and the verses they match
-    kept in a temporary table
+    Where clause (and its arguments) for what `filter` keeps, over `r` (readings). A reference
+    keeps its book's, chapters', or verses' readings; text that isn't one has its words matched
+    against the references of the verses read, here, and the verses they match kept in a
+    temporary table
     */
     fn filtered(&self, filter: &RowFilter) -> Result<(String, Vec<Value>)> {
         let mut parts = vec!["1".to_string()];
@@ -834,7 +876,10 @@ impl Readings {
             }
         }
         let words: Vec<String> = filter.reference.split_whitespace().map(str::to_lowercase).collect();
-        if !words.is_empty() {
+        if let Some((start, end)) = reference_keys(&filter.reference) {
+            let (start, end) = (arg(&mut args, Value::Integer(start)), arg(&mut args, Value::Integer(end)));
+            parts.push(format!("r.verse_key between {start} and {end}"));
+        } else if !words.is_empty() {
             self.conn.execute_batch(
                 "create temp table if not exists wanted_verses (verse_key integer primary key); \
                  delete from wanted_verses;",
@@ -1130,6 +1175,23 @@ mod tests {
                     "select book, chapter, count(*), count(distinct verse) from readings where active \
                      group by 1, 2 order by 1, 2",
                 )
+    }
+
+    #[test]
+    fn references_filtered_by() {
+        let keys = |text| reference_keys(text).map(|(a, b)| (verse_of(a), verse_of(b)));
+        // 2 Corinthians 2, not 1 Corinthians (nor 2 Corinthians 12:2)
+        assert_eq!(keys("2 Corinthians 2"), Some(((47, 2, 0), (47, 2, 999))));
+        assert_eq!(keys("2 cor 2"), keys("2 Corinthians 2"));
+        assert_eq!(keys("John"), Some(((43, 0, 0), (43, 999, 999))));
+        assert_eq!(keys("John 3:16"), Some(((43, 3, 16), (43, 3, 16))));
+        assert_eq!(keys("Romans 7:24–8:2"), Some(((45, 7, 24), (45, 8, 2))));
+        assert_eq!(keys("Psalm 23-24"), Some(((19, 23, 0), (19, 24, 999))));
+        assert_eq!(keys("2 Corinthians 2:14-17"), Some(((47, 2, 14), (47, 2, 17))));
+        // Not references: matched word by word
+        assert_eq!(keys("1"), None);
+        assert_eq!(keys("John 3:"), None);
+        assert_eq!(keys("John 3:17-16"), None);
     }
 
     #[test]
