@@ -7,6 +7,7 @@
  * Choosing readings and changing sermons' information are saved, so run it on copies of projects.
  */
 import { api, errorMessage } from "./api";
+import { stop, usePlayer } from "./player";
 import { useApp } from "./store";
 
 interface Timing {
@@ -201,6 +202,76 @@ export async function runBench(folders: string[]) {
         app().undo();
         await app().flush();
       }, () => !app().saving);
+
+      // Every chapter's best chosen; then the chapter with the most verses chosen played, paused, and gone through
+      const chosenBefore = Object.keys(app().project?.selections ?? {}).length;
+      let busiest = "";
+      await step(
+        "Chapter: choose best in every chapter (exact readings)",
+        async () => {
+          const picks = await api.bestReadings(id, [], 0.9, null);
+          if (picks.length > 0) app().selectMany(picks);
+          const byChapter = new Map<string, number>();
+          for (const key of Object.keys(app().project?.selections ?? {})) {
+            const chapter = key.split(".").slice(0, 2).join(".");
+            byChapter.set(chapter, (byChapter.get(chapter) ?? 0) + 1);
+          }
+          busiest = [...byChapter.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+          if (!busiest) throw new Error("no verse has a reading chosen");
+          const [cb, cc] = busiest.split(".").map(Number);
+          app().go(cb, cc);
+        },
+        () => app().loadedChapters.has(busiest) && all('[title="Play the chapter from here"]').length > 0,
+        () => `${(Object.keys(app().project?.selections ?? {}).length - chosenBefore).toLocaleString()} verses chosen; ${busiest} shown`,
+      );
+      const player = () => usePlayer.getState();
+      const heardVerse = () => withText("span", /^Verse \d+$/)[0]?.textContent ?? "";
+      await step(
+        "Chapter: play it",
+        () => button(/Play chapter/)?.click(),
+        () => player().id === `chapter:${busiest}` && player().time > 0.3 && heardVerse() !== "",
+        () => `${Math.round(player().duration)} s long, at ${heardVerse()}`,
+      );
+      let pausedAt = 0;
+      await step(
+        "Chapter: pause it",
+        () => button(/^\s*Pause$/)?.click(),
+        () => player().paused && (pausedAt = player().time) > 0,
+      );
+      await new Promise((r) => setTimeout(r, 400));
+      await step(
+        "Chapter: resume it (where it was paused)",
+        () => {
+          if (player().time !== pausedAt) throw new Error(`moved while paused: ${pausedAt} → ${player().time}`);
+          button(/^\s*Resume$/)?.click();
+        },
+        () => !player().paused && player().time > pausedAt + 0.1,
+      );
+      let before = "";
+      await step(
+        "Chapter: the next verse",
+        () => {
+          before = heardVerse();
+          document.querySelector<HTMLButtonElement>('[title="The next verse"]')?.click();
+        },
+        () => heardVerse() !== before,
+        () => `${before} → ${heardVerse()}`,
+      );
+      await step(
+        "Chapter: play it from another verse",
+        () => {
+          stop();
+          const verses = all<HTMLElement>('[title="Play the chapter from here"]');
+          verses[verses.length - 1]?.click();
+        },
+        () => player().id === `chapter:${busiest}` && !player().loading && heardVerse() !== "",
+        () => `from ${heardVerse()}`,
+      );
+      stop();
+      await step("Chapter: undo choosing", async () => {
+        if (Object.keys(app().project?.selections ?? {}).length > chosenBefore) app().undo();
+        await app().flush();
+      }, () => !app().saving && Object.keys(app().project?.selections ?? {}).length === chosenBefore);
     }
 
     // A sermon with readings, for its transcript, and where its last one is
@@ -263,6 +334,45 @@ export async function runBench(folders: string[]) {
       () => found() && !spinning(),
       () => withText("div", /place(s)? in [\d,]+ sermon/).pop()?.textContent?.slice(0, 80) ?? "",
     );
+
+    // A place found, used as a verse's reading: chosen for the verse, kept, then taken out
+    const addDialog = () => withText('[role="dialog"]', /Use as a verse's reading/)[0];
+    let addedId = "";
+    if (app().project?.kind !== "readings") {
+      const verse = [...app().verseCounts.keys()][0]?.split(".").map(Number);
+      await step(
+        "Search: use a place as a verse's reading",
+        async () => {
+          if (verse) app().go(verse[0], verse[1], verse[2]);
+          app().setTab("search");
+          await until("places", () => all('[title="Use this as a verse\'s reading"]').length > 0);
+          all<HTMLButtonElement>('[title="Use this as a verse\'s reading"]')[0].click();
+        },
+        () => !!addDialog() && withText("span", /% of the verse$/, addDialog()!).length > 0,
+        () => withText("span", /% of the verse$/, addDialog()!)[0]?.textContent ?? "",
+      );
+      await step(
+        "Search: add and choose it, and keep it",
+        async () => {
+          button(/^Add and (choose|join)$/, addDialog()!)?.click();
+          await until("added", () => (app().project?.addedReadings?.length ?? 0) > 0);
+          await app().flush();
+          const added = app().project!.addedReadings!;
+          const m = added[added.length - 1];
+          addedId = m.id;
+          const kept = await api.chapterMatches(id, m.book, m.chapter);
+          if (!kept.matches.some((x) => x.id === m.id)) throw new Error("not kept with the chapter's readings");
+        },
+        () => !app().saving && !addDialog(),
+        () => addedId,
+      );
+      await step("Search: take it out again", async () => {
+        app().removeAddedReading(addedId);
+        await app().flush();
+        const m = (await api.getProject(id)).addedReadings ?? [];
+        if (m.some((x) => x.id === addedId)) throw new Error("still kept");
+      }, () => !app().saving && !Object.values(app().project?.selections ?? {}).some((s) => s.matchId === addedId));
+    }
 
     await step(
       "Sermons tab",

@@ -6,6 +6,7 @@ import { api, errorMessage, type Said, type SearchProgress } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { play, usePlayer } from "@/lib/player";
 import { audioPathOf, formatTime, sermonMatches, sourceColor, sourceOf, sourceTitle, valuesOf } from "@/lib/refs";
+import { AddReading } from "./AddReading";
 import { MultiSelect } from "./MultiSelect";
 
 /** The most places shown */
@@ -15,6 +16,11 @@ const LIMIT = 500;
 let lastQuery = "";
 let lastSpeakers: string[] = [];
 let lastSeries: string[] = [];
+
+/** Searches for this when the Search tab is next shown, among every sermon */
+export function searchFor(query: string) {
+  [lastQuery, lastSpeakers, lastSeries] = [query, [], []];
+}
 
 /** Searching every sermon's transcript for what was said */
 export function SearchPanel() {
@@ -206,6 +212,7 @@ export function SearchPanel() {
                       <mark className="rounded-sm bg-yellow-200 px-0.5 text-foreground dark:bg-yellow-700/60">{s.text}</mark>
                       <span className="text-muted-foreground">{s.after ? ` ${s.after}…` : ""}</span>
                     </button>
+                    {project.kind !== "readings" && <AddReading said={s} />}
                   </div>
                 );
               })}

@@ -202,6 +202,8 @@ export interface Project {
   metadata: Metadata;
   /** What's known about each sermon, by its file id, kept apart from the sermons */
   files?: Record<string, FileMetadata>;
+  /** Readings added by hand, from what was said (a search's): kept when the sermons are searched again */
+  addedReadings?: Match[];
 }
 
 /** What a search of transcripts has found since it last said, as it goes */
@@ -430,6 +432,14 @@ export const api = {
   /** The books a scope searches, or null for every book; an error if it leaves nothing or names something unknown */
   scopeBooks: (scope: BookScope) => invoke<number[] | null>("scope_books", { scope }),
   /** The readings a filter keeps, counted and grouped by sermon and by book and chapter */
+  /**
+   * A verse's reading made from words said in a sermon (by index into its transcript, inclusive),
+   * compared with the verse; not added yet (`addReading` adds it)
+   */
+  readingFromSaid: (projectId: string, sourceId: string, wordStart: number, wordEnd: number, book: number, chapter: number, verse: number) =>
+    invoke<Match>("reading_from_said", { projectId, sourceId, wordStart, wordEnd, book, chapter, verse }),
+  /** The one verse a reference is of ("John 3:16"), as `[book, chapter, verse]`, if it's one */
+  referenceVerse: (text: string) => invoke<[number, number, number] | null>("reference_verse", { text }),
   /** Ways to finish a reference being typed (`2 Co` → `2 Corinthians`), best first */
   completeReference: (text: string, limit: number) => invoke<ReferenceCompletion[]>("complete_reference", { text, limit }),
   /**

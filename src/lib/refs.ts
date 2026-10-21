@@ -1,4 +1,4 @@
-import type { BookOutline, FileMetadata, Passage, Project, Run, Source } from "./api";
+import type { BookOutline, FileMetadata, Match, Passage, Project, Run, Source } from "./api";
 
 export const verseKey = (book: number, chapter: number, verse: number) => `${book}.${chapter}.${verse}`;
 
@@ -6,6 +6,12 @@ export function parseKey(key: string): [number, number, number] {
   const [b, c, v] = key.split(".").map(Number);
   return [b, c, v];
 }
+
+/** Whether a reading was added by hand (from what was said) */
+export const isAdded = (m: { id: string }) => m.id.startsWith("added:");
+
+/** Whether a reading is still the project's: one added by hand is, until it's taken out (or its adding undone) */
+export const readingKept = (project: Project, m: Match) => !isAdded(m) || (project.addedReadings ?? []).some((a) => a.id === m.id);
 
 export function formatTime(seconds: number, precise = false): string {
   if (!Number.isFinite(seconds)) return "–";

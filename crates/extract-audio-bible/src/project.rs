@@ -57,6 +57,10 @@ pub struct Project {
     /// sermons, so it can be given before they're added and outlives their removal
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub files: BTreeMap<String, FileMetadata>,
+    /// Readings added by hand, from what was said ([`crate::added`]): kept here, so searching the
+    /// sermons again keeps them
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added_readings: Vec<crate::Match>,
 }
 
 /// What a project is for
@@ -520,6 +524,8 @@ pub struct ProjectChanges {
     pub metadata: Option<Metadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Keyed<FileMetadata>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added_readings: Option<Vec<crate::Match>>,
 }
 
 /// Entries of a map changed: those set (added or changed), and those taken out, by key
@@ -569,6 +575,7 @@ impl Project {
             settings,
             metadata,
             files,
+            added_readings,
         } = changes;
         fn set<T>(field: &mut T, value: Option<T>) {
             if let Some(value) = value {
@@ -585,6 +592,7 @@ impl Project {
         set(&mut self.sources, sources);
         set(&mut self.settings, settings);
         set(&mut self.metadata, metadata);
+        set(&mut self.added_readings, added_readings);
         if let Some(selections) = selections {
             selections.apply(&mut self.selections);
         }
@@ -628,6 +636,7 @@ impl Project {
             settings: Default::default(),
             metadata,
             files: BTreeMap::new(),
+            added_readings: vec![],
         }
     }
 

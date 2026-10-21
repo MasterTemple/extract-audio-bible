@@ -88,6 +88,13 @@ interface AppState extends Indexed {
   setFileMetadata: (given: Record<string, FileMetadata>) => void;
   /** Adds a reading to its verse's choice, played with it (a verse read in pieces), in the verse's order */
   join: (match: Match) => void;
+  /**
+   * Adds a reading made by hand (from what was said) to the project, and with `how`, chooses it for
+   * its verse or joins it to the verse's reading (played with it, in the order said): one step to undo
+   */
+  addReading: (match: Match, how: "add" | "choose" | "join") => void;
+  /** Takes a reading added by hand out of the project, and out of any verse's choice */
+  removeAddedReading: (id: string) => void;
   /** Takes a reading out of its verse's choice (the only one unchooses the verse) */
   unjoin: (key: string, matchId: string) => void;
   /** Plays a verse's readings in this order */
@@ -119,6 +126,22 @@ function withChapter(had: Indexed, set: MatchSet): Indexed {
   const runById = new Map(had.runById);
   for (const r of set.runs) runById.set(r.id, r);
   return { matchesByVerse, matchById, runById };
+}
+
+/** The project with a reading joined to its verse's choice (played with it, in the order said), or chosen if there's none */
+function joined(p: Project, m: Match, matchById: Map<string, Match>): Project {
+  const key = verseKey(m.book, m.chapter, m.verse);
+  const current = p.selections[key];
+  if (!current) return { ...p, selections: { ...p.selections, [key]: selectionFor(m) } };
+  const parts = partsOf(current);
+  if (parts.some((x) => x.matchId === m.id)) return p;
+  const later = parts.findIndex((x) => {
+    const other = matchById.get(x.matchId);
+    return other !== undefined && begins(other) > begins(m);
+  });
+  const part: Part = { matchId: m.id, sourceId: m.sourceId, start: m.start, end: m.end, trimStart: 0, trimEnd: 0 };
+  parts.splice(later < 0 ? parts.length : later, 0, part);
+  return { ...p, selections: { ...p.selections, [key]: withParts(current, parts) } };
 }
 
 function countsOf(summary: Summary): Map<string, number> {
@@ -504,22 +527,46 @@ export const useApp = create<AppState>((set, get) => {
         return { ...p, files };
       }, "change a sermon's title or passage", `file:${Object.keys(given).join()}`),
 
-    join: (m) =>
+    join: (m) => get().update((p) => joined(p, m, get().matchById), "join a reading"),
+
+    addReading: (m, how) => {
+      // Shown at once, with the readings loaded, and counted
+      const key = verseKey(m.book, m.chapter, m.verse);
+      const counts = new Map(get().verseCounts);
+      if (!get().matchById.has(m.id)) counts.set(key, (counts.get(key) ?? 0) + 1);
+      set({ ...withChapter(get(), { analyzedAt: 0, matches: [m], runs: [] }), verseCounts: counts });
       get().update((p) => {
+        const added = { ...p, addedReadings: [...(p.addedReadings ?? []).filter((a) => a.id !== m.id), m] };
+        if (how === "choose") return { ...added, selections: { ...added.selections, [key]: selectionFor(m, added.selections[key]) } };
+        if (how === "join") return joined(added, m, get().matchById);
+        return added;
+      }, how === "add" ? "add a reading" : how === "choose" ? "add and choose a reading" : "add and join a reading");
+    },
+
+    removeAddedReading: (id) => {
+      const m = get().matchById.get(id);
+      get().update((p) => {
+        const selections = { ...p.selections };
+        for (const [key, sel] of Object.entries(p.selections)) {
+          const parts = partsOf(sel);
+          if (!parts.some((x) => x.matchId === id)) continue;
+          const rest = parts.filter((x) => x.matchId !== id);
+          if (rest.length === 0) delete selections[key];
+          else selections[key] = withParts(sel, rest);
+        }
+        return { ...p, selections, addedReadings: (p.addedReadings ?? []).filter((a) => a.id !== id) };
+      }, "take out an added reading");
+      if (m) {
         const key = verseKey(m.book, m.chapter, m.verse);
-        const current = p.selections[key];
-        if (!current) return { ...p, selections: { ...p.selections, [key]: selectionFor(m) } };
-        const parts = partsOf(current);
-        if (parts.some((x) => x.matchId === m.id)) return p;
-        const { matchById } = get();
-        const later = parts.findIndex((x) => {
-          const other = matchById.get(x.matchId);
-          return other !== undefined && begins(other) > begins(m);
-        });
-        const part: Part = { matchId: m.id, sourceId: m.sourceId, start: m.start, end: m.end, trimStart: 0, trimEnd: 0 };
-        parts.splice(later < 0 ? parts.length : later, 0, part);
-        return { ...p, selections: { ...p.selections, [key]: withParts(current, parts) } };
-      }, "join a reading"),
+        const matchesByVerse = new Map(get().matchesByVerse);
+        matchesByVerse.set(key, (matchesByVerse.get(key) ?? []).filter((x) => x.id !== id));
+        const matchById = new Map(get().matchById);
+        matchById.delete(id);
+        const counts = new Map(get().verseCounts);
+        counts.set(key, Math.max(0, (counts.get(key) ?? 1) - 1));
+        set({ matchesByVerse, matchById, verseCounts: counts });
+      }
+    },
 
     unjoin: (key, matchId) =>
       get().update((p) => {

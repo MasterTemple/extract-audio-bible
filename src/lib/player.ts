@@ -12,6 +12,8 @@ interface PlayerState {
   /** Seconds into the audio */
   time: number;
   duration: number;
+  /** Stopped where it is, to carry on from there (`resume`) */
+  paused: boolean;
 }
 
 export const usePlayer = create<PlayerState>(() => ({
@@ -21,6 +23,7 @@ export const usePlayer = create<PlayerState>(() => ({
   lead: 0,
   time: 0,
   duration: 0,
+  paused: false,
 }));
 
 /*
@@ -33,9 +36,12 @@ let source: AudioBufferSourceNode | null = null;
 let buffer: AudioBuffer | null = null;
 /** The context's time when the audio's start would have played */
 let startedAt = 0;
+/** Where the audio was paused, while it is */
+let pausedAt: number | null = null;
 let frame = 0;
 
 function now() {
+  if (pausedAt !== null) return pausedAt;
   return context && buffer ? Math.min(context.currentTime - startedAt, buffer.duration) : 0;
 }
 
@@ -60,22 +66,55 @@ function start(at: number) {
   startedAt = context.currentTime - at;
   node.start(0, Math.max(0, at));
   source = node;
+  pausedAt = null;
+  usePlayer.setState({ paused: false, time: at });
   cancelAnimationFrame(frame);
   frame = requestAnimationFrame(tick);
 }
 
-export function stop() {
+/** Stops the sound, keeping what's playing (to pause it) */
+function silence() {
   if (source) {
     source.onended = null;
     source.stop();
     source = null;
   }
   cancelAnimationFrame(frame);
-  usePlayer.setState({ id: null, loading: null, time: 0 });
 }
 
-/** Play WAV bytes, rendered on demand; `offset` maps the audio's time back to the sermon's */
-export async function play(id: string, render: () => Promise<ArrayBuffer>, offset = 0, lead = 0) {
+export function stop() {
+  silence();
+  pausedAt = null;
+  usePlayer.setState({ id: null, loading: null, time: 0, paused: false });
+}
+
+/** Stops where it is, to carry on from there */
+export function pause() {
+  if (!source || !buffer) return;
+  const at = now();
+  silence();
+  pausedAt = at;
+  usePlayer.setState({ paused: true, time: at });
+}
+
+/** Carries on from where it was paused */
+export function resume() {
+  if (pausedAt === null || !buffer || !usePlayer.getState().id) return;
+  void context?.resume();
+  start(pausedAt);
+}
+
+/** Pauses what's playing, or carries on with what's paused */
+export function togglePause() {
+  if (usePlayer.getState().paused) resume();
+  else pause();
+}
+
+/**
+ * Play WAV bytes, rendered on demand; `offset` maps the audio's time back to the sermon's. From
+ * `at` seconds into it, if given. Playing what's playing (or paused) stops it
+ */
+export async function play(id: string, render: () => Promise<ArrayBuffer>, offset = 0, lead = 0, at = 0) {
   if (usePlayer.getState().id === id) {
     stop();
     return;
@@ -91,15 +130,21 @@ export async function play(id: string, render: () => Promise<ArrayBuffer>, offse
     if (usePlayer.getState().loading !== id) return;
     buffer = decoded;
     usePlayer.setState({ id, loading: null, offset, lead, time: 0, duration: decoded.duration });
-    start(0);
+    start(Math.min(Math.max(0, at), decoded.duration));
   } catch (e) {
     usePlayer.setState({ loading: null, id: null });
     toast.error(`Couldn't play: ${errorMessage(e)}`);
   }
 }
 
+/** Goes to a time in what's playing, or what's paused (staying paused) */
 export function seek(seconds: number) {
-  if (source && buffer) start(Math.min(Math.max(0, seconds), buffer.duration));
+  if (!buffer || !usePlayer.getState().id) return;
+  const at = Math.min(Math.max(0, seconds), buffer.duration);
+  if (pausedAt !== null) {
+    pausedAt = at;
+    usePlayer.setState({ time: at });
+  } else if (source) start(at);
 }
 
 /** The sermon time being heard, if `id` is playing */

@@ -9,6 +9,7 @@ import { api, errorMessage, type Match, type Said, type Word } from "@/lib/api";
 import { partsOf, useApp } from "@/lib/store";
 import { play, sourceTime, stop, usePlayer } from "@/lib/player";
 import { audioPathOf, fileIdOf, fileMetadataOf, formatTime, sourceTitle } from "@/lib/refs";
+import { AddReading } from "./AddReading";
 
 /** How long playing from a word goes on, in seconds */
 const PLAY_SECONDS = 300;
@@ -332,6 +333,7 @@ export function TranscriptView() {
             <Button size="icon-sm" variant="ghost" title="Next (Enter)" disabled={!hits.length} onClick={() => step(1)}>
               <ChevronDown />
             </Button>
+            {hits[current] && project?.kind !== "readings" && <AddReading said={hits[current]} />}
           </div>
         </DialogHeader>
         <div ref={body} className="min-h-0 flex-1 overflow-y-auto px-5 py-4">

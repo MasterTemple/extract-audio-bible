@@ -268,7 +268,20 @@ async fn match_summary(state: State<'_, AppState>, project_id: String) -> Result
         let readings = store
             .readings(&project_id)?
             .ok_or_else(|| AppError::msg("No readings"))?;
-        Ok(readings.summary()?)
+        let mut summary = readings.summary()?;
+        // With the readings added by hand
+        let mut added = MatchSet::default();
+        project.with_added_readings(&mut added, None);
+        if !added.matches.is_empty() {
+            let mut counts: std::collections::BTreeMap<(u8, u16, u16), usize> =
+                summary.verses.iter().map(|&(b, c, v, n)| ((b, c, v), n)).collect();
+            for m in &added.matches {
+                *counts.entry((m.book, m.chapter, m.verse)).or_default() += 1;
+            }
+            summary.readings += added.matches.len();
+            summary.verses = counts.into_iter().map(|((b, c, v), n)| (b, c, v, n)).collect();
+        }
+        Ok(summary)
     })
     .await
 }
@@ -283,9 +296,60 @@ fn readings_of(store: &Store, project_id: &str) -> Result<Option<db::Readings>> 
 #[tauri::command]
 async fn chapter_matches(state: State<'_, AppState>, project_id: String, book: u8, chapter: u16) -> Result<MatchSet> {
     let store = state.store.clone();
-    blocking(move || match readings_of(&store, &project_id)? {
-        Some(readings) => Ok(readings.chapter(book, chapter)?),
-        None => Ok(MatchSet::default()),
+    blocking(move || chapter_set(&store, &project_id, book, chapter)).await
+}
+
+/// A chapter's readings, found and added by hand
+fn chapter_set(store: &Store, project_id: &str, book: u8, chapter: u16) -> Result<MatchSet> {
+    let mut set = match readings_of(store, project_id)? {
+        Some(readings) => readings.chapter(book, chapter)?,
+        None => MatchSet::default(),
+    };
+    store
+        .project_ref(project_id)?
+        .with_added_readings(&mut set, Some((book, chapter)));
+    Ok(set)
+}
+
+/**
+A verse's reading made from words said in a sermon (a search's, say), by index into its
+transcript (inclusive), compared with the verse in the project's Bible; not added yet (the window
+adds it to the project, as a step to undo)
+*/
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn reading_from_said(
+    state: State<'_, AppState>,
+    project_id: String,
+    source_id: String,
+    word_start: u32,
+    word_end: u32,
+    book: u8,
+    chapter: u16,
+    verse: u16,
+) -> Result<matcher::Match> {
+    let store = state.store.clone();
+    let cache = state.transcripts.clone();
+    blocking(move || {
+        let project = store.project_ref(&project_id)?;
+        let source = (project.sources.iter())
+            .find(|s| s.id == source_id)
+            .ok_or_else(|| AppError::msg("That sermon isn't in the project"))?;
+        let bible = store.bible(&project.bible_id)?;
+        let text = (bible.book(book))
+            .and_then(|b| b.chapters.get(chapter as usize - 1))
+            .and_then(|c| c.get(verse as usize - 1))
+            .filter(|t| !t.trim().is_empty())
+            .ok_or_else(|| AppError::msg(format!("{} has no such verse", bible.name)))?;
+        let transcript = transcript_of(&cache, &source.transcript_path)?;
+        let said = extract_audio_bible::added::Said {
+            source_id: &source.id,
+            words: &transcript.words,
+            word_start,
+            word_end,
+        };
+        extract_audio_bible::added::reading_of(&said, book, chapter, verse, text, &project.bible_id)
+            .ok_or_else(|| AppError::msg("Those words aren't in the sermon's transcript"))
     })
     .await
 }
@@ -299,6 +363,12 @@ async fn sermon_matches(state: State<'_, AppState>, project_id: String, source_i
         None => Ok(MatchSet::default()),
     })
     .await
+}
+
+/// The one verse a reference is of (`John 3:16`), as `[book, chapter, verse]`, if it's one
+#[tauri::command]
+fn reference_verse(text: String) -> Option<(u8, u16, u16)> {
+    db::reference_verse(&text)
 }
 
 /// Ways to finish a reference being typed (`2 Co` → `2 Corinthians`), best first
@@ -861,6 +931,7 @@ async fn best_readings(
         for ChapterRef { book, chapter } in chapters {
             let Some(b) = bible.book(book) else { continue };
             let mut set = readings.chapter(book, chapter)?;
+            project.with_added_readings(&mut set, Some((book, chapter)));
             if let Some(only) = &only_sermon {
                 set.matches.retain(|m| &m.source_id == only);
             }
@@ -1057,8 +1128,10 @@ pub fn run() {
             analyze,
             match_summary,
             chapter_matches,
+            reading_from_said,
             sermon_matches,
             complete_reference,
+            reference_verse,
             readings_overview,
             readings_rows,
             export_readings,

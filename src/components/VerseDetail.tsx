@@ -1,17 +1,18 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Loader2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { partsOf, useApp } from "@/lib/store";
-import { bookName, verseKey, versesNeeded } from "@/lib/refs";
+import { bookName, readingKept, verseKey, versesNeeded } from "@/lib/refs";
 import { MatchCard } from "./MatchCard";
+import { searchFor } from "./SearchPanel";
 import { ClipEditor } from "./ClipEditor";
 
 /** Readings shown at first, and more each time more are asked for (a verse can have thousands) */
 const PAGE = 50;
 
 export function VerseDetail() {
-  const { project, outline, book, chapter, verse, onlySermon, bookText, matchesByVerse, loadedChapters, setVerse } = useApp();
+  const { project, outline, book, chapter, verse, onlySermon, bookText, matchesByVerse, loadedChapters, setVerse, setTab } = useApp();
   const b = outline.find((x) => x.id === book);
   const [shown, setShown] = useState({ key: "", count: PAGE });
   if (!project || !b || !chapter || !verse) return null;
@@ -22,7 +23,7 @@ export function VerseDetail() {
   // Where each plays among the chosen readings, if chosen
   const part = (id: string) => (chosen.includes(id) ? chosen.indexOf(id) : null);
   const order = (id: string) => part(id) ?? Infinity;
-  const every = matchesByVerse.get(key) ?? [];
+  const every = (matchesByVerse.get(key) ?? []).filter((m) => readingKept(project, m));
   // One sermon's alone, if only its readings are shown
   const matches = every.filter((m) => !onlySermon || m.sourceId === onlySermon).sort((x, y) => order(x.id) - order(y.id) || y.score - x.score);
   const loaded = loadedChapters.has(`${b.id}.${chapter}`);
@@ -41,6 +42,18 @@ export function VerseDetail() {
           {onlySermon && ` of ${every.length}, from one sermon`}
         </span>
         <div className="ml-auto flex">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            disabled={!text?.[verse - 1]}
+            title="Find where the sermons say this verse's first words, to use what was said as a reading"
+            onClick={() => {
+              searchFor((text?.[verse - 1] ?? "").split(/\s+/).slice(0, 6).join(" "));
+              setTab("search");
+            }}
+          >
+            <Search />
+          </Button>
           <Button variant="ghost" size="icon-sm" disabled={i <= 0} onClick={() => setVerse(verses[i - 1])} title="Previous verse">
             <ChevronUp />
           </Button>
@@ -92,7 +105,7 @@ export function VerseDetail() {
             {loaded && every.length === 0 && (
               <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
                 This verse wasn't found in any sermon. Lowering the minimum match on the Sermons tab may find partial
-                readings.
+                readings, or find its words in the sermons (the search button above) and use what was said.
               </p>
             )}
             {matches.slice(0, count).map((m) => (

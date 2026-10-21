@@ -1,4 +1,4 @@
-import { Check, Combine, FileText, Filter, FilterX, Link2, Loader2, Play, Square, Rewind, AudioLines } from "lucide-react";
+import { Check, Combine, FileText, Filter, FilterX, Hand, Link2, Loader2, Play, Square, Rewind, AudioLines, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -7,7 +7,7 @@ import { api, type Match, type Word } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { useWords } from "@/lib/hooks";
 import { play, sourceTime, usePlayer } from "@/lib/player";
-import { audioPathOf, fileName, formatTime, kindLabel, runLabel, sourceColor, sourceTitle, verseKey } from "@/lib/refs";
+import { audioPathOf, fileName, formatTime, isAdded, kindLabel, runLabel, sourceColor, sourceTitle, verseKey } from "@/lib/refs";
 
 const CONTEXT_WORDS = 30;
 const CONTEXT_SECONDS = 4;
@@ -79,7 +79,7 @@ A reading found for a verse. `part` is where it plays among the verse's chosen r
 if chosen; `parts` is how many there are
 */
 export function MatchCard({ match, verseText, part, parts }: { match: Match; verseText: string; part: number | null; parts: number }) {
-  const { project, outline, runById, matchById, onlySermon, setOnlySermon, select, selectMany, join, openTranscript } = useApp();
+  const { project, outline, runById, matchById, onlySermon, setOnlySermon, select, selectMany, join, openTranscript, removeAddedReading } = useApp();
   const selected = part !== null;
   const player = usePlayer();
   const source = project?.sources.find((s) => s.id === match.sourceId);
@@ -119,8 +119,13 @@ export function MatchCard({ match, verseText, part, parts }: { match: Match; ver
         <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
           {formatTime(match.start)}–{formatTime(match.end)}
         </span>
+        {isAdded(match) && (
+          <span className="ml-auto flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground" title="Added by hand, from what was said">
+            <Hand className="size-3" /> Added
+          </span>
+        )}
         <span
-          className={cn("ml-auto shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium", kindClass[match.kind])}
+          className={cn("shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium", !isAdded(match) && "ml-auto", kindClass[match.kind])}
           title={match.accuracy > 0 ? `${Math.round(match.accuracy * 100)}% accurate` : undefined}
         >
           {kindLabel[match.kind]} · {Math.round(match.score * 100)}%
@@ -177,6 +182,16 @@ export function MatchCard({ match, verseText, part, parts }: { match: Match; ver
         <Button size="sm" variant="ghost" title="Open the whole transcript here" onClick={() => openTranscript(source.id, match.start)}>
           <FileText /> In transcript
         </Button>
+        {isAdded(match) && (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            title="Take this reading out (added by hand), and out of the verse's choice"
+            onClick={() => removeAddedReading(match.id)}
+          >
+            <Trash2 />
+          </Button>
+        )}
         {onlySermon === source.id ? (
           <Button size="icon-sm" variant="secondary" title="Show every sermon's readings again" onClick={() => setOnlySermon(null)}>
             <FilterX />

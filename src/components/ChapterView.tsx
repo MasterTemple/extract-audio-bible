@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Combine, Filter, Loader2, Play, Scissors, Sparkles, Square, Trash2, CheckCircle2, Link2, Volume2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleDashed, Combine, Filter, Loader2, Pause, Play, Scissors, SkipBack, SkipForward, Sparkles, Square, Trash2, CheckCircle2, Link2, Volume2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import { api, errorMessage, type Project, type Selection, type VerseTime } from "@/lib/api";
 import { partsOf, useApp } from "@/lib/store";
-import { play, stop, usePlayer } from "@/lib/player";
-import { audioPathOf, bookName, chapterStatus, passageHasChapter, verseKey, versesNeeded, sourceColor, sourceTitle, runLabel } from "@/lib/refs";
+import { play, resume, seek, stop, togglePause, usePlayer } from "@/lib/player";
+import { audioPathOf, bookName, formatTime, readingKept, chapterStatus, passageHasChapter, verseKey, versesNeeded, sourceColor, sourceTitle, runLabel } from "@/lib/refs";
 
 /** Whether `b` carries on straight from `a` in the same sermon (no cut between them) */
 export function continues(a: Selection | undefined, b: Selection | undefined): boolean {
@@ -74,6 +74,18 @@ export function ChapterView() {
   useEffect(() => {
     if (hearing !== null) rows.current.get(hearing)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [hearing]);
+  // Space pauses and resumes the chapter, unless something's being typed
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== " " || usePlayer.getState().id !== playId) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable=true], button, [role=button]")) return;
+      e.preventDefault();
+      togglePause();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [playId]);
   // Each chapter's readings are read when it's shown
   useEffect(() => {
     if (book && chapter) void loadChapter(book, chapter);
@@ -83,7 +95,7 @@ export function ChapterView() {
   const loaded = loadedChapters.has(`${b.id}.${chapter}`);
   // A verse's readings shown: only one sermon's, if it alone is shown
   const shownMatches = (key: string) => {
-    const all = matchesByVerse.get(key) ?? [];
+    const all = (matchesByVerse.get(key) ?? []).filter((m) => readingKept(project, m));
     return onlySermon ? all.filter((m) => m.sourceId === onlySermon) : all;
   };
   const onlySource = onlySermon ? project.sources.find((s) => s.id === onlySermon) : undefined;
@@ -138,16 +150,46 @@ export function ChapterView() {
     }), `unchoose ${b.name} ${chapter}`);
   };
 
-  const preview = async () => {
+  /** Plays the chapter as it will be exported, from a verse if given (or, if it's playing, goes to it) */
+  const playFrom = async (from: number | null) => {
+    const startOf = (times: VerseTime[]) => (from === null ? 0 : (times.find((t) => t.verse === from)?.start ?? 0));
+    // As it is now, not as it was when last drawn (it may have just been stopped)
+    const now = usePlayer.getState();
+    if (now.id === playId && timeline?.id === playId) {
+      seek(startOf(timeline.times));
+      if (now.paused) resume();
+      return;
+    }
     await flush();
     const p = useApp.getState().project!;
-    if (player.id !== playId) {
-      api.chapterTimeline(p.id, b.id, chapter).then(
-        (times) => setTimeline({ id: playId, times }),
-        () => setTimeline(null),
-      );
+    const times = await api.chapterTimeline(p.id, b.id, chapter).catch(() => [] as VerseTime[]);
+    setTimeline({ id: playId, times });
+    void play(playId, () => renderChapter(p, b.id, chapter), 0, 0, startOf(times));
+  };
+  /** Opens the next verse with no reading chosen: after the one open, in this chapter or a later one of the project's */
+  const nextToChoose = () => {
+    const from = outline.findIndex((x) => x.id === b.id);
+    for (const bk of outline.slice(from)) {
+      if (project.book !== null && bk.id !== project.book) continue;
+      for (let c = bk.id === b.id ? chapter : 1; c <= bk.chapters.length; c++) {
+        if (!passageHasChapter(project, bk.id, c)) continue;
+        const after = bk.id === b.id && c === chapter ? (verse ?? 0) : 0;
+        const next = versesNeeded(bk, c, project).find((v) => v > after && !project.selections[verseKey(bk.id, c, v)]);
+        if (next !== undefined) {
+          go(bk.id, c, next);
+          return;
+        }
+      }
     }
-    void play(playId, () => renderChapter(p, b.id, chapter));
+    toast.success("Every verse after this one has a reading chosen");
+  };
+  /** Goes to the verse before or after the one heard (before: its start, if it's been heard a while) */
+  const jump = (delta: number) => {
+    const times = playing ?? [];
+    const i = times.findIndex((t) => t.verse === hearing);
+    if (i < 0) return;
+    const target = delta < 0 && player.time - times[i].start > 2 ? times[i] : times[i + delta];
+    if (target) seek(target.start);
   };
 
   return (
@@ -174,6 +216,9 @@ export function ChapterView() {
           )}
         </div>
         <div className="ml-auto flex items-center gap-1.5">
+          <Button variant="ghost" size="sm" onClick={nextToChoose} title="Open the next verse with no reading chosen">
+            <CircleDashed /> Next to choose
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" disabled={choosing}>
@@ -194,10 +239,20 @@ export function ChapterView() {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="outline" size="sm" disabled={status.selected === 0} onClick={preview}>
-            {player.loading === playId ? <Loader2 className="animate-spin" /> : player.id === playId ? <Square /> : <Play />}
-            {player.id === playId ? "Stop" : "Play chapter"}
-          </Button>
+          {player.id === playId ? (
+            <>
+              <Button variant="outline" size="sm" onClick={togglePause} title="Space">
+                {player.paused ? <Play /> : <Pause />} {player.paused ? "Resume" : "Pause"}
+              </Button>
+              <Button variant="ghost" size="icon-sm" onClick={stop} title="Stop">
+                <Square />
+              </Button>
+            </>
+          ) : (
+            <Button variant="outline" size="sm" disabled={status.selected === 0 || player.loading === playId} onClick={() => playFrom(null)}>
+              {player.loading === playId ? <Loader2 className="animate-spin" /> : <Play />} Play chapter
+            </Button>
+          )}
           <Button variant="ghost" size="icon-sm" disabled={status.selected === 0} onClick={clear} title="Unchoose all">
             <Trash2 />
           </Button>
@@ -219,8 +274,39 @@ export function ChapterView() {
         </div>
       )}
       {player.id === playId && (
-        <div className="h-0.5 bg-muted">
-          <div className="h-full bg-primary" style={{ width: `${player.duration ? (player.time / player.duration) * 100 : 0}%` }} />
+        <div className="flex items-center gap-1.5 border-b px-4 py-1 text-xs">
+          <Button size="icon-xs" variant="ghost" onClick={() => jump(-1)} title="The verse before (or this one's start)">
+            <SkipBack />
+          </Button>
+          <Button size="icon-xs" variant="ghost" onClick={togglePause} title={player.paused ? "Resume (Space)" : "Pause (Space)"}>
+            {player.paused ? <Play /> : <Pause />}
+          </Button>
+          <Button size="icon-xs" variant="ghost" onClick={() => jump(1)} title="The next verse">
+            <SkipForward />
+          </Button>
+          <span className="w-24 shrink-0 text-muted-foreground tabular-nums">
+            {formatTime(player.time)} / {formatTime(player.duration)}
+          </span>
+          {/* Clicked to go there; a mark where each verse begins */}
+          <div
+            className="relative h-2 min-w-0 flex-1 cursor-pointer overflow-hidden rounded-full bg-muted"
+            onClick={(e) => {
+              const box = e.currentTarget.getBoundingClientRect();
+              seek(((e.clientX - box.left) / box.width) * player.duration);
+            }}
+          >
+            <div className="h-full bg-primary" style={{ width: `${player.duration ? (player.time / player.duration) * 100 : 0}%` }} />
+            {player.duration > 0 &&
+              playing?.map((t) => (
+                <span
+                  key={t.verse}
+                  className="absolute top-0 h-full w-px bg-background/80"
+                  style={{ left: `${(t.start / player.duration) * 100}%` }}
+                  title={`Verse ${t.verse}`}
+                />
+              ))}
+          </div>
+          <span className="w-16 shrink-0 text-right text-muted-foreground">{hearing !== null && `Verse ${hearing}`}</span>
         </div>
       )}
       <ScrollArea className="min-h-0 flex-1">
@@ -276,7 +362,25 @@ export function ChapterView() {
                       style={{ background: color ?? "transparent" }}
                     />
                     <span className="pt-0.5 text-right text-xs font-semibold text-muted-foreground tabular-nums">
-                      {hearing === v ? <Volume2 className="ml-auto size-3.5 text-primary" /> : v}
+                      {hearing === v ? (
+                        <Volume2 className="ml-auto size-3.5 text-primary" />
+                      ) : sel ? (
+                        // The row opens the verse; this plays the chapter from it
+                        <span
+                          role="button"
+                          title="Play the chapter from here"
+                          className="inline-flex"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void playFrom(v);
+                          }}
+                        >
+                          <span className="group-hover:hidden">{v}</span>
+                          <Play className="hidden size-3.5 text-primary group-hover:inline" />
+                        </span>
+                      ) : (
+                        v
+                      )}
                     </span>
                     <span className={cn("text-[15px] leading-relaxed", !sel && found === 0 && "text-muted-foreground")}>
                       {text[v - 1]}

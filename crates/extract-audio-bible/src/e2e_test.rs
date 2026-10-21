@@ -136,6 +136,7 @@ fn export_e2e() {
         settings: Default::default(),
         metadata: Default::default(),
         files: Default::default(),
+        added_readings: vec![],
     };
     for m in matches.iter().filter(|m| m.run_id.is_some()) {
         project.selections.insert(

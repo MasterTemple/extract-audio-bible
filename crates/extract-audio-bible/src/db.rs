@@ -189,7 +189,7 @@ chapter (`Romans 8`), chapters (`Psalm 23-24`), a verse (`John 3:16`), or verses
 /// The books of one chapter, by number
 const ONE_CHAPTER: [u8; 5] = [31, 57, 63, 64, 65];
 
-fn reference_keys(text: &str) -> Option<(i64, i64)> {
+pub fn reference_keys(text: &str) -> Option<(i64, i64)> {
     let text = text.trim().replace(['–', '—'], "-");
     let (name, verses) = match text.rsplit_once(' ') {
         Some((name, verses)) if verses.starts_with(|c: char| c.is_ascii_digit()) => (name, Some(verses)),
@@ -229,6 +229,13 @@ fn reference_keys(text: &str) -> Option<(i64, i64)> {
         verse_key(book, end_chapter, end_verse.unwrap_or(999)),
     );
     (start <= end).then_some((start, end))
+}
+
+/// The one verse a reference is of (`John 3:16`, `Jude 5`), as book, chapter, and verse
+pub fn reference_verse(text: &str) -> Option<(u8, u16, u16)> {
+    let (start, end) = reference_keys(text)?;
+    let (book, chapter, verse) = verse_of(start);
+    (start == end && chapter > 0 && verse > 0).then_some((book, chapter, verse))
 }
 
 /// The first and last keys a chapter's verses could have
@@ -1205,6 +1212,11 @@ mod tests {
         assert_eq!(keys("Jude 5"), Some(((65, 1, 5), (65, 1, 5))));
         assert_eq!(keys("Jude 3-4"), Some(((65, 1, 3), (65, 1, 4))));
         assert_eq!(keys("Jude 1:5"), keys("Jude 5"));
+        // One verse alone
+        assert_eq!(reference_verse("John 3:16"), Some((43, 3, 16)));
+        assert_eq!(reference_verse("Jude 5"), Some((65, 1, 5)));
+        assert_eq!(reference_verse("John 3"), None);
+        assert_eq!(reference_verse("John 3:16-17"), None);
         // Not references: matched word by word
         assert_eq!(keys("1"), None);
         assert_eq!(keys("John 3:"), None);
