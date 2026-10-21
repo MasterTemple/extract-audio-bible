@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, Loader2, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -15,6 +15,26 @@ export function VerseDetail() {
   const { project, outline, book, chapter, verse, onlySermon, bookText, matchesByVerse, loadedChapters, setVerse, setTab } = useApp();
   const b = outline.find((x) => x.id === book);
   const [shown, setShown] = useState({ key: "", count: PAGE });
+  // J and K go to the next and previous verse, Escape closes it, unless something's being typed in
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable=true], [role=dialog], [role=menu], [role=listbox]")) return;
+      const s = useApp.getState();
+      const bk = s.outline.find((x) => x.id === s.book);
+      if (!s.project || !bk || !s.chapter || !s.verse) return;
+      const list = versesNeeded(bk, s.chapter, s.project);
+      const at = list.indexOf(s.verse);
+      if (e.key === "j" && at < list.length - 1) s.setVerse(list[at + 1]);
+      else if (e.key === "k" && at > 0) s.setVerse(list[at - 1]);
+      else if (e.key === "Escape") s.setVerse(null);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, []);
   if (!project || !b || !chapter || !verse) return null;
   const key = verseKey(b.id, chapter, verse);
   const text = bookText[b.id]?.[chapter - 1];
@@ -54,13 +74,13 @@ export function VerseDetail() {
           >
             <Search />
           </Button>
-          <Button variant="ghost" size="icon-sm" disabled={i <= 0} onClick={() => setVerse(verses[i - 1])} title="Previous verse">
+          <Button variant="ghost" size="icon-sm" disabled={i <= 0} onClick={() => setVerse(verses[i - 1])} title="Previous verse (K)">
             <ChevronUp />
           </Button>
-          <Button variant="ghost" size="icon-sm" disabled={i >= verses.length - 1} onClick={() => setVerse(verses[i + 1])} title="Next verse">
+          <Button variant="ghost" size="icon-sm" disabled={i >= verses.length - 1} onClick={() => setVerse(verses[i + 1])} title="Next verse (J)">
             <ChevronDown />
           </Button>
-          <Button variant="ghost" size="icon-sm" onClick={() => setVerse(null)}>
+          <Button variant="ghost" size="icon-sm" onClick={() => setVerse(null)} title="Close (Escape)">
             <X />
           </Button>
         </div>
