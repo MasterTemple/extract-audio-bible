@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 export interface BibleSummary {
   id: string;
@@ -192,6 +192,21 @@ export interface Project {
   metadata: Metadata;
   /** What's known about each sermon, by its file id, kept apart from the sermons */
   files?: Record<string, FileMetadata>;
+}
+
+/** What a search of transcripts has found since it last said, as it goes */
+export interface SearchProgress {
+  /** Places found since, in the sermons' order (after those given before) */
+  found: Said[];
+  /** Sermons whose transcripts couldn't be read since, with why */
+  errors: string[];
+  /** How many sermons have been searched, of how many */
+  searched: number;
+  total: number;
+  /** Whether it's over: every sermon searched, the limit reached, or a newer search begun */
+  done: boolean;
+  /** Whether there were more than the limit */
+  more: boolean;
 }
 
 /** Entries of a map changed: those set (added or changed), and those taken out */
@@ -444,8 +459,35 @@ export const api = {
   transcript: (transcriptPath: string) =>
     invoke<{ id: string | null; title: string | null; words: Word[]; paragraphs: number[] }>("transcript", { transcriptPath }),
   /** Where a phrase was said in the project's sermons (or some of them), up to `limit` places; its last word may be the start of one */
-  searchTranscripts: (projectId: string, phrase: string, sourceIds: string[] | null, limit: number, prefix = true) =>
-    invoke<{ found: Said[]; more: boolean; errors: string[] }>("search_transcripts", { projectId, phrase, prefix, sourceIds, limit }),
+  searchTranscripts: (
+    projectId: string,
+    phrase: string,
+    sourceIds: string[] | null,
+    limit: number,
+    {
+      prefix = true,
+      key = "search",
+      onProgress,
+    }: {
+      prefix?: boolean;
+      /** A newer search with the same key stops this one (the Search tab's and a transcript's don't stop each other) */
+      key?: string;
+      /** Given what's found as it's found, a batch of sermons at a time, in the sermons' order */
+      onProgress?: (progress: SearchProgress) => void;
+    } = {},
+  ) => {
+    const channel = new Channel<SearchProgress>();
+    if (onProgress) channel.onmessage = onProgress;
+    return invoke<{ found: Said[]; more: boolean; errors: string[] }>("search_transcripts", {
+      projectId,
+      phrase,
+      prefix,
+      sourceIds,
+      limit,
+      search: key,
+      onProgress: channel,
+    });
+  },
   renderVerse: (projectId: string, book: number, chapter: number, verse: number) =>
     invoke<ArrayBuffer>("render_verse", { projectId, book, chapter, verse }),
   /** When each chosen verse is heard in `renderChapter`'s audio */
@@ -454,6 +496,14 @@ export const api = {
   chaptersToExport: (projectId: string) => invoke<ChapterRef[]>("chapters_to_export", { projectId }),
   exportChapters: (projectId: string, chapters: ChapterRef[] | null) =>
     invoke<ExportedFile[]>("export_chapters", { projectId, chapters }),
+  /** Project folders to run the benchmark on (`EAB_BENCH`), none normally */
+  benchFolders: () => invoke<string[]>("bench_folders"),
+  /** Only the benchmark's steps with these words in their names (`EAB_BENCH_STEPS`); all, if none */
+  benchSteps: () => invoke<string[]>("bench_steps"),
+  /** A line of the benchmark's progress, printed as it goes */
+  benchLog: (line: string) => invoke<void>("bench_log", { line }),
+  /** The benchmark's report, printed, and the app closed */
+  benchDone: (report: string) => invoke<void>("bench_done", { report }),
 };
 
 /** How a command fails: its message, shown as is, and what kind of failure it is */

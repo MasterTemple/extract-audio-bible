@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDown, ChevronUp, Loader2, Play, Search, Square } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,17 @@ import { audioPathOf, fileIdOf, fileMetadataOf, formatTime, sourceTitle } from "
 
 /** How long playing from a word goes on, in seconds */
 const PLAY_SECONDS = 300;
+
+/** The paragraph (by index) a word is in: the last to begin at or before it */
+function paragraphOf(paragraphs: { from: number }[], word: number): number {
+  let [lo, hi] = [0, paragraphs.length - 1];
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (paragraphs[mid].from <= word) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
 
 type Full = Awaited<ReturnType<typeof api.transcript>>;
 
@@ -165,7 +177,7 @@ export function TranscriptView() {
     }
     let live = true;
     const timer = setTimeout(() => {
-      api.searchTranscripts(p.id, query, [sourceId], 5000).then(
+      api.searchTranscripts(p.id, query, [sourceId], 5000, { key: "transcript" }).then(
         (r) => {
           if (!live) return;
           setHits(r.found);
@@ -197,13 +209,29 @@ export function TranscriptView() {
     const i = full.words.findIndex((w) => w.end > reading.at!);
     return i < 0 ? null : [i, i];
   }, [hits, current, full, reading?.at]);
+  // Only the paragraphs on screen are drawn (a sermon can be tens of thousands of words)
+  const virtual = useVirtualizer({
+    count: paragraphs.length,
+    getScrollElement: () => body.current,
+    // Measured once drawn; until then, by how many words it has
+    estimateSize: (i) => 36 + Math.ceil(paragraphs[i].words.length / 13) * 26,
+    getItemKey: (i) => paragraphs[i].from,
+    overscan: 4,
+  });
   useEffect(() => {
-    if (target === null) return;
-    // After the dialog has laid out
-    const id = requestAnimationFrame(() =>
-      body.current?.querySelector(`[data-word="${target[0]}"]`)?.scrollIntoView({ block: "center" }),
-    );
+    if (target === null || paragraphs.length === 0) return;
+    // Its paragraph drawn, then the word itself centered once it's there
+    virtual.scrollToIndex(paragraphOf(paragraphs, target[0]), { align: "center" });
+    let tries = 0;
+    let id = 0;
+    const center = () => {
+      const word = body.current?.querySelector(`[data-word="${target[0]}"]`);
+      if (word) word.scrollIntoView({ block: "center" });
+      else if (tries++ < 20) id = requestAnimationFrame(center);
+    };
+    id = requestAnimationFrame(center);
     return () => cancelAnimationFrame(id);
+    // `virtual` is made again each time it's drawn; what it scrolls is the same
   }, [target, paragraphs]);
 
   const playId = source ? `transcript:${source.id}` : "";
@@ -306,7 +334,7 @@ export function TranscriptView() {
             </Button>
           </div>
         </DialogHeader>
-        <div ref={body} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        <div ref={body} className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {error ? (
             <p className="text-sm text-destructive">{error}</p>
           ) : !full ? (
@@ -314,24 +342,34 @@ export function TranscriptView() {
               <Loader2 className="size-4 animate-spin" /> Reading the transcript…
             </div>
           ) : (
-            paragraphs.map((p) => {
-              const last = p.words[p.words.length - 1];
-              const inside = now !== null && now >= p.words[0].start - 0.05 && now < last.end + 0.05;
-              return (
-                <Paragraph
-                  key={p.from}
-                  from={p.from}
-                  words={p.words}
-                  marks={marks}
-                  now={inside ? now : null}
-                  target={target !== null && target[1] >= p.from && target[0] < p.from + p.words.length ? target : null}
-                  found={found}
-                  verseLabel={verseLabel}
-                  onWord={onWord}
-                  onVerse={onVerse}
-                />
-              );
-            })
+            <div className="relative w-full" style={{ height: virtual.getTotalSize() }}>
+              {virtual.getVirtualItems().map((item) => {
+                const p = paragraphs[item.index];
+                const last = p.words[p.words.length - 1];
+                const inside = now !== null && now >= p.words[0].start - 0.05 && now < last.end + 0.05;
+                return (
+                  <div
+                    key={item.key}
+                    data-index={item.index}
+                    ref={virtual.measureElement}
+                    className="absolute top-0 left-0 w-full pb-3"
+                    style={{ transform: `translateY(${item.start}px)` }}
+                  >
+                    <Paragraph
+                      from={p.from}
+                      words={p.words}
+                      marks={marks}
+                      now={inside ? now : null}
+                      target={target !== null && target[1] >= p.from && target[0] < p.from + p.words.length ? target : null}
+                      found={found}
+                      verseLabel={verseLabel}
+                      onWord={onWord}
+                      onVerse={onVerse}
+                    />
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </DialogContent>

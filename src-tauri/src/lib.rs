@@ -34,6 +34,8 @@ struct AppState {
     store: Store,
     transcripts: Transcripts,
     engine: CachedEngine,
+    /// The newest search of transcripts by its key (`search_transcripts`), so older ones stop
+    searches: Arc<Mutex<HashMap<String, u64>>>,
 }
 
 /// A transcript, read once and kept (call it off the main thread: the first read is slow)
@@ -506,12 +508,36 @@ struct SaidIn {
     errors: Vec<String>,
 }
 
+/// What a search has found since it last said, as it goes
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchProgress {
+    /// Places found since, in the sermons' order (after those given before)
+    found: Vec<extract_audio_bible::Said>,
+    /// Sermons whose transcripts couldn't be read since, with why
+    errors: Vec<String>,
+    /// How many sermons have been searched, of how many
+    searched: usize,
+    total: usize,
+    /// Whether it's over: every sermon searched, the limit reached, or a newer search begun
+    done: bool,
+    /// Whether there were more than the limit
+    more: bool,
+}
+
+/// Sermons searched at once, in their order, before what they have is given
+const SEARCH_BATCH: usize = 256;
+
 /**
-Where a phrase was said in the project's sermons (or some of them, by id), up to `limit` places. The
-transcripts not already held are read for each search (all at once) and not kept: every sermon's,
-held, could take hundreds of megabytes, but reading them is quick
+Where a phrase was said in the project's sermons (or some of them, by id), the first `limit` places
+in the sermons' order. Sermons are searched a batch at a time, in their order (each batch several at
+once), and what each batch finds is given to `on_progress` as it's found; the search stops once it
+has `limit` places, or when another search with the same `search` key begins (the Search tab's and a
+transcript's don't stop each other). The transcripts not already held are read for each search and
+not kept: every sermon's, held, could take hundreds of megabytes, but reading them is quick
 */
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn search_transcripts(
     state: State<'_, AppState>,
     project_id: String,
@@ -519,10 +545,20 @@ async fn search_transcripts(
     prefix: bool,
     source_ids: Option<Vec<String>>,
     limit: usize,
+    search: String,
+    on_progress: tauri::ipc::Channel<SearchProgress>,
 ) -> Result<SaidIn> {
     use rayon::prelude::*;
     let held = lock(&state.transcripts).clone();
     let store = state.store.clone();
+    let searches = state.searches.clone();
+    // This search, the newest with its key: an older one stops when it sees it's been passed
+    let this = {
+        let mut searches = lock(&searches);
+        let n = searches.entry(search.clone()).or_insert(0);
+        *n += 1;
+        *n
+    };
     blocking(move || {
         let project = store.project_ref(&project_id)?;
         let options = extract_audio_bible::FindOptions {
@@ -535,28 +571,65 @@ async fn search_transcripts(
             .iter()
             .filter(|s| source_ids.as_ref().is_none_or(|ids| ids.contains(&s.id)))
             .collect();
-        let results: Vec<_> = (sources.par_iter())
-            .map(|source| {
-                let t = match held.get(&source.transcript_path) {
-                    Some(t) => t.clone(),
-                    None => Arc::new(Transcript::open(&Disk, &source.transcript_path)?),
-                };
-                Ok::<_, extract_audio_bible::Error>(extract_audio_bible::find_in(&t, &source.id, &phrase, &options))
-            })
-            .collect();
+        let total = sources.len();
         let mut out = SaidIn {
             found: vec![],
             more: false,
             errors: vec![],
         };
-        for (source, result) in sources.iter().zip(results) {
-            match result {
-                Ok(found) => out.found.extend(found),
-                Err(e) => out.errors.push(format!("{}: {e}", project.source_title(source))),
+        let mut searched = 0;
+        for batch in sources.chunks(SEARCH_BATCH) {
+            if lock(&searches).get(&search) != Some(&this) {
+                break;
+            }
+            let results: Vec<_> = (batch.par_iter())
+                .map(|source| {
+                    let t = match held.get(&source.transcript_path) {
+                        Some(t) => t.clone(),
+                        None => Arc::new(Transcript::open(&Disk, &source.transcript_path)?),
+                    };
+                    Ok::<_, extract_audio_bible::Error>(extract_audio_bible::find_in(&t, &source.id, &phrase, &options))
+                })
+                .collect();
+            searched += batch.len();
+            let mut found = vec![];
+            let mut errors = vec![];
+            for (source, result) in batch.iter().zip(results) {
+                match result {
+                    Ok(places) => found.extend(places),
+                    Err(e) => errors.push(format!("{}: {e}", project.source_title(source))),
+                }
+            }
+            // The first `limit` places, in the sermons' order
+            let room = limit.saturating_sub(out.found.len());
+            if found.len() > room {
+                found.truncate(room);
+                out.more = true;
+            }
+            out.found.extend(found.iter().cloned());
+            out.errors.extend(errors.iter().cloned());
+            let done = out.more || searched == total;
+            let _ = on_progress.send(SearchProgress {
+                found,
+                errors,
+                searched,
+                total,
+                done,
+                more: out.more,
+            });
+            if done {
+                return Ok(out);
             }
         }
-        out.more = out.found.len() > limit;
-        out.found.truncate(limit);
+        // Passed by a newer search
+        let _ = on_progress.send(SearchProgress {
+            found: vec![],
+            errors: vec![],
+            searched,
+            total,
+            done: true,
+            more: out.more,
+        });
         Ok(out)
     })
     .await
@@ -774,6 +847,48 @@ async fn export_chapters(
     .await
 }
 
+// ---------------------------------------------------------------- Benchmarks
+
+/// Project folders to time the interface with, from `EAB_BENCH` (separated by `:`): with any, the
+/// app runs its benchmark (`src/lib/bench.ts`) on them, prints what it timed, and quits
+#[tauri::command]
+async fn bench_folders() -> Result<Vec<String>> {
+    Ok(std::env::var("EAB_BENCH")
+        .map(|v| v.split(':').filter(|s| !s.is_empty()).map(String::from).collect())
+        .unwrap_or_default())
+}
+
+/// Only the benchmark's steps whose names have these words (`EAB_BENCH_STEPS`, separated by `,`),
+/// besides opening each project; all of them if it isn't set
+#[tauri::command]
+async fn bench_steps() -> Result<Vec<String>> {
+    Ok(std::env::var("EAB_BENCH_STEPS")
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// A line of the benchmark's progress, printed as it goes
+#[tauri::command]
+async fn bench_log(line: String) -> Result<()> {
+    use std::io::Write;
+    eprintln!("{line}");
+    let _ = std::io::stderr().flush();
+    Ok(())
+}
+
+/// The benchmark's report, printed, and the app closed
+#[tauri::command]
+async fn bench_done(app: tauri::AppHandle, report: String) -> Result<()> {
+    println!("{report}");
+    app.exit(0);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -785,6 +900,7 @@ pub fn run() {
             app.manage(AppState {
                 store: Store::new(root),
                 transcripts: Arc::default(),
+                searches: Arc::default(),
                 engine: Arc::default(),
             });
             Ok(())
@@ -823,6 +939,10 @@ pub fn run() {
             chapter_timeline,
             chapters_to_export,
             export_chapters,
+            bench_folders,
+            bench_steps,
+            bench_log,
+            bench_done,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

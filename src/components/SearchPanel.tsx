@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FileText, Loader2, Play, Search, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api, errorMessage, type Said } from "@/lib/api";
+import { api, errorMessage, type Said, type SearchProgress } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { play, usePlayer } from "@/lib/player";
-import { audioPathOf, formatTime, sermonMatches, sourceColor, sourceTitle, valuesOf } from "@/lib/refs";
+import { audioPathOf, formatTime, sermonMatches, sourceColor, sourceOf, sourceTitle, valuesOf } from "@/lib/refs";
 import { MultiSelect } from "./MultiSelect";
 
 /** The most places shown */
@@ -18,12 +18,21 @@ let lastSeries: string[] = [];
 
 /** Searching every sermon's transcript for what was said */
 export function SearchPanel() {
-  const { project, openTranscript } = useApp();
+  const project = useApp((s) => s.project);
+  const openTranscript = useApp((s) => s.openTranscript);
   const player = usePlayer();
   const [query, setQuery] = useState(lastQuery);
   const [speakers, setSpeakers] = useState(lastSpeakers);
   const [series, setSeries] = useState(lastSeries);
-  const [result, setResult] = useState<{ query: string; found: Said[]; more: boolean } | null>(null);
+  // What's been found so far: `searched` of `total` sermons, and whether that's all
+  const [result, setResult] = useState<{
+    query: string;
+    found: Said[];
+    more: boolean;
+    searched: number;
+    total: number;
+    done: boolean;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -43,10 +52,20 @@ export function SearchPanel() {
     let live = true;
     const timer = setTimeout(() => {
       setBusy(true);
-      api.searchTranscripts(p.id, query, among, LIMIT).then(
+      // Shown as they're found, a batch of sermons at a time, in the sermons' order
+      let found: Said[] = [];
+      let errors: string[] = [];
+      const onProgress = (progress: SearchProgress) => {
+        if (!live) return;
+        found = progress.found.length ? [...found, ...progress.found] : found;
+        errors = progress.errors.length ? [...errors, ...progress.errors] : errors;
+        setResult({ query, found, more: progress.more, searched: progress.searched, total: progress.total, done: progress.done });
+        setError(errors.length ? errors.join("\n") : null);
+      };
+      api.searchTranscripts(p.id, query, among, LIMIT, { onProgress }).then(
         (r) => {
           if (!live) return;
-          setResult({ query, found: r.found, more: r.more });
+          setResult({ query, found: r.found, more: r.more, searched: 0, total: 0, done: true });
           setError(r.errors.length ? r.errors.join("\n") : null);
           setBusy(false);
         },
@@ -74,10 +93,18 @@ export function SearchPanel() {
     return [...bySource.entries()];
   }, [result]);
 
+  // The speakers and series to choose among (from every sermon, so worked out once for them)
+  const sermons = project?.sources;
+  const files = project?.files;
+  const [speakerValues, seriesValues] = useMemo(() => {
+    const p = useApp.getState().project;
+    return p ? [valuesOf(p, "speaker"), valuesOf(p, "series")] : [[], []];
+  }, [sermons, files]);
+
   if (!project) return null;
 
   const listen = (s: Said) => {
-    const source = project.sources.find((x) => x.id === s.sourceId);
+    const source = sourceOf(project, s.sourceId);
     if (!source) return;
     const start = Math.max(0, s.start - 2);
     void play(`said:${s.sourceId}:${s.wordStart}`, () => api.renderClip({ audioPath: audioPathOf(project, source), start, end: s.end + 4 }), start);
@@ -97,20 +124,20 @@ export function SearchPanel() {
           />
           {busy && <Loader2 className="absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />}
         </div>
-        {(valuesOf(project, "speaker").length > 0 || valuesOf(project, "series").length > 0) && (
+        {(speakerValues.length > 0 || seriesValues.length > 0) && (
           <div className="grid gap-2 sm:grid-cols-2">
-            {valuesOf(project, "speaker").length > 0 && (
+            {speakerValues.length > 0 && (
               <MultiSelect
-                options={valuesOf(project, "speaker").map((v) => ({ value: v, label: v }))}
+                options={speakerValues.map((v) => ({ value: v, label: v }))}
                 value={speakers}
                 onChange={setSpeakers}
                 placeholder="Every speaker"
                 searchPlaceholder="Search speakers…"
               />
             )}
-            {valuesOf(project, "series").length > 0 && (
+            {seriesValues.length > 0 && (
               <MultiSelect
-                options={valuesOf(project, "series").map((v) => ({ value: v, label: v }))}
+                options={seriesValues.map((v) => ({ value: v, label: v }))}
                 value={series}
                 onChange={setSeries}
                 placeholder="Every series"
@@ -125,7 +152,13 @@ export function SearchPanel() {
         </p>
         {error && <p className="text-sm whitespace-pre-line text-destructive">{error}</p>}
 
-        {result && (
+        {result && !result.done && (
+          <div className="text-sm text-muted-foreground">
+            Searching… {result.searched.toLocaleString()} of {result.total.toLocaleString()} sermons ·{" "}
+            {result.found.length.toLocaleString()} place{result.found.length === 1 ? "" : "s"} so far
+          </div>
+        )}
+        {result?.done && (
           <div className="text-sm text-muted-foreground">
             {result.found.length === 0
               ? `“${result.query}” wasn't found.`
@@ -134,7 +167,7 @@ export function SearchPanel() {
         )}
 
         {groups.map(([sourceId, found]) => {
-          const source = project.sources.find((s) => s.id === sourceId);
+          const source = sourceOf(project, sourceId);
           return (
             <section key={sourceId} className="space-y-1 rounded-lg border bg-background p-3">
               <div className="flex items-center gap-2 pb-1">

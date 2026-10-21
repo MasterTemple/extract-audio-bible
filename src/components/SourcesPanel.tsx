@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { AudioLines, CloudDownload, FileJson, FilePlus, FileText, FolderPlus, Loader2, ScanSearch, Tags, Trash2 } from "lucide-react";
@@ -28,6 +29,29 @@ export function SourcesPanel() {
     const off = listen<ProgressEvent>("analyze-progress", (e) => setProgress(e.payload));
     return () => void off.then((f) => f());
   }, []);
+
+  // Only the sermons on screen are drawn (there can be tens of thousands)
+  const table = useRef<HTMLDivElement>(null);
+  const sources = project?.sources;
+  const rows = useVirtualizer({
+    count: sources?.length ?? 0,
+    getScrollElement: () => table.current,
+    estimateSize: () => 58,
+    getItemKey: (i) => sources?.[i]?.id ?? i,
+    overscan: 12,
+  });
+  // How many chosen verses use each sermon, and the names given, worked out once for them all
+  const selections = project?.selections;
+  const used = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const s of Object.values(selections ?? {})) counts.set(s.sourceId, (counts.get(s.sourceId) ?? 0) + 1);
+    return counts;
+  }, [selections]);
+  const files = project?.files;
+  const [speakerValues, seriesValues] = useMemo(() => {
+    const p = useApp.getState().project;
+    return p ? [valuesOf(p, "speaker"), valuesOf(p, "series")] : [[], []];
+  }, [sources, files]);
 
   if (!project) return null;
 
@@ -167,113 +191,136 @@ export function SourcesPanel() {
                 No sermons yet.
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Sermon</TableHead>
-                    <TableHead>Passage</TableHead>
-                    <TableHead>Speaker</TableHead>
-                    <TableHead>Series</TableHead>
-                    <TableHead>Files</TableHead>
-                    <TableHead className="text-right">Length</TableHead>
-                    <TableHead className="text-right">Words</TableHead>
-                    <TableHead className="text-right">Readings</TableHead>
-                    <TableHead className="text-right">Used</TableHead>
-                    <TableHead />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {project.sources.map((s) => {
-                    const used = Object.values(project.selections).filter((x) => x.sourceId === s.id).length;
-                    const fileId = fileIdOf(s);
-                    const meta = fileMetadataOf(project, s);
-                    return (
-                      <TableRow key={s.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-2 font-medium">
-                            <span className="size-2.5 shrink-0 rounded-full" style={{ background: sourceColor(project, s.id) }} />
+              <div ref={table} className="max-h-[70vh] overflow-auto rounded-md border">
+                <Table className="table-fixed">
+                  <colgroup>
+                    <col className="w-[22%]" />
+                    <col className="w-[13%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[17%]" />
+                    <col className="w-[6%]" />
+                    <col className="w-[6%]" />
+                    <col className="w-[6%]" />
+                    <col className="w-[4%]" />
+                    <col className="w-[6rem]" />
+                  </colgroup>
+                  <TableHeader className="sticky top-0 z-10 bg-card">
+                    <TableRow>
+                      <TableHead>Sermon</TableHead>
+                      <TableHead>Passage</TableHead>
+                      <TableHead>Speaker</TableHead>
+                      <TableHead>Series</TableHead>
+                      <TableHead>Files</TableHead>
+                      <TableHead className="text-right">Length</TableHead>
+                      <TableHead className="text-right">Words</TableHead>
+                      <TableHead className="text-right">Readings</TableHead>
+                      <TableHead className="text-right">Used</TableHead>
+                      <TableHead />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.getVirtualItems().length > 0 && (
+                      <tr aria-hidden style={{ height: rows.getVirtualItems()[0].start }} />
+                    )}
+                    {rows.getVirtualItems().map((item) => {
+                      const s = project.sources[item.index];
+                      const fileId = fileIdOf(s);
+                      const meta = fileMetadataOf(project, s);
+                      return (
+                        <TableRow key={item.key} data-index={item.index} ref={rows.measureElement}>
+                          <TableCell>
+                            <div className="flex items-center gap-2 font-medium">
+                              <span className="size-2.5 shrink-0 rounded-full" style={{ background: sourceColor(project, s.id) }} />
+                              <input
+                                className="w-full min-w-0 bg-transparent outline-none placeholder:text-foreground/70 focus:underline"
+                                value={meta.title ?? ""}
+                                placeholder={s.label}
+                                title="Its title (its file's name if none is given)"
+                                onChange={(e) => setFileMetadata({ [fileId]: { title: e.target.value } })}
+                              />
+                            </div>
+                            <div className="ml-4.5 truncate text-[11px] text-muted-foreground" title="The id its title and passage are kept by">
+                              {fileId}
+                            </div>
+                          </TableCell>
+                          <TableCell>
                             <input
-                              className="w-full min-w-40 bg-transparent outline-none placeholder:text-foreground/70 focus:underline"
-                              value={meta.title ?? ""}
-                              placeholder={s.label}
-                              title="Its title (its file's name if none is given)"
-                              onChange={(e) => setFileMetadata({ [fileId]: { title: e.target.value } })}
+                              className="w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 focus:underline"
+                              value={meta.passage ?? ""}
+                              placeholder="Add passage"
+                              onChange={(e) => setFileMetadata({ [fileId]: { passage: e.target.value } })}
                             />
-                          </div>
-                          <div className="ml-4.5 truncate text-[11px] text-muted-foreground" title="The id its title and passage are kept by">
-                            {fileId}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <input
-                            className="w-full min-w-32 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 focus:underline"
-                            value={meta.passage ?? ""}
-                            placeholder="Add passage"
-                            onChange={(e) => setFileMetadata({ [fileId]: { passage: e.target.value } })}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <input
-                            className="w-full min-w-28 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 focus:underline"
-                            value={meta.speaker ?? ""}
-                            placeholder="Add speaker"
-                            list="sermon-speakers"
-                            onChange={(e) => setFileMetadata({ [fileId]: { speaker: e.target.value } })}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <input
-                            className="w-full min-w-28 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 focus:underline"
-                            value={meta.series ?? ""}
-                            placeholder="Add series"
-                            list="sermon-series"
-                            onChange={(e) => setFileMetadata({ [fileId]: { series: e.target.value } })}
-                          />
-                        </TableCell>
-                        <TableCell className="max-w-72 text-xs text-muted-foreground">
-                          {s.audioPath ? (
-                            <div className="flex items-center gap-1 truncate" title={s.audioPath}>
-                              <AudioLines className="size-3 shrink-0" /> {fileName(s.audioPath)}
+                          </TableCell>
+                          <TableCell>
+                            <input
+                              className="w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 focus:underline"
+                              value={meta.speaker ?? ""}
+                              placeholder="Add speaker"
+                              list="sermon-speakers"
+                              onChange={(e) => setFileMetadata({ [fileId]: { speaker: e.target.value } })}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <input
+                              className="w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 focus:underline"
+                              value={meta.series ?? ""}
+                              placeholder="Add series"
+                              list="sermon-series"
+                              onChange={(e) => setFileMetadata({ [fileId]: { series: e.target.value } })}
+                            />
+                          </TableCell>
+                          <TableCell className="overflow-hidden text-xs text-muted-foreground">
+                            {s.audioPath ? (
+                              <div className="flex items-center gap-1 truncate" title={s.audioPath}>
+                                <AudioLines className="size-3 shrink-0" /> {fileName(s.audioPath)}
+                              </div>
+                            ) : audioPathOf(project, s) ? (
+                              <div className="flex items-center gap-1 truncate" title={`Downloaded when needed from ${audioPathOf(project, s)}`}>
+                                <CloudDownload className="size-3 shrink-0" /> {audioPathOf(project, s)}
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1 text-amber-600">
+                                <AudioLines className="size-3 shrink-0" /> No audio: set where to download it from
+                              </div>
+                            )}
+                            <div className="flex items-center gap-1 truncate" title={s.transcriptPath}>
+                              <FileJson className="size-3 shrink-0" /> {fileName(s.transcriptPath)}
                             </div>
-                          ) : audioPathOf(project, s) ? (
-                            <div className="flex items-center gap-1 truncate" title={`Downloaded when needed from ${audioPathOf(project, s)}`}>
-                              <CloudDownload className="size-3 shrink-0" /> {audioPathOf(project, s)}
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1 text-amber-600">
-                              <AudioLines className="size-3 shrink-0" /> No audio: set where to download it from
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1 truncate" title={s.transcriptPath}>
-                            <FileJson className="size-3 shrink-0" /> {fileName(s.transcriptPath)}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">{s.duration ? formatTime(s.duration) : "–"}</TableCell>
-                        <TableCell className="text-right tabular-nums">{s.wordCount ? s.wordCount.toLocaleString() : "–"}</TableCell>
-                        <TableCell className="text-right tabular-nums">{s.wordCount ? s.matchCount : "–"}</TableCell>
-                        <TableCell className="text-right tabular-nums">{used}</TableCell>
-                        <TableCell className="text-right whitespace-nowrap">
-                          <Button variant="ghost" size="icon-sm" title="Read its transcript" onClick={() => openTranscript(s.id)}>
-                            <FileText />
-                          </Button>
-                          <Button variant="ghost" size="icon-sm" title="Remove" onClick={() => remove(s.id)}>
-                            <Trash2 />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{s.duration ? formatTime(s.duration) : "–"}</TableCell>
+                          <TableCell className="text-right tabular-nums">{s.wordCount ? s.wordCount.toLocaleString() : "–"}</TableCell>
+                          <TableCell className="text-right tabular-nums">{s.wordCount ? s.matchCount : "–"}</TableCell>
+                          <TableCell className="text-right tabular-nums">{used.get(s.id) ?? 0}</TableCell>
+                          <TableCell className="text-right whitespace-nowrap">
+                            <Button variant="ghost" size="icon-sm" title="Read its transcript" onClick={() => openTranscript(s.id)}>
+                              <FileText />
+                            </Button>
+                            <Button variant="ghost" size="icon-sm" title="Remove" onClick={() => remove(s.id)}>
+                              <Trash2 />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {rows.getVirtualItems().length > 0 && (
+                      <tr
+                        aria-hidden
+                        style={{ height: rows.getTotalSize() - rows.getVirtualItems()[rows.getVirtualItems().length - 1].end }}
+                      />
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             )}
             {/* Names already given, suggested as each is typed */}
             <datalist id="sermon-speakers">
-              {valuesOf(project, "speaker").map((v) => (
+              {speakerValues.map((v) => (
                 <option key={v} value={v} />
               ))}
             </datalist>
             <datalist id="sermon-series">
-              {valuesOf(project, "series").map((v) => (
+              {seriesValues.map((v) => (
                 <option key={v} value={v} />
               ))}
             </datalist>

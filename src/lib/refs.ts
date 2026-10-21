@@ -141,9 +141,26 @@ const PALETTE = [
   "#059669",
 ];
 
+/** Each sermon list's sermons by id, with where each is: made once for each list (they're replaced, not changed) */
+const sermonIndexes = new WeakMap<Source[], Map<string, [number, Source]>>();
+
+function sermonIndex(project: Project): Map<string, [number, Source]> {
+  let index = sermonIndexes.get(project.sources);
+  if (!index) {
+    index = new Map(project.sources.map((s, i) => [s.id, [i, s]]));
+    sermonIndexes.set(project.sources, index);
+  }
+  return index;
+}
+
+/** A sermon of the project, by its id */
+export function sourceOf(project: Project, sourceId: string): Source | undefined {
+  return sermonIndex(project).get(sourceId)?.[1];
+}
+
 export function sourceColor(project: Project, sourceId: string): string {
-  const i = project.sources.findIndex((s) => s.id === sourceId);
-  return PALETTE[(i < 0 ? 0 : i) % PALETTE.length];
+  const i = sermonIndex(project).get(sourceId)?.[0] ?? 0;
+  return PALETTE[i % PALETTE.length];
 }
 
 export const kindLabel = { exact: "Exact", close: "Close", partial: "Partial" } as const;

@@ -22,6 +22,9 @@ const FOLD_READINGS = 500;
 const OPEN_FOUND_UP_TO = 2000;
 /** Sermons listed at first, and more each time more are asked for */
 const SERMON_PAGE = 100;
+/** A sermon's readings shown at first, and a verse's in a chapter (John 3:16 can have thousands) */
+const SERMON_READINGS = 100;
+const VERSE_READINGS = 24;
 
 /** What's folded in each project's views, kept while other tabs are open */
 const folded = new Map<string, Set<string>>();
@@ -61,6 +64,33 @@ function Fold({
       </button>
       {children}
     </div>
+  );
+}
+
+/** The first of a list, and a button for more, so a long one doesn't hold up the rest */
+function Capped<T>({
+  items,
+  first,
+  render,
+  noun,
+}: {
+  items: T[];
+  first: number;
+  render: (item: T) => React.ReactNode;
+  /** What they are, for the button ("readings") */
+  noun: string;
+}) {
+  const [shown, setShown] = useState(first);
+  const rest = items.length - shown;
+  return (
+    <>
+      {items.slice(0, shown).map(render)}
+      {rest > 0 && (
+        <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => setShown((n) => n + first * 4)}>
+          Show {Math.min(rest, first * 4).toLocaleString()} more {noun} ({rest.toLocaleString()} not shown)
+        </Button>
+      )}
+    </>
   );
 }
 
@@ -323,7 +353,7 @@ export function ReadingsPanel() {
           </div>
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {list.map((r) => (
+          <Capped items={list} first={VERSE_READINGS} noun="readings" render={(r) => (
             <span key={r.id} className="flex items-center rounded-full border text-xs">
               <Button size="icon-xs" variant="ghost" className="rounded-full" title="Listen" onClick={() => listen(r)}>
                 {playIcon(r)}
@@ -337,7 +367,7 @@ export function ReadingsPanel() {
                 {r.sermon} <span className="text-muted-foreground tabular-nums">{formatTime(r.start)}</span>
               </button>
             </span>
-          ))}
+          )} />
         </div>
       </div>
     );
@@ -493,7 +523,11 @@ export function ReadingsPanel() {
                     </Fold>
                     {open && (
                       <GroupRows project={project} filter={filter} group={{ by: "sermon", id: g.id }} readFor={readFor}>
-                        {(rows) => <div className="space-y-0.5 pt-1">{rows.map(sermonRow)}</div>}
+                        {(rows) => (
+                          <div className="space-y-0.5 pt-1">
+                            <Capped items={rows} first={SERMON_READINGS} noun="readings" render={sermonRow} />
+                          </div>
+                        )}
                       </GroupRows>
                     )}
                   </section>

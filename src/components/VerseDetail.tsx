@@ -91,8 +91,8 @@ export function VerseDetail() {
               <MatchCard key={m.id} match={m} verseText={text?.[verse - 1] ?? ""} part={part(m.id)} parts={chosen.length} />
             ))}
             {matches.length > count && (
-              <Button variant="outline" className="w-full" onClick={() => setShown({ key, count: count + PAGE * 4 })}>
-                Show {Math.min(PAGE * 4, matches.length - count).toLocaleString()} more ({(matches.length - count).toLocaleString()} not shown)
+              <Button variant="outline" className="w-full" onClick={() => setShown({ key, count: count + PAGE })}>
+                Show {Math.min(PAGE, matches.length - count).toLocaleString()} more ({(matches.length - count).toLocaleString()} not shown)
               </Button>
             )}
           </div>
