@@ -801,8 +801,10 @@ impl Project {
         let mut added = self.pair_sources(paths);
         let (transcripts, rest): (Vec<String>, Vec<String>) = added.unpaired.drain(..).partition(|f| ext(f) == "json");
         added.unpaired = rest;
+        let mut had: std::collections::HashSet<String> =
+            self.sources.iter().map(|s| s.transcript_path.clone()).collect();
         for transcript in transcripts {
-            if self.sources.iter().any(|s| s.transcript_path == transcript) {
+            if !had.insert(transcript.clone()) {
                 continue;
             }
             let base = base_name(&transcript);
@@ -827,12 +829,43 @@ impl Project {
     [`Added::skipped`]
     */
     pub fn add_sources_from(&mut self, files: &dyn crate::Files, paths: &[String]) -> Added {
-        let (kept, skipped): (Vec<String>, Vec<String>) = (paths.iter().cloned()).partition(|p| {
-            ext(p) != "json"
-                || files
-                    .read(p)
-                    .is_ok_and(|bytes| crate::transcript::is_transcript(&bytes))
-        });
+        self.add_sources_with(files, paths, &|_, _| {})
+    }
+
+    /**
+    [`Project::add_sources_from`], telling `progress` how many JSON files have been read of how many
+    (from several threads at once, natively). Transcripts already in the project aren't read again
+    */
+    pub fn add_sources_with(
+        &mut self,
+        files: &dyn crate::Files,
+        paths: &[String],
+        progress: &(dyn Fn(usize, usize) + Sync),
+    ) -> Added {
+        let had: std::collections::HashSet<&str> = self.sources.iter().map(|s| s.transcript_path.as_str()).collect();
+        let to_read: Vec<&String> = (paths.iter())
+            .filter(|p| ext(p) == "json" && !had.contains(p.as_str()))
+            .collect();
+        let total = to_read.len();
+        let done = std::sync::atomic::AtomicUsize::new(0);
+        let check = |p: &&String| {
+            let ok = files
+                .read(p)
+                .is_ok_and(|bytes| crate::transcript::is_transcript(&bytes));
+            progress(done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1, total);
+            ok
+        };
+        // Read several at once: tens of thousands of gzipped transcripts take minutes one at a time
+        #[cfg(not(target_arch = "wasm32"))]
+        let transcripts: std::collections::HashSet<&String> = {
+            use rayon::prelude::*;
+            to_read.into_par_iter().filter(check).collect()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let transcripts: std::collections::HashSet<&String> = to_read.into_iter().filter(check).collect();
+        let (kept, skipped): (Vec<String>, Vec<String>) = (paths.iter().cloned())
+            .partition(|p| ext(p) != "json" || had.contains(p.as_str()) || transcripts.contains(p));
+        drop(had);
         let mut added = self.add_sources(&kept);
         added.skipped = skipped;
         added

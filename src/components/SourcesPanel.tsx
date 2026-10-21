@@ -29,6 +29,12 @@ export function SourcesPanel() {
     const off = listen<ProgressEvent>("analyze-progress", (e) => setProgress(e.payload));
     return () => void off.then((f) => f());
   }, []);
+  // Adding a folder of thousands of transcripts reads each first (to leave out JSON that isn't one)
+  const [adding, setAdding] = useState<ProgressEvent | null>(null);
+  useEffect(() => {
+    const off = listen<ProgressEvent>("add-progress", (e) => setAdding(e.payload));
+    return () => void off.then((f) => f());
+  }, []);
 
   // Only the sermons on screen are drawn (there can be tens of thousands)
   const table = useRef<HTMLDivElement>(null);
@@ -74,13 +80,16 @@ export function SourcesPanel() {
     });
     if (!picked) return;
     await flush();
+    setAdding({ done: 0, total: 0, message: "Finding the files" });
     try {
       const result = await api.addSources(project.id, Array.isArray(picked) ? picked : [picked]);
       setProject(result.project, `add ${result.added} sermon${result.added === 1 ? "" : "s"}`);
       setLeftOut({ unpaired: result.unpaired, skipped: result.skipped });
-      toast.success(`Added ${result.added} sermon${result.added === 1 ? "" : "s"}`);
+      toast.success(`Added ${result.added.toLocaleString()} sermon${result.added === 1 ? "" : "s"}`);
     } catch (e) {
       toast.error(errorMessage(e));
+    } finally {
+      setAdding(null);
     }
   };
 
@@ -150,14 +159,24 @@ export function SourcesPanel() {
               <Button variant="outline" size="sm" onClick={importInfo} title="Read titles and passages by sermon id from a JSON file">
                 <Tags /> Import titles
               </Button>
-              <Button variant="outline" size="sm" onClick={() => add(false)}>
+              <Button variant="outline" size="sm" disabled={adding !== null} onClick={() => add(false)}>
                 <FilePlus /> Add files
               </Button>
-              <Button variant="outline" size="sm" onClick={() => add(true)}>
-                <FolderPlus /> Add folder
+              <Button variant="outline" size="sm" disabled={adding !== null} onClick={() => add(true)}>
+                {adding ? <Loader2 className="animate-spin" /> : <FolderPlus />} Add folder
               </Button>
             </div>
           </CardHeader>
+          {adding && (
+            <div className="space-y-1.5 px-6 pb-2">
+              <Progress value={adding.total ? (adding.done / adding.total) * 100 : 0} />
+              <div className="text-xs text-muted-foreground">
+                {adding.total
+                  ? `${adding.message}: ${adding.done.toLocaleString()} of ${adding.total.toLocaleString()}`
+                  : adding.message}
+              </div>
+            </div>
+          )}
           <CardContent className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-40 shrink-0 text-sm">Download audio from</div>

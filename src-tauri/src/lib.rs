@@ -419,7 +419,12 @@ struct AddedSources {
 /// name (in the same folder first, then anywhere among what was given); a transcript alone is a
 /// sermon too, and JSON that isn't a transcript is skipped
 #[tauri::command]
-async fn add_sources(state: State<'_, AppState>, project_id: String, paths: Vec<String>) -> Result<AddedSources> {
+async fn add_sources(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+    paths: Vec<String>,
+) -> Result<AddedSources> {
     let store = state.store.clone();
     blocking(move || {
         let mut project = store.project(&project_id)?;
@@ -428,7 +433,18 @@ async fn add_sources(state: State<'_, AppState>, project_id: String, paths: Vec<
             .into_iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
-        let added = project.add_sources_from(&Disk, &files);
+        // How many transcripts have been read, a few times a second at most
+        let last = Mutex::new(None::<std::time::Instant>);
+        let progress = |done: usize, total: usize| {
+            let mut last = lock(&last);
+            if done < total && last.is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(100)) {
+                return;
+            }
+            *last = Some(std::time::Instant::now());
+            let message = "Reading transcripts".to_string();
+            let _ = app.emit("add-progress", AnalyzeProgress { done, total, message });
+        };
+        let added = project.add_sources_with(&Disk, &files, &progress);
         store.save_project(&project)?;
         Ok(AddedSources {
             project,
