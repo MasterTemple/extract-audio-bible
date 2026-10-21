@@ -826,6 +826,57 @@ async fn render_clip(state: State<'_, AppState>, request: ClipRequest) -> Result
     .await
 }
 
+/**
+The readings "Choose best" chooses for the verses with none, in `chapters` (none: every chapter
+with readings), scoring at least `min_score`, from one sermon alone if `only_sermon` is given:
+chosen as the project was last saved, each chapter carrying on from what's chosen before it, but
+not kept (the window chooses them, as a step to undo)
+*/
+#[tauri::command]
+async fn best_readings(
+    state: State<'_, AppState>,
+    project_id: String,
+    chapters: Vec<ChapterRef>,
+    min_score: f32,
+    only_sermon: Option<String>,
+) -> Result<Vec<matcher::Match>> {
+    let store = state.store.clone();
+    blocking(move || {
+        let mut project = store.project(&project_id)?;
+        let bible = store.bible(&project.bible_id)?;
+        let Some(readings) = readings_of(&store, &project_id)? else {
+            return Ok(vec![]);
+        };
+        let chapters = if chapters.is_empty() {
+            let mut all: Vec<ChapterRef> = (readings.summary()?.verses.into_iter())
+                .filter(|&(book, chapter, verse, _)| project.covers(book, chapter, verse))
+                .map(|(book, chapter, ..)| ChapterRef { book, chapter })
+                .collect();
+            all.dedup_by_key(|c| (c.book, c.chapter));
+            all
+        } else {
+            chapters
+        };
+        let mut picks = vec![];
+        for ChapterRef { book, chapter } in chapters {
+            let Some(b) = bible.book(book) else { continue };
+            let mut set = readings.chapter(book, chapter)?;
+            if let Some(only) = &only_sermon {
+                set.matches.retain(|m| &m.source_id == only);
+            }
+            for verse in project.choose_best(b, chapter, &set, min_score) {
+                let key = export::verse_key(book, chapter, verse);
+                let chosen = &project.selections[&key].match_id;
+                if let Some(m) = set.matches.iter().find(|m| &m.id == chosen) {
+                    picks.push(m.clone());
+                }
+            }
+        }
+        Ok(picks)
+    })
+    .await
+}
+
 /// When each chosen verse is heard in a chapter's audio (as `render_chapter` makes it)
 #[tauri::command]
 async fn chapter_timeline(
@@ -1024,6 +1075,7 @@ pub fn run() {
             render_verse,
             read_text_file,
             chapter_timeline,
+            best_readings,
             chapters_to_export,
             export_chapters,
             bench_folders,

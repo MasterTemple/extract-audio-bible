@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::{
     bible::BibleBook,
     export::verse_key,
-    matcher::Match,
+    matcher::{Match, MatchKind},
     project::{MatchSet, Part, Project, Selection},
 };
 
@@ -111,10 +111,11 @@ impl Project {
 
     /**
     For each verse of a chapter with no reading chosen, chooses its best reading scoring at
-    least `min_score` (0.9: exact readings, 0.75: exact and close, 0: anything), preferring one
-    that carries on from the verse before (the same run, then the same sermon) and readings in
-    longer runs. Sermons with no audio (a transcript alone, and nowhere to download it from) are
-    passed over. Returns the verses chosen
+    least `min_score` (0.9: exact readings, 0.75: exact and close, 0: anything): the best kind
+    (exact, then close), and of those, one that carries on the verse before's run, then one in
+    a run (read straight through, the longer the better), then one from the verse before's
+    sermon, then the highest scoring. Sermons with no audio (a transcript alone, and nowhere to
+    download it from) are passed over. Returns the verses chosen
     */
     pub fn choose_best(&mut self, book: &BibleBook, chapter: u16, matches: &MatchSet, min_score: f32) -> Vec<u16> {
         let audible: std::collections::HashSet<&str> = self
@@ -159,28 +160,27 @@ impl Project {
                 previous = Some((run, last.1.clone()));
                 continue;
             }
+            let rank = |m: &Match| {
+                let kind = match m.kind {
+                    MatchKind::Exact => 2,
+                    MatchKind::Close => 1,
+                    MatchKind::Partial => 0,
+                };
+                let run = (m.run_id.as_deref())
+                    .and_then(|r| run_length.get(r))
+                    .copied()
+                    .unwrap_or(0);
+                let carries_on = matches!(&previous, Some((Some(run), _)) if m.run_id.as_ref() == Some(run));
+                let same_sermon = matches!(&previous, Some((_, source)) if &m.source_id == source);
+                (kind, carries_on, run, same_sermon)
+            };
+            // The first of the best (in the order listed, best scoring first)
             let best = (by_verse.get(&verse).into_iter().flatten())
                 .filter(|m| m.score >= min_score)
-                .map(|m| {
-                    let run = m
-                        .run_id
-                        .as_deref()
-                        .and_then(|r| run_length.get(r))
-                        .copied()
-                        .unwrap_or(0);
-                    let mut s = m.score + run.min(10) as f32 * 0.01;
-                    match &previous {
-                        Some((Some(run), _)) if m.run_id.as_ref() == Some(run) => s += 0.15,
-                        Some((_, source)) if &m.source_id == source => s += 0.03,
-                        _ => {}
-                    }
-                    (s, *m)
-                })
-                .fold(None::<(f32, &Match)>, |best, (s, m)| match best {
-                    Some((b, _)) if b >= s => best,
-                    _ => Some((s, m)),
-                })
-                .map(|(_, m)| m);
+                .fold(None::<&Match>, |best, m| match best {
+                    Some(b) if (rank(b), b.score) >= (rank(m), m.score) => best,
+                    _ => Some(m),
+                });
             previous = best.map(|m| (m.run_id.clone(), m.source_id.clone()));
             if let Some(m) = best {
                 self.select(m);
@@ -388,5 +388,79 @@ mod tests {
         );
         project.settings.audio_url = "https://example.com/{id}.mp3".into();
         assert_eq!(project.choose_best(john, 11, &matches, 0.0), [35]);
+    }
+
+    #[test]
+    fn prefers_a_reading_read_straight_through_of_the_best_kind() {
+        let book = BibleBook {
+            id: 43,
+            name: "John".into(),
+            osis: "John".into(),
+            chapters: (1..=11)
+                .map(|c| if c == 11 { vec!["a b c d".into(); 36] } else { vec![] })
+                .collect(),
+        };
+        let bible = Bible {
+            id: "b".into(),
+            name: "Test".into(),
+            abbreviation: "T".into(),
+            language: None,
+            format: "text".into(),
+            books: vec![book],
+        };
+        let mut project = Project::new("p", "", &bible, Some(43));
+        project.add_sources(&["run.json".into(), "alone.json".into(), "other.json".into()]);
+        for (source, id) in project.sources.iter_mut().zip(["run", "alone", "other"]) {
+            source.id = id.into();
+        }
+        project.settings.audio_url = "https://example.com/{id}.mp3".into();
+        let of = |id: &str, source: &str, verse: u16, kind: MatchKind, score: f32, run: bool| Match {
+            source_id: source.into(),
+            kind,
+            score,
+            run_id: run.then(|| "r".to_string()),
+            ..reading(id, verse, 1.0, 2.0, [true; 4])
+        };
+        let set = |matches: Vec<Match>| MatchSet {
+            runs: vec![crate::Run {
+                id: "r".into(),
+                source_id: "run".into(),
+                book: 43,
+                start_chapter: 11,
+                start_verse: 35,
+                end_chapter: 11,
+                end_verse: 36,
+                match_ids: vec!["run35".into(), "run36".into()],
+                start: 1.0,
+                end: 2.0,
+            }],
+            matches,
+            ..Default::default()
+        };
+        let john = bible.book(43).unwrap();
+        // 35 is chosen from another sermon, so 36's readings don't carry on from it
+        let other = of("other35", "other", 35, MatchKind::Exact, 0.95, false);
+        let chosen_36 = |matches: Vec<Match>, min_score: f32| {
+            let mut p = project.clone();
+            p.select(&other);
+            p.choose_best(john, 11, &set(matches), min_score);
+            p.selections.get(&verse_key(43, 11, 36)).map(|s| s.match_id.clone())
+        };
+
+        // Two exact readings: the one read straight through, though the other scores higher
+        let exact = vec![
+            of("alone36", "alone", 36, MatchKind::Exact, 0.99, false),
+            of("run35", "run", 35, MatchKind::Exact, 0.92, true),
+            of("run36", "run", 36, MatchKind::Exact, 0.92, true),
+        ];
+        assert_eq!(chosen_36(exact, 0.9).as_deref(), Some("run36"));
+
+        // A close reading read straight through doesn't beat an exact one
+        let close = vec![
+            of("alone36", "alone", 36, MatchKind::Exact, 0.99, false),
+            of("run35", "run", 35, MatchKind::Close, 0.8, true),
+            of("run36", "run", 36, MatchKind::Close, 0.8, true),
+        ];
+        assert_eq!(chosen_36(close, 0.75).as_deref(), Some("alone36"));
     }
 }

@@ -432,6 +432,12 @@ export const api = {
   /** The readings a filter keeps, counted and grouped by sermon and by book and chapter */
   /** Ways to finish a reference being typed (`2 Co` → `2 Corinthians`), best first */
   completeReference: (text: string, limit: number) => invoke<ReferenceCompletion[]>("complete_reference", { text, limit }),
+  /**
+   * The readings "Choose best" chooses for verses with none, in these chapters (none: every chapter
+   * with readings), from one sermon alone if given; not chosen yet (`selectMany` chooses them)
+   */
+  bestReadings: (projectId: string, chapters: { book: number; chapter: number }[], minScore: number, onlySermon: string | null) =>
+    invoke<Match[]>("best_readings", { projectId, chapters, minScore, onlySermon }),
   readingsOverview: (projectId: string, filter: RowFilter) => invoke<Overview>("readings_overview", { projectId, filter }),
   /** The readings a filter keeps of one group (a sermon's, a chapter's), as rows */
   readingsRows: (projectId: string, filter: RowFilter, group: RowGroup) =>

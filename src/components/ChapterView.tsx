@@ -3,11 +3,11 @@ import { ChevronLeft, ChevronRight, Combine, Filter, Loader2, Play, Scissors, Sp
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { api, type Match, type Project, type Selection, type VerseTime } from "@/lib/api";
+import { api, errorMessage, type Project, type Selection, type VerseTime } from "@/lib/api";
 import { partsOf, useApp } from "@/lib/store";
 import { play, stop, usePlayer } from "@/lib/player";
 import { audioPathOf, bookName, chapterStatus, passageHasChapter, verseKey, versesNeeded, sourceColor, sourceTitle, runLabel } from "@/lib/refs";
@@ -18,35 +18,6 @@ export function continues(a: Selection | undefined, b: Selection | undefined): b
   const last = partsOf(a).pop()!;
   if (last.sourceId !== b.sourceId) return false;
   return Math.abs(last.end + last.trimEnd - (b.start + b.trimStart)) < 0.6;
-}
-
-/** For each verse without a choice: its best reading from a sermon with audio, preferring one that carries on from the verse before */
-function autoPick(verses: number[], book: number, chapter: number, selections: Record<string, Selection>, matchesByVerse: Map<string, Match[]>, runLength: (id: string | null) => number, minScore: number, audible: Set<string>) {
-  const picks: Match[] = [];
-  let previous: { runId: string | null; sourceId: string } | null = null;
-  for (const v of verses) {
-    const key = verseKey(book, chapter, v);
-    const existing = selections[key];
-    if (existing) {
-      // What's heard last is what the next verse would carry on from
-      const last = partsOf(existing).pop()!;
-      const m = matchesByVerse.get(key)?.find((x) => x.id === last.matchId);
-      previous = { runId: m?.runId ?? null, sourceId: last.sourceId };
-      continue;
-    }
-    const candidates = (matchesByVerse.get(key) ?? []).filter((m) => m.score >= minScore && audible.has(m.sourceId));
-    let best: Match | null = null;
-    let bestScore = -1;
-    for (const m of candidates) {
-      let s = m.score + Math.min(runLength(m.runId), 10) * 0.01;
-      if (previous && m.runId && m.runId === previous.runId) s += 0.15;
-      else if (previous && m.sourceId === previous.sourceId) s += 0.03;
-      if (s > bestScore) [best, bestScore] = [m, s];
-    }
-    if (best) picks.push(best);
-    previous = best ? { runId: best.runId, sourceId: best.sourceId } : null;
-  }
-  return picks;
 }
 
 /** The last chapter rendered, to play again at once when nothing it's made from has changed */
@@ -96,6 +67,7 @@ export function ChapterView() {
   const playId = `chapter:${book}.${chapter}`;
   // The verse being heard while the chapter plays
   const [timeline, setTimeline] = useState<{ id: string; times: VerseTime[] } | null>(null);
+  const [choosing, setChoosing] = useState(false);
   const playing = player.id === playId && timeline?.id === playId ? timeline.times : null;
   const hearing = playing ? (playing.filter((t) => t.start <= player.time).pop()?.verse ?? null) : null;
   const rows = useRef(new Map<number, HTMLElement>());
@@ -135,16 +107,26 @@ export function ChapterView() {
     go(target.id, c);
   };
 
-  const runLength = (id: string | null) => (id ? runById.get(id)?.matchIds.length ?? 0 : 0);
-  const pick = (minScore: number) => {
-    // A transcript alone, with nowhere to download its audio from, can't be part of an audio Bible
-    const audible = new Set(project.sources.filter((s) => audioPathOf(project, s)).map((s) => s.id));
-    const shown = new Map(verses.map((v) => [verseKey(b.id, chapter, v), shownMatches(verseKey(b.id, chapter, v))]));
-    const picks = autoPick(verses, b.id, chapter, project.selections, shown, runLength, minScore, audible);
-    if (picks.length === 0) toast.info("No more readings to choose here");
-    else {
-      selectMany(picks);
-      toast.success(`Chose ${picks.length} verse${picks.length === 1 ? "" : "s"}`);
+  /**
+   * The best reading for each verse with none (of the best kind, then read straight through), in
+   * this chapter or every chapter, from the sermon shown alone if one is: one step to undo
+   */
+  const pick = async (minScore: number, everyChapter: boolean) => {
+    setChoosing(true);
+    try {
+      await flush();
+      const picks = await api.bestReadings(project.id, everyChapter ? [] : [{ book: b.id, chapter }], minScore, onlySermon);
+      const where = everyChapter ? "" : " here";
+      if (picks.length === 0) toast.info(`No more readings to choose${where}`);
+      else {
+        selectMany(picks);
+        const chapters = new Set(picks.map((m) => `${m.book}.${m.chapter}`)).size;
+        toast.success(`Chose ${picks.length.toLocaleString()} verse${picks.length === 1 ? "" : "s"}${everyChapter ? ` in ${chapters.toLocaleString()} chapter${chapters === 1 ? "" : "s"}` : ""}`);
+      }
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setChoosing(false);
     }
   };
 
@@ -194,14 +176,22 @@ export function ChapterView() {
         <div className="ml-auto flex items-center gap-1.5">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" disabled={!loaded} title={loaded ? undefined : "Reading this chapter's readings…"}>
-                <Sparkles /> Choose best
+              <Button variant="outline" size="sm" disabled={choosing}>
+                {choosing ? <Loader2 className="animate-spin" /> : <Sparkles />} Choose best
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => pick(0.9)}>Exact readings only</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => pick(0.75)}>Exact and close readings</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => pick(0)}>Anything found</DropdownMenuItem>
+              {([false, true] as const).map((every) => (
+                <div key={String(every)}>
+                  {every && <DropdownMenuSeparator />}
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">
+                    {every ? "Every chapter" : `${bookName(outline, b.id)} ${chapter}`}
+                  </DropdownMenuLabel>
+                  <DropdownMenuItem onClick={() => pick(0.9, every)}>Exact readings only</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => pick(0.75, every)}>Exact and close readings</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => pick(0, every)}>Anything found</DropdownMenuItem>
+                </div>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
           <Button variant="outline" size="sm" disabled={status.selected === 0} onClick={preview}>
