@@ -168,6 +168,7 @@ fn export_e2e() {
         &[ChapterRef { book: 43, chapter: 3 }],
         &crate::Disk,
         &out,
+        true,
         |p| println!("{p:?}"),
     )
     .unwrap();
@@ -197,7 +198,7 @@ fn export_e2e() {
     project.metadata.export_mode = ExportMode::Both;
     project.settings.leveling = Leveling::Export;
     project.selections.get_mut("43.3.16").unwrap().gain_db = 6.0;
-    let files = export::export_to_dir(&project, &bible, &chapters, &crate::Disk, &out, |_| {}).unwrap();
+    let files = export::export_to_dir(&project, &bible, &chapters, &crate::Disk, &out, false, |_| {}).unwrap();
     assert_eq!(files.len(), 6);
     let v16 = files.iter().find(|f| f.verse == Some(16)).unwrap();
     assert!(v16.path.ends_with("43 John/John 3/43_John_003_016.mp3"), "{}", v16.path);

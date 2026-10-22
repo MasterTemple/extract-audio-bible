@@ -398,6 +398,10 @@ export interface ExportedFile {
   path: string;
   duration: number;
   missing: number[];
+  /** What it's made from, as a short hash */
+  fingerprint: string;
+  /** Left as it was: the file there was made from the same */
+  unchanged: boolean;
 }
 
 export interface Progress {
@@ -538,8 +542,9 @@ export const api = {
   chapterTimeline: (projectId: string, book: number, chapter: number) =>
     invoke<VerseTime[]>("chapter_timeline", { projectId, book, chapter }),
   chaptersToExport: (projectId: string) => invoke<ChapterRef[]>("chapters_to_export", { projectId }),
-  exportChapters: (projectId: string, chapters: ChapterRef[] | null) =>
-    invoke<ExportedFile[]>("export_chapters", { projectId, chapters }),
+  /** Files already in the folder as they'd be made are left as they are, unless `again` */
+  exportChapters: (projectId: string, chapters: ChapterRef[] | null, again = false) =>
+    invoke<ExportedFile[]>("export_chapters", { projectId, chapters, again }),
   /** Project folders to run the benchmark on (`EAB_BENCH`), none normally */
   benchFolders: () => invoke<string[]>("bench_folders"),
   /** Only the benchmark's steps with these words in their names (`EAB_BENCH_STEPS`); all, if none */

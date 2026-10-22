@@ -6,6 +6,7 @@ import { Download, FolderOpen, ImageIcon, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -15,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { api, errorMessage, type BookOutline, type ExportedFile, type Metadata, type Progress as ProgressEvent, type Settings } from "@/lib/api";
 import { useApp } from "@/lib/store";
+import { cn } from "@/lib/utils";
 import { bookName, fileName, formatTime, projectReference, verseKey, versesNeeded } from "@/lib/refs";
 
 const PLACEHOLDERS =
@@ -87,6 +89,9 @@ export function ExportPanel() {
   const { project, outline, update, bibles, flush, go } = useApp();
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
   const [results, setResults] = useState<ExportedFile[]>([]);
+  // Books left out of the export (of a project of more than one), and whether to make every file again
+  const [leftOut, setLeftOut] = useState<Set<number>>(new Set());
+  const [again, setAgain] = useState(false);
 
   useEffect(() => {
     const off = listen<ProgressEvent>("export-progress", (e) => setProgress(e.payload));
@@ -107,6 +112,9 @@ export function ExportPanel() {
     }
     return out;
   }, [project, outline]);
+  // The books with chapters to export, and those chapters of the books chosen
+  const books = useMemo(() => [...new Set(chapters.map((c) => c.book))], [chapters]);
+  const included = chapters.filter((c) => !leftOut.has(c.book));
 
   if (!project) return null;
   const meta = project.metadata;
@@ -178,11 +186,16 @@ export function ExportPanel() {
   const run = async () => {
     await flush();
     setResults([]);
-    setProgress({ done: 0, total: chapters.length, current: "" });
+    setProgress({ done: 0, total: included.length, current: "" });
     try {
-      const files = await api.exportChapters(useApp.getState().project!.id, null);
+      const only = leftOut.size > 0 ? included.map(({ book, chapter }) => ({ book, chapter })) : null;
+      const files = await api.exportChapters(useApp.getState().project!.id, only, again);
       setResults(files);
-      toast.success(`Exported ${files.length} chapter${files.length === 1 ? "" : "s"}`);
+      const made = files.filter((f) => !f.unchanged).length;
+      const same = files.length - made;
+      toast.success(
+        `Made ${made} file${made === 1 ? "" : "s"}${same > 0 ? `; ${same} already there as ${same === 1 ? "it" : "they"} would be made, left as ${same === 1 ? "it was" : "they were"}` : ""}`,
+      );
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -192,7 +205,7 @@ export function ExportPanel() {
 
   const chapterFiles = meta.exportMode !== "verse";
   const verseFiles = meta.exportMode !== "chapter";
-  const verseCount = chapters.reduce((n, c) => n + c.chosen, 0);
+  const verseCount = included.reduce((n, c) => n + c.chosen, 0);
 
   return (
     <div className="h-full overflow-auto">
@@ -455,16 +468,60 @@ export function ExportPanel() {
             <CardHeader>
               <CardTitle>Export</CardTitle>
               <CardDescription>
-                {chapterFiles && `${chapters.length} chapter file${chapters.length === 1 ? "" : "s"}`}
+                {chapterFiles && `${included.length} chapter file${included.length === 1 ? "" : "s"}`}
                 {chapterFiles && verseFiles && " and "}
                 {verseFiles && `${verseCount} verse file${verseCount === 1 ? "" : "s"}`}
-                {!meta.onlyComplete && chapters.some((c) => c.chosen < c.total) && " (verses not chosen are left out)"}
+                {books.length > 1 && ` of ${books.length - leftOut.size} of ${books.length} books`}
+                {!meta.onlyComplete && included.some((c) => c.chosen < c.total) && " (verses not chosen are left out)"}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              {books.length > 1 && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium">Books</span>
+                    <span className="flex gap-0.5">
+                      <Button size="xs" variant="ghost" disabled={leftOut.size === 0} onClick={() => setLeftOut(new Set())}>
+                        All
+                      </Button>
+                      <Button size="xs" variant="ghost" disabled={leftOut.size === books.length} onClick={() => setLeftOut(new Set(books))}>
+                        None
+                      </Button>
+                    </span>
+                  </div>
+                  <div className="max-h-48 space-y-0.5 overflow-auto rounded-md border p-1">
+                    {books.map((id) => {
+                      const of = chapters.filter((c) => c.book === id);
+                      const chosen = of.reduce((n, c) => n + c.chosen, 0);
+                      const total = of.reduce((n, c) => n + c.total, 0);
+                      return (
+                        <label key={id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-muted">
+                          <Checkbox
+                            checked={!leftOut.has(id)}
+                            onCheckedChange={(on) =>
+                              setLeftOut((s) => {
+                                const next = new Set(s);
+                                if (on) next.delete(id);
+                                else next.add(id);
+                                return next;
+                              })
+                            }
+                          />
+                          <span className="flex-1">{bookName(outline, id)}</span>
+                          <span className="text-muted-foreground tabular-nums">
+                            {of.length} ch · {chosen}/{total}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div className="max-h-80 space-y-0.5 overflow-auto rounded-md border p-1">
-                {chapters.length === 0 && <p className="p-3 text-center text-xs text-muted-foreground">Nothing chosen yet</p>}
-                {chapters.map((c) => (
+                {included.length === 0 && (
+                  <p className="p-3 text-center text-xs text-muted-foreground">{chapters.length === 0 ? "Nothing chosen yet" : "No books chosen"}</p>
+                )}
+                {included.map((c) => (
                   <button
                     key={`${c.book}.${c.chapter}`}
                     onClick={() => go(c.book, c.chapter)}
@@ -479,7 +536,18 @@ export function ExportPanel() {
                   </button>
                 ))}
               </div>
-              <Button className="w-full" disabled={!meta.outputDir || chapters.length === 0 || progress !== null} onClick={run}>
+              <div className="flex items-start gap-2">
+                <Switch id="again" checked={again} onCheckedChange={setAgain} />
+                <Label htmlFor="again" className="flex-col items-start gap-0.5 text-sm font-normal">
+                  Make every file again
+                  <span className="text-[11px] text-muted-foreground">
+                    {again
+                      ? "Even files already in the folder as they'd be made."
+                      : "Files already in the folder as they'd be made (the same readings, cuts, sound, and tags) are left as they are."}
+                  </span>
+                </Label>
+              </div>
+              <Button className="w-full" disabled={!meta.outputDir || included.length === 0 || progress !== null} onClick={run}>
                 {progress ? <Loader2 className="animate-spin" /> : <Download />} Export MP3s
               </Button>
               {!meta.outputDir && <p className="text-xs text-muted-foreground">Choose a folder first.</p>}
@@ -494,15 +562,23 @@ export function ExportPanel() {
               {results.length > 0 && (
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium">Written</span>
+                    <span className="text-xs font-medium">
+                      Written{" "}
+                      {results.some((r) => r.unchanged) && (
+                        <span className="font-normal text-muted-foreground">({results.filter((r) => r.unchanged).length} unchanged)</span>
+                      )}
+                    </span>
                     <Button size="xs" variant="ghost" onClick={() => revealItemInDir(results[0].path)}>
                       <FolderOpen /> Show
                     </Button>
                   </div>
                   <div className="max-h-60 overflow-auto rounded-md border p-1 text-xs">
                     {results.map((r) => (
-                      <div key={r.path} className="flex justify-between gap-2 px-1 py-0.5" title={r.path}>
-                        <span className="truncate">{fileName(r.path)}</span>
+                      <div key={r.path} className={cn("flex justify-between gap-2 px-1 py-0.5", r.unchanged && "text-muted-foreground")} title={r.path}>
+                        <span className="truncate">
+                          {fileName(r.path)}
+                          {r.unchanged && " · unchanged"}
+                        </span>
                         <span className="shrink-0 text-muted-foreground tabular-nums">
                           {formatTime(r.duration)}
                           {r.missing.length > 0 && <span className="text-amber-600"> · {r.missing.length} missing</span>}

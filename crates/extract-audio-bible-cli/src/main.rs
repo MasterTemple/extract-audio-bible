@@ -225,9 +225,15 @@ enum Command {
         /// Only these chapters; every chapter with a chosen verse if left out
         #[arg(long = "chapter")]
         chapters: Vec<String>,
+        /// Only these books' chapters with a chosen verse (of a project of the whole Bible)
+        #[arg(long = "book")]
+        books: Vec<String>,
         /// A file per chapter, per verse, or both (the project's setting if left out)
         #[arg(long)]
         mode: Option<Mode>,
+        /// Make every file again, even those already in the folder as they'd be made
+        #[arg(long)]
+        again: bool,
     },
     /// Everything at once: import the Bible, find every reading in the sermons, choose the best,
     /// and export (the project is kept in --project, or a temporary folder)
@@ -968,20 +974,38 @@ fn run(command: Command, out: &Out) -> Result<()> {
             dir,
             output,
             chapters,
+            books,
             mode,
+            again,
         } => {
             let mut p = Folder::open(&dir)?;
             if let Some(mode) = mode {
                 p.project.metadata.export_mode = mode.into();
             }
-            let chapters = if chapters.is_empty() {
+            let mut chapters = if chapters.is_empty() {
                 export::chapters_to_export(&p.project, &p.bible)
             } else {
                 p.chapters(&chapters, false)?
             };
-            let files = export_to(&p, &chapters, &output, out)?;
+            if !books.is_empty() {
+                let only = (books.iter())
+                    .map(|name| {
+                        bible::find_book(name)
+                            .map(|id| id.0)
+                            .ok_or_else(|| anyhow!("{name}: no such book"))
+                    })
+                    .collect::<Result<Vec<u8>>>()?;
+                chapters.retain(|c| only.contains(&c.book));
+            }
+            let files = export_to(&p, &chapters, &output, again, out)?;
             out.result(&files, || {
-                format!("Exported {} to {}", plural(files.len(), "file"), output.display())
+                let same = files.iter().filter(|f| f.unchanged).count();
+                let kept = if same > 0 {
+                    format!(" ({same} already there as they'd be made, left as they were)")
+                } else {
+                    String::new()
+                };
+                format!("Exported {} to {}{kept}", plural(files.len(), "file"), output.display())
             })
         }
         Command::Build {
@@ -1040,7 +1064,7 @@ fn run(command: Command, out: &Out) -> Result<()> {
             ));
             p.save()?;
             let chapters = export::chapters_to_export(&p.project, &p.bible);
-            let files = export_to(&p, &chapters, &output, out)?;
+            let files = export_to(&p, &chapters, &output, false, out)?;
             if keep.is_none() {
                 let _ = std::fs::remove_dir_all(&dir);
             }
@@ -1308,6 +1332,7 @@ fn export_to(
     p: &Folder,
     chapters: &[ChapterRef],
     output: &Path,
+    again: bool,
     out: &Out,
 ) -> Result<Vec<extract_audio_bible::ExportedFile>> {
     if chapters.is_empty() {
@@ -1319,6 +1344,7 @@ fn export_to(
         chapters,
         &p.audio(),
         output,
+        again,
         |progress| {
             if !progress.current.is_empty() {
                 out.note(format!(

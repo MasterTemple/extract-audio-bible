@@ -115,7 +115,7 @@ extract-audio-bible export 1thess -o audio-bible/
 | `set DIR KEY=VALUE…` | Changes settings (`minAccuracy=0.8`, `gapBetweenVerses=0.3`) or metadata (`metadata.artist="…"`); values are JSON when they parse as JSON |
 | `render DIR --chapter C [--verse V] -o FILE` | A chapter (or one verse) as it will be exported, as WAV (`--json` gives when each verse is heard) |
 | `clip AUDIO START END -o FILE [--processed]` | A stretch of a sermon as WAV |
-| `export DIR -o FOLDER [--chapter C]… [--mode chapter\|verse\|both]` | Tagged MP3s of the chosen readings |
+| `export DIR -o FOLDER [--chapter C]… [--book B]… [--mode chapter\|verse\|both] [--again]` | Tagged MP3s of the chosen readings (of some books alone, with `--book`). Files already in the folder as they'd be made are left as they are (the folder keeps what each was made from in `.extract-audio-bible-export.json`); `--again` makes them all again |
 | `build --bible BIBLE [--book B] SERMONS… -o FOLDER [--project DIR]` | All of the above at once |
 
 A chapter is a number in the project's book (`5`), or a book and a number (`"1 Thess 5"`). Books

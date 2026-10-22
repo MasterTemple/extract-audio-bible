@@ -668,7 +668,7 @@ fn export_to_folder(
     folder: PathBuf,
     chapters: &[eab::ChapterRef],
 ) -> Result<Vec<WrittenFile>, ExtractAudioBibleError> {
-    let written = eab::export_to_dir(project, &bible.inner, chapters, files, &folder, |_| {})?;
+    let written = eab::export_to_dir(project, &bible.inner, chapters, files, &folder, true, |_| {})?;
     Ok(written.into_iter().map(WrittenFile::from).collect())
 }
 

@@ -50,7 +50,8 @@ for chapter in 1..=john.chapters.len() as u16 {
 }
 
 let chapters = chapters_to_export(&project, &bible);
-export_to_dir(&project, &bible, &chapters, &Disk, Path::new("audio-bible"), |_| {})?;
+// Files already in the folder as they'd be made are left as they are (`true` makes them all again)
+export_to_dir(&project, &bible, &chapters, &Disk, Path::new("audio-bible"), false, |_| {})?;
 # Ok::<(), extract_audio_bible::Error>(())
 ```
 
@@ -71,7 +72,8 @@ export_to_dir(&project, &bible, &chapters, &Disk, Path::new("audio-bible"), |_| 
   ([`Project::join`], [`Selection::set_parts`]). What's known about each sermon (its title and
   passage) is kept by its file id, apart from the sermons ([`Project::apply_file_metadata`])
 - [`export`]: a chapter as it will sound (and when each verse is heard in it), and tagged MP3s by
-  chapter or by verse; [`audio`] decodes MP3, AAC/M4A, WAV, and more (symphonia) and encodes MP3
+  chapter or by verse. Exported to a folder, files already there as they'd be made aren't made
+  again ([`export_with`] says which are); [`audio`] decodes MP3, AAC/M4A, WAV, and more (symphonia) and encodes MP3
   (pure Rust)
 - [`files`]: everything is read through [`Files`]: the disk ([`Disk`]), or files given as bytes
   ([`Memory`]), so it all works in WebAssembly too. A sermon can be a transcript alone, its audio

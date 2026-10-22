@@ -1,7 +1,7 @@
 //! Putting chosen readings together, and writing them as tagged MP3s: a file per chapter (or, for
 //! a passage, one for it all), a file per verse, or both.
 
-use std::path::Path;
+use std::{cell::OnceCell, collections::BTreeMap, hash::Hasher, path::Path};
 
 use id3::{
     Tag, TagLike, Version,
@@ -32,6 +32,7 @@ pub struct Clip {
 }
 
 /// What a file is made of
+#[derive(Debug)]
 pub(crate) enum Piece {
     Silence(f64),
     Audio(Clip),
@@ -314,6 +315,12 @@ pub struct ExportedFile {
     pub path: String,
     pub duration: f64,
     pub missing: Vec<u16>,
+    /// What it's made from, as a short hash: the same when it would come out the same
+    #[serde(default)]
+    pub fingerprint: String,
+    /// Not made again, since the file there was made from the same ([`export_with`])
+    #[serde(default)]
+    pub unchanged: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -454,6 +461,72 @@ impl Tagger<'_> {
     }
 }
 
+/// Bumped when what's made from the same pieces changes, so files made before are made again
+const FORMAT: u32 = 1;
+
+/// FNV-1a, 64 bits: the same everywhere, in every version (unlike the standard library's hashers)
+struct Fnv(u64);
+
+impl Hasher for Fnv {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+}
+
+impl Fnv {
+    fn new() -> Self {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+
+    fn of(parts: &[&[u8]]) -> String {
+        let mut h = Fnv::new();
+        for part in parts {
+            h.write(&(part.len() as u64).to_le_bytes());
+            h.write(part);
+        }
+        format!("{:016x}", h.finish())
+    }
+}
+
+/// How long pieces play, in seconds
+fn seconds(pieces: &[Piece]) -> f64 {
+    (pieces.iter())
+        .map(|p| match p {
+            Piece::Silence(s) => s.max(0.0),
+            Piece::Audio(c) => (c.end - c.start).max(0.0),
+        })
+        .sum()
+}
+
+/// The leveler, made (measuring the whole export, if it's leveled as a whole) the first time it's needed
+fn leveler<'c, 'f>(
+    cell: &'c OnceCell<Leveler<'f>>,
+    project: &Project,
+    clips: &[Clip],
+    files: &'f dyn Files,
+    progress: &mut dyn FnMut(ExportProgress),
+    done: usize,
+    total: usize,
+) -> Result<&'c Leveler<'f>> {
+    if cell.get().is_none() {
+        if project.settings.leveling == Leveling::Export {
+            progress(ExportProgress {
+                done,
+                total,
+                current: "Measuring loudness".into(),
+            });
+        }
+        let _ = cell.set(Leveler::new(project, clips, files)?);
+    }
+    Ok(cell.get().expect("just set"))
+}
+
 /**
 Exports chapters (see [`chapters_to_export`]) as the project's metadata says: a tagged MP3 per
 chapter, per verse, or both. Each file is handed to `write` as it's made, with its path under
@@ -465,6 +538,27 @@ pub fn export(
     bible: &Bible,
     chapters: &[ChapterRef],
     files: &dyn Files,
+    progress: impl FnMut(ExportProgress),
+    write: impl FnMut(&ExportedFile, Vec<u8>) -> Result<()>,
+) -> Result<Vec<ExportedFile>> {
+    export_with(project, bible, chapters, files, &|_, _| false, progress, write)
+}
+
+/**
+[`export`], leaving out the files `unchanged` says are there already as they'd be made (given
+each file's path and [`ExportedFile::fingerprint`]): they aren't made or handed to `write`, but
+are returned, [`ExportedFile::unchanged`]. A file's fingerprint is of everything it's made from
+(its readings and where they're cut, the silence, the sound settings, its tags, and the MP3's
+rate), though not of the sermons' audio itself. When the export is leveled as a whole, its
+loudness is measured only if a file is made
+*/
+#[allow(clippy::too_many_arguments)]
+pub fn export_with(
+    project: &Project,
+    bible: &Bible,
+    chapters: &[ChapterRef],
+    files: &dyn Files,
+    unchanged: &dyn Fn(&str, &str) -> bool,
     mut progress: impl FnMut(ExportProgress),
     mut write: impl FnMut(&ExportedFile, Vec<u8>) -> Result<()>,
 ) -> Result<Vec<ExportedFile>> {
@@ -499,14 +593,18 @@ pub fn export(
                 .flat_map(|(_, _, clips)| clips)
         })
         .collect();
-    if project.settings.leveling == Leveling::Export {
-        progress(ExportProgress {
-            done: 0,
-            total: chapters.len(),
-            current: "Measuring loudness".into(),
-        });
-    }
-    let leveler = Leveler::new(project, &clips, files)?;
+    let levelers = OnceCell::new();
+    // How every file's sound is made, beyond its own pieces: leveled as a whole, that's every
+    // clip exported too
+    let s = &project.settings;
+    let sound = format!(
+        "{FORMAT} {:?} {} {} {} {} {}",
+        s.leveling, s.target_db, s.output_gain_db, s.fade_ms, meta.sample_rate, meta.bitrate,
+    );
+    let sound = match s.leveling {
+        Leveling::Export => format!("{sound} {}", Fnv::of(&[format!("{clips:?}").as_bytes()])),
+        _ => sound,
+    };
     let (chapter_files, verse_files) = match meta.export_mode {
         ExportMode::Chapter => (true, false),
         ExportMode::Verse => (false, true),
@@ -527,6 +625,28 @@ pub fn export(
         .sum();
     let mut passage_track = 0;
 
+    // Each file: left as it is if it's unchanged, or made and written
+    let mut make = |mut file: ExportedFile,
+                    pieces: &[Piece],
+                    tag: Vec<u8>,
+                    done: usize,
+                    progress: &mut dyn FnMut(ExportProgress)|
+     -> Result<ExportedFile> {
+        file.fingerprint = Fnv::of(&[sound.as_bytes(), &tag, format!("{pieces:?}").as_bytes()]);
+        if unchanged(&file.path, &file.fingerprint) {
+            file.duration = seconds(pieces);
+            file.unchanged = true;
+            return Ok(file);
+        }
+        let leveler = leveler(&levelers, project, &clips, files, progress, done, chapters.len())?;
+        let pcm = leveler.render_pieces(pieces, meta.sample_rate)?;
+        file.duration = pcm.seconds();
+        let mut bytes = tag;
+        bytes.extend(audio::mp3(&pcm, meta.bitrate)?);
+        write(&file, bytes)?;
+        Ok(file)
+    };
+
     let mut done = vec![];
     if passage
         && chapter_files
@@ -538,7 +658,7 @@ pub fn export(
             current: project.reference(bible).unwrap_or_default(),
         });
         let parts: Vec<(&ChapterRef, &BibleBook)> = chapters.iter().zip(books.iter().copied()).collect();
-        let pcm = leveler.render_pieces(&passage_pieces(project, &parts), meta.sample_rate)?;
+        let pieces = passage_pieces(project, &parts);
         let path = join(
             &book_dir(book),
             format!(
@@ -553,20 +673,20 @@ pub fn export(
                 ))
             ),
         );
-        let mut bytes = tagger.tag(book, first.chapter, None, (1, 1), book.id as u32)?;
-        bytes.extend(audio::mp3(&pcm, meta.bitrate)?);
         let file = ExportedFile {
             book: first.book,
             chapter: first.chapter,
             verse: None,
             path,
-            duration: pcm.seconds(),
+            duration: 0.0,
             missing: (parts.iter())
                 .flat_map(|(c, b)| missing_verses(project, b, c.chapter))
                 .collect(),
+            fingerprint: String::new(),
+            unchanged: false,
         };
-        write(&file, bytes)?;
-        done.push(file);
+        let tag = tagger.tag(book, first.chapter, None, (1, 1), book.id as u32)?;
+        done.push(make(file, &pieces, tag, 0, &mut progress)?);
     }
     for (i, (ch, book)) in chapters.iter().zip(&books).enumerate() {
         progress(ExportProgress {
@@ -577,7 +697,7 @@ pub fn export(
         let book_dir = book_dir(book);
         let missing = missing_verses(project, book, ch.chapter);
         if chapter_files && !passage {
-            let pcm = leveler.render_pieces(&chapter_pieces(project, book, ch.chapter).0, meta.sample_rate)?;
+            let pieces = chapter_pieces(project, book, ch.chapter).0;
             let path = join(
                 &book_dir,
                 format!(
@@ -590,18 +710,18 @@ pub fn export(
             } else {
                 (ch.chapter as u32, book.chapters.len() as u32)
             };
-            let mut bytes = tagger.tag(book, ch.chapter, None, track, book.id as u32)?;
-            bytes.extend(audio::mp3(&pcm, meta.bitrate)?);
+            let tag = tagger.tag(book, ch.chapter, None, track, book.id as u32)?;
             let file = ExportedFile {
                 book: ch.book,
                 chapter: ch.chapter,
                 verse: None,
                 path,
-                duration: pcm.seconds(),
+                duration: 0.0,
                 missing: missing.clone(),
+                fingerprint: String::new(),
+                unchanged: false,
             };
-            write(&file, bytes)?;
-            done.push(file);
+            done.push(make(file, &pieces, tag, i, &mut progress)?);
         }
         if verse_files {
             let dir = join(
@@ -613,7 +733,7 @@ pub fn export(
             );
             let count = book.chapters[ch.chapter as usize - 1].len() as u32;
             for (v, sel, clips) in chosen(project, book, ch.chapter) {
-                let pcm = leveler.render_pieces(&verse_pieces(sel, &clips), meta.sample_rate)?;
+                let pieces = verse_pieces(sel, &clips);
                 let path = join(
                     &dir,
                     format!(
@@ -634,18 +754,18 @@ pub fn export(
                 } else {
                     ((v as u32, count), ch.chapter as u32)
                 };
-                let mut bytes = tagger.tag(book, ch.chapter, Some(v), track, disc)?;
-                bytes.extend(audio::mp3(&pcm, meta.bitrate)?);
+                let tag = tagger.tag(book, ch.chapter, Some(v), track, disc)?;
                 let file = ExportedFile {
                     book: ch.book,
                     chapter: ch.chapter,
                     verse: Some(v),
                     path,
-                    duration: pcm.seconds(),
+                    duration: 0.0,
                     missing: vec![],
+                    fingerprint: String::new(),
+                    unchanged: false,
                 };
-                write(&file, bytes)?;
-                done.push(file);
+                done.push(make(file, &pieces, tag, i, &mut progress)?);
             }
         }
     }
@@ -657,23 +777,53 @@ pub fn export(
     Ok(done)
 }
 
-/// [`export`] into a folder on disk (made if need be); the files' paths are where they were written
+/// Where an export folder keeps what each file it has was made from ([`export_to_dir`])
+pub const EXPORTED: &str = ".extract-audio-bible-export.json";
+
+/// What's kept in an export folder's [`EXPORTED`]: each file's fingerprint, by its path in the folder
+#[derive(Default, Serialize, Deserialize)]
+struct Exported {
+    files: BTreeMap<String, String>,
+}
+
+/**
+[`export_with`] into a folder on disk (made if need be); the files' paths are where they were
+written. The folder keeps what each file was made from ([`EXPORTED`]), so a file that would come
+out the same as the one there isn't made again, unless `again` is set (every file is made again)
+*/
 pub fn export_to_dir(
     project: &Project,
     bible: &Bible,
     chapters: &[ChapterRef],
     files: &dyn Files,
     dir: &Path,
+    again: bool,
     progress: impl FnMut(ExportProgress),
 ) -> Result<Vec<ExportedFile>> {
-    let mut written = export(project, bible, chapters, files, progress, |file, bytes| {
+    let kept = dir.join(EXPORTED);
+    let before: Exported = (std::fs::read(&kept).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    let unchanged = |path: &str, fingerprint: &str| {
+        !again && before.files.get(path).is_some_and(|f| f == fingerprint) && dir.join(path).is_file()
+    };
+    let mut after = Exported {
+        files: before.files.clone(),
+    };
+    let result = export_with(project, bible, chapters, files, &unchanged, progress, |file, bytes| {
         let path = dir.join(&file.path);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&path, bytes)?;
+        after.files.insert(file.path.clone(), file.fingerprint.clone());
         Ok(())
-    })?;
+    });
+    // What was written is kept, even when the export stopped part way
+    if after.files != before.files {
+        std::fs::write(&kept, serde_json::to_vec_pretty(&after)?)?;
+    }
+    let mut written = result?;
     for file in &mut written {
         file.path = dir.join(&file.path).to_string_lossy().into_owned();
     }
@@ -811,5 +961,100 @@ mod tests {
             .map(|c| (c.chapter, c.verses, c.chosen))
             .collect();
         assert_eq!(status, [(7, 2, 2), (8, 2, 2)]);
+    }
+
+    /// A project of John 3:16-17, a second of a tone each, with the tone in memory
+    fn two_verses() -> (Bible, Project, Memory) {
+        let bible = Bible::new(
+            "b",
+            "Test",
+            "T",
+            crate::import(vec![(
+                "b.txt".into(),
+                b"John 3:16 For God so loved.\nJohn 3:17 For God sent.\nRomans 1:1 Paul.\n".to_vec(),
+            )])
+            .unwrap(),
+        );
+        let mut project = Project::new("p", "", &bible, None);
+        project.settings.chapter_lead_in = 0.0;
+        project.settings.chapter_tail = 0.0;
+        project.add_sources(&["s.wav".into(), "s.json".into()]);
+        let source = project.sources[0].id.clone();
+        for (key, at) in [("43.3.16", 0.0), ("43.3.17", 1.0), ("45.1.1", 2.0)] {
+            let sel = Selection {
+                match_id: key.into(),
+                source_id: source.clone(),
+                start: at,
+                end: at + 1.0,
+                trim_start: 0.0,
+                trim_end: 0.0,
+                pad_before: 0.0,
+                pad_after: 0.0,
+                gain_db: 0.0,
+                needs_trim: false,
+                note: String::new(),
+                joined: vec![],
+            };
+            project.selections.insert(key.into(), sel);
+        }
+        let mut files = Memory::new();
+        let tone: Vec<f32> = (0..16_000 * 4).map(|i| (i as f32 * 0.05).sin() * 0.3).collect();
+        files.insert(
+            "s.wav",
+            audio::wav(&Pcm {
+                rate: 16_000,
+                samples: tone,
+            }),
+        );
+        (bible, project, files)
+    }
+
+    #[test]
+    fn files_unchanged_are_left_as_they_are() {
+        let (bible, mut project, files) = two_verses();
+        let dir = std::env::temp_dir().join(format!("eab-unchanged-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let chapters = chapters_to_export(&project, &bible);
+        let export = |project: &Project, again| {
+            export_to_dir(project, &bible, &chapters, &files, &dir, again, |_| {})
+                .unwrap()
+                .into_iter()
+                .map(|f| (f.path.rsplit('/').next().unwrap().to_string(), f.unchanged))
+                .collect::<Vec<_>>()
+        };
+        let made = |names: &[(&str, bool)]| names.iter().map(|(n, u)| (n.to_string(), *u)).collect::<Vec<_>>();
+        assert_eq!(
+            export(&project, false),
+            made(&[("43_John_003.mp3", false), ("45_Rom_001.mp3", false)])
+        );
+        assert!(dir.join(EXPORTED).is_file());
+        // Nothing changed: nothing made
+        assert_eq!(
+            export(&project, false),
+            made(&[("43_John_003.mp3", true), ("45_Rom_001.mp3", true)])
+        );
+        // A verse cut differently: only its chapter is made again
+        project.selections.get_mut("43.3.17").unwrap().trim_end = -0.2;
+        assert_eq!(
+            export(&project, false),
+            made(&[("43_John_003.mp3", false), ("45_Rom_001.mp3", true)])
+        );
+        // A file taken away is made again, and every file when asked
+        std::fs::remove_file(dir.join("45 Romans/45_Rom_001.mp3")).unwrap();
+        assert_eq!(
+            export(&project, false),
+            made(&[("43_John_003.mp3", true), ("45_Rom_001.mp3", false)])
+        );
+        assert_eq!(
+            export(&project, true),
+            made(&[("43_John_003.mp3", false), ("45_Rom_001.mp3", false)])
+        );
+        // A tag that changes every file
+        project.metadata.artist = "Someone".into();
+        assert_eq!(
+            export(&project, false),
+            made(&[("43_John_003.mp3", false), ("45_Rom_001.mp3", false)])
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -1027,6 +1027,7 @@ async fn export_chapters(
     state: State<'_, AppState>,
     project_id: String,
     chapters: Option<Vec<ChapterRef>>,
+    again: bool,
 ) -> Result<Vec<ExportedFile>> {
     let store = state.store.clone();
     blocking(move || {
@@ -1045,6 +1046,7 @@ async fn export_chapters(
             &chapters,
             &store.audio_files(),
             Path::new(dir),
+            again,
             |p| {
                 let _ = app.emit("export-progress", p);
             },

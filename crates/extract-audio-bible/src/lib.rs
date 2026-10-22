@@ -30,7 +30,7 @@ pub use download::Downloading;
 pub use error::{Error, ErrorKind, Result};
 pub use export::{
     ChapterRef, ClipOptions, ExportProgress, ExportedFile, VerseTime, chapter_timeline, chapters_to_export, export,
-    export_to_dir, render_chapter, render_clip, render_verse,
+    export_to_dir, export_with, render_chapter, render_clip, render_verse,
 };
 pub use files::{Disk, Files, Memory};
 pub use matcher::{Match, MatchKind, Run};
