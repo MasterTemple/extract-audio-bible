@@ -429,6 +429,7 @@ impl From<&FindOptions> for eab::FindOptions {
             prefix: o.prefix,
             context: o.context as usize,
             limit: o.limit as usize,
+            near: None,
         }
     }
 }

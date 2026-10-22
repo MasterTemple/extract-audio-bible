@@ -1,6 +1,7 @@
 //! Finding where something was said in sermons' transcripts: a phrase, compared the way verses
 //! are (case, accents, and punctuation aside, numerals spelled out).
 
+pub use scripture_quotes::Near;
 use serde::{Deserialize, Serialize};
 
 use crate::{files::Files, project::Project, transcript::Transcript};
@@ -20,6 +21,10 @@ pub struct Said {
     pub before: String,
     pub text: String,
     pub after: String,
+    /// The words that were the query's, by index into the transcript's words, when it was searched
+    /// for words near each other ([`FindOptions::near`]); empty when all of `text` was
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hits: Vec<u32>,
 }
 
 /// How to look for a phrase
@@ -33,6 +38,10 @@ pub struct FindOptions {
     pub context: usize,
     /// The most places to give (0 for all)
     pub limit: usize,
+    /// Its words needn't be said together, only near each other ([`Near`]: `Jesus God` finds
+    /// "Jesus is God"); quotes keep a phrase together. None for the phrase, as it is
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub near: Option<Near>,
 }
 
 impl Default for FindOptions {
@@ -41,11 +50,13 @@ impl Default for FindOptions {
             prefix: false,
             context: 12,
             limit: 0,
+            near: None,
         }
     }
 }
 
-/// Where `phrase` was said in a transcript (of the sermon `source_id`), in order
+/// Where `phrase` was said in a transcript (of the sermon `source_id`), in order: as it is, or its
+/// words near each other ([`FindOptions::near`])
 pub fn find_in(transcript: &Transcript, source_id: &str, phrase: &str, options: &FindOptions) -> Vec<Said> {
     let words = &transcript.words;
     let join = |range: std::ops::Range<usize>| {
@@ -55,13 +66,20 @@ pub fn find_in(transcript: &Transcript, source_id: &str, phrase: &str, options: 
             .collect::<Vec<_>>()
             .join(" ")
     };
-    let mut found = transcript.quotes.find(phrase, options.prefix);
+    let mut found: Vec<(std::ops::Range<usize>, Vec<u32>)> = match &options.near {
+        None => (transcript.quotes.find(phrase, options.prefix).into_iter())
+            .map(|r| (r, vec![]))
+            .collect(),
+        Some(near) => (transcript.quotes.find_near(phrase, near, options.prefix).into_iter())
+            .map(|p| (p.words, p.hits.into_iter().flatten().map(|w| w as u32).collect()))
+            .collect(),
+    };
     if options.limit > 0 {
         found.truncate(options.limit);
     }
     (found.into_iter())
-        .filter(|r| r.end <= words.len() && !r.is_empty())
-        .map(|r| Said {
+        .filter(|(r, _)| r.end <= words.len() && !r.is_empty())
+        .map(|(r, hits)| Said {
             source_id: source_id.to_string(),
             word_start: r.start as u32,
             word_end: r.end as u32 - 1,
@@ -70,6 +88,7 @@ pub fn find_in(transcript: &Transcript, source_id: &str, phrase: &str, options: 
             before: join(r.start.saturating_sub(options.context)..r.start),
             text: join(r.clone()),
             after: join(r.end..(r.end + options.context).min(words.len())),
+            hits,
         })
         .collect()
 }
@@ -168,5 +187,24 @@ mod tests {
             limited.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(),
             ["how", "he"]
         );
+    }
+
+    #[test]
+    fn finds_words_near_each_other() {
+        let t = Transcript::parse(
+            r#"{"segments": [{"start": 0, "end": 4, "text": "We know that Jesus is God and Lord."}]}"#,
+        )
+        .unwrap();
+        let near = FindOptions {
+            near: Some(Near::default()),
+            ..Default::default()
+        };
+        let found = find_in(&t, "s", "Jesus God", &near);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            (found[0].text.as_str(), found[0].hits.as_slice()),
+            ("Jesus is God", &[3, 5][..])
+        );
+        assert!(find_in(&t, "s", "Jesus God", &FindOptions::default()).is_empty());
     }
 }

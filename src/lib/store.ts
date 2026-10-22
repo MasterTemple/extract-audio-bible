@@ -9,6 +9,7 @@ import {
   type Match,
   type Keyed,
   type MatchSet,
+  type Near,
   type Project,
   type ProjectChanges,
   type Summary,
@@ -49,7 +50,7 @@ interface AppState extends Indexed {
   onlySermon: string | null;
   saving: boolean;
   /** The transcript open, the time to show in it, and what to find in it */
-  reading: { sourceId: string; at: number | null; query: string } | null;
+  reading: { sourceId: string; at: number | null; query: string; near: Near | null } | null;
   /** Steps to undo, the last most recent, and steps undone to redo */
   past: Step[];
   future: Step[];
@@ -79,7 +80,8 @@ interface AppState extends Indexed {
   setVerse: (verse: number | null) => void;
   setOnlySermon: (sourceId: string | null) => void;
   /** Opens a sermon's transcript, at a time in it if given, finding a phrase in it if given; null closes it */
-  openTranscript: (sourceId: string | null, at?: number | null, query?: string) => void;
+  /** Opens a sermon's transcript, at a time, finding a query in it (its words near each other, with `near`) */
+  openTranscript: (sourceId: string | null, at?: number | null, query?: string, near?: Near | null) => void;
   select: (match: Match) => void;
   selectMany: (matches: Match[]) => void;
   unselect: (key: string) => void;
@@ -487,7 +489,7 @@ export const useApp = create<AppState>((set, get) => {
     setVerse: (verse) => set({ verse }),
     setOnlySermon: (onlySermon) => set({ onlySermon }),
 
-    openTranscript: (sourceId, at = null, query = "") => set({ reading: sourceId ? { sourceId, at, query } : null }),
+    openTranscript: (sourceId, at = null, query = "", near = null) => set({ reading: sourceId ? { sourceId, at, query, near } : null }),
 
     select: (m) => get().selectMany([m]),
 

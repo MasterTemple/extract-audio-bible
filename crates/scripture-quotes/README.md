@@ -103,7 +103,12 @@ assert_eq!(found.quotations.len(), 1);
 
 `find(phrase, prefix)` gives where anything else was said, as word ranges: the phrase's words in
 order, compared the way quotations are (case, accents, and punctuation aside, numerals spelled
-out), its last word the start of one with `prefix`.
+out), its last word the start of one with `prefix`. `find_near(query, &Near { within, in_order,
+skip_common }, prefix)` finds a query's words said near each other instead (`Jesus God` finds
+"Jesus is God"): at most `within` words between one and the next, in order if asked, "quoted
+phrases" kept together, `forgiv*` for any word it begins, and common words ([`COMMON_WORDS`])
+left out with `skip_common`. Each `Place` gives the words it spans and which of them were the
+query's.
 
 ## Performance
 

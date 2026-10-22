@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FileText, Loader2, Play, Search, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api, errorMessage, type Said, type SearchProgress } from "@/lib/api";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { api, errorMessage, type Near, type Said, type SearchProgress } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import { play, usePlayer } from "@/lib/player";
 import { audioPathOf, formatTime, sermonMatches, sourceColor, sourceOf, sourceTitle, valuesOf } from "@/lib/refs";
@@ -12,14 +15,33 @@ import { MultiSelect } from "./MultiSelect";
 /** The most places shown */
 const LIMIT = 500;
 
-/** What was last searched for, and among whose sermons, kept while other tabs are open */
+/** What was last searched for, how, and among whose sermons, kept while other tabs are open */
 let lastQuery = "";
 let lastSpeakers: string[] = [];
 let lastSeries: string[] = [];
+let lastNear: Near = { within: 5, inOrder: false, skipCommon: true };
+let lastNearOn = false;
 
-/** Searches for this when the Search tab is next shown, among every sermon */
+/** Searches for this phrase when the Search tab is next shown, among every sermon */
 export function searchFor(query: string) {
-  [lastQuery, lastSpeakers, lastSeries] = [query, [], []];
+  [lastQuery, lastSpeakers, lastSeries, lastNearOn] = [query, [], [], false];
+}
+
+/** A place found: the words that were the query's marked (all of them, for a phrase), the rest of it plain */
+export function SaidText({ said }: { said: Said }) {
+  const mark = "rounded-sm bg-yellow-200 px-0.5 text-foreground dark:bg-yellow-700/60";
+  if (!said.hits?.length) return <mark className={mark}>{said.text}</mark>;
+  const hits = new Set(said.hits);
+  return (
+    <span className="text-foreground">
+      {said.text.split(" ").map((word, i) => (
+        <span key={i}>
+          {i > 0 && " "}
+          {hits.has(said.wordStart + i) ? <mark className={mark}>{word}</mark> : word}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 /** Searching every sermon's transcript for what was said */
@@ -30,6 +52,10 @@ export function SearchPanel() {
   const [query, setQuery] = useState(lastQuery);
   const [speakers, setSpeakers] = useState(lastSpeakers);
   const [series, setSeries] = useState(lastSeries);
+  // Words near each other, rather than a phrase, and how near
+  const [nearOn, setNearOn] = useState(lastNearOn);
+  const [nearOptions, setNearOptions] = useState(lastNear);
+  const near = nearOn ? nearOptions : null;
   // What's been found so far: `searched` of `total` sermons, and whether that's all
   const [result, setResult] = useState<{
     query: string;
@@ -47,7 +73,7 @@ export function SearchPanel() {
 
   // Searched a moment after typing stops
   useEffect(() => {
-    [lastQuery, lastSpeakers, lastSeries] = [query, speakers, series];
+    [lastQuery, lastSpeakers, lastSeries, lastNear, lastNearOn] = [query, speakers, series, nearOptions, nearOn];
     const p = useApp.getState().project;
     if (!p || !query.trim()) {
       setResult(null);
@@ -68,7 +94,7 @@ export function SearchPanel() {
         setResult({ query, found, more: progress.more, searched: progress.searched, total: progress.total, done: progress.done });
         setError(errors.length ? errors.join("\n") : null);
       };
-      api.searchTranscripts(p.id, query, among, LIMIT, { onProgress }).then(
+      api.searchTranscripts(p.id, query, among, LIMIT, { near, onProgress }).then(
         (r) => {
           if (!live) return;
           setResult({ query, found: r.found, more: r.more, searched: 0, total: 0, done: true });
@@ -86,7 +112,7 @@ export function SearchPanel() {
       live = false;
       clearTimeout(timer);
     };
-  }, [query, speakers, series]);
+  }, [query, speakers, series, near, nearOn, nearOptions]);
 
   // Places by sermon, in the sermons' order
   const groups = useMemo(() => {
@@ -152,9 +178,62 @@ export function SearchPanel() {
             )}
           </div>
         )}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <ToggleGroup type="single" variant="outline" size="sm" value={nearOn ? "near" : "phrase"} onValueChange={(v) => v && setNearOn(v === "near")}>
+            <ToggleGroupItem value="phrase" className="px-3">
+              Exact phrase
+            </ToggleGroupItem>
+            <ToggleGroupItem value="near" className="px-3">
+              Words near each other
+            </ToggleGroupItem>
+          </ToggleGroup>
+          {nearOn && (
+            <>
+              <div className="flex items-center gap-1.5 text-sm">
+                <Label htmlFor="within" className="font-normal">
+                  At most
+                </Label>
+                <Input
+                  id="within"
+                  type="number"
+                  min={0}
+                  max={100}
+                  className="h-8 w-16"
+                  value={nearOptions.within}
+                  onChange={(e) => setNearOptions({ ...nearOptions, within: Math.min(100, Math.max(0, Math.round(Number(e.target.value) || 0))) })}
+                />
+                <span>words between</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch id="inorder" checked={nearOptions.inOrder} onCheckedChange={(v) => setNearOptions({ ...nearOptions, inOrder: v })} />
+                <Label htmlFor="inorder" className="text-sm font-normal">
+                  In this order
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch id="common" checked={nearOptions.skipCommon} onCheckedChange={(v) => setNearOptions({ ...nearOptions, skipCommon: v })} />
+                <Label htmlFor="common" className="text-sm font-normal">
+                  Leave out common words
+                </Label>
+              </div>
+            </>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground">
-          Words are found in order, whatever their case, accents, or punctuation, with numbers spelled out (“70 times 7” finds
-          “seventy times seven”); the last word can be the start of one.
+          {nearOn ? (
+            <>
+              Each word must be said with at most {nearOptions.within} other word{nearOptions.within === 1 ? "" : "s"} between it and the
+              next{nearOptions.inOrder ? ", in the order typed" : ", in any order"}: “Jesus God” finds “Jesus is God”, and only “Jesus” and
+              “God” are marked. Put a phrase in quotes to keep its words together (“"only begotten" son”), end a word with * for any word
+              it begins (“forgiv*”)
+              {nearOptions.skipCommon && ", and common words like “is”, “the”, and “of” are left out unless quoted"}.
+            </>
+          ) : (
+            <>
+              Words are found in order, whatever their case, accents, or punctuation, with numbers spelled out (“70 times 7” finds
+              “seventy times seven”); the last word can be the start of one.
+            </>
+          )}
         </p>
         {error && <p className="text-sm whitespace-pre-line text-destructive">{error}</p>}
 
@@ -184,7 +263,7 @@ export function SearchPanel() {
                   size="xs"
                   variant="ghost"
                   className="ml-auto"
-                  onClick={() => openTranscript(sourceId, found[0].start, result?.query ?? "")}
+                  onClick={() => openTranscript(sourceId, found[0].start, result?.query ?? "", near)}
                 >
                   <FileText /> Transcript
                 </Button>
@@ -199,17 +278,17 @@ export function SearchPanel() {
                     <button
                       className="w-14 shrink-0 pt-0.5 text-left text-xs text-muted-foreground tabular-nums"
                       title="Open the transcript here"
-                      onClick={() => openTranscript(sourceId, s.start, result?.query ?? "")}
+                      onClick={() => openTranscript(sourceId, s.start, result?.query ?? "", near)}
                     >
                       {formatTime(s.start)}
                     </button>
                     <button
                       className="min-w-0 flex-1 text-left text-[13px] leading-relaxed"
                       title="Open the transcript here"
-                      onClick={() => openTranscript(sourceId, s.start, result?.query ?? "")}
+                      onClick={() => openTranscript(sourceId, s.start, result?.query ?? "", near)}
                     >
                       <span className="text-muted-foreground">{s.before ? `…${s.before} ` : ""}</span>
-                      <mark className="rounded-sm bg-yellow-200 px-0.5 text-foreground dark:bg-yellow-700/60">{s.text}</mark>
+                      <SaidText said={s} />
                       <span className="text-muted-foreground">{s.after ? ` ${s.after}…` : ""}</span>
                     </button>
                     {project.kind !== "readings" && <AddReading said={s} />}

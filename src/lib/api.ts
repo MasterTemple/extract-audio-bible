@@ -43,6 +43,18 @@ export interface Said {
   before: string;
   text: string;
   after: string;
+  /** The words that were the query's (by index into the transcript), when searched for near each other; none when all of `text` was */
+  hits?: number[];
+}
+
+/** How a query's words are found near each other, rather than as a phrase: "Jesus God" finds "Jesus is God" */
+export interface Near {
+  /** The most words said between one of its words (or "quoted phrases") and the next */
+  within: number;
+  /** Its words said in the order given */
+  inOrder: boolean;
+  /** Common words ("is", "the") outside quotes left out of the query */
+  skipCommon: boolean;
 }
 
 /** What's known about a sermon, by its file id */
@@ -526,10 +538,13 @@ export const api = {
     limit: number,
     {
       prefix = true,
+      near = null,
       key = "search",
       onProgress,
     }: {
       prefix?: boolean;
+      /** Its words found near each other, not as a phrase */
+      near?: Near | null;
       /** A newer search with the same key stops this one (the Search tab's and a transcript's don't stop each other) */
       key?: string;
       /** Given what's found as it's found, a batch of sermons at a time, in the sermons' order */
@@ -542,6 +557,7 @@ export const api = {
       projectId,
       phrase,
       prefix,
+      near,
       sourceIds,
       limit,
       search: key,

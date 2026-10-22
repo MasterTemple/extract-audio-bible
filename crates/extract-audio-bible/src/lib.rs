@@ -39,7 +39,7 @@ pub use project::{
     ProjectKind, Selection, Settings, Source, parse_reference,
 };
 pub use readings::{ReadingRow, reading_rows};
-pub use said::{FindOptions, Said, find_in, search_transcripts};
+pub use said::{FindOptions, Near, Said, find_in, search_transcripts};
 pub use scope::{BookScope, Genre, Testament};
 pub use scripture_quotes;
 pub use transcript::{Transcript, Word};

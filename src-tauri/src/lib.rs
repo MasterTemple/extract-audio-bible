@@ -691,6 +691,7 @@ async fn search_transcripts(
     project_id: String,
     phrase: String,
     prefix: bool,
+    near: Option<extract_audio_bible::Near>,
     source_ids: Option<Vec<String>>,
     limit: usize,
     search: String,
@@ -713,6 +714,7 @@ async fn search_transcripts(
             prefix,
             context: 14,
             limit: limit + 1,
+            near,
         };
         let sources: Vec<_> = project
             .sources

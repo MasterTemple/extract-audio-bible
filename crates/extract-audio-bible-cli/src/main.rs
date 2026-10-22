@@ -122,13 +122,24 @@ enum Command {
     },
     /// Find where a phrase was said in the project's sermons: its words in order, whatever their
     /// case, accents, or punctuation, numbers spelled out ("70 times 7" finds "seventy times
-    /// seven")
+    /// seven"). With --near, its words need only be said near each other
     Grep {
         dir: PathBuf,
         phrase: String,
         /// Its last word may be the start of one ("forgiv" finds "forgive" and "forgiveness")
         #[arg(long)]
         prefix: bool,
+        /// Its words (or "quoted phrases") said near each other, with at most this many words
+        /// between one and the next, in any order: `"Jesus God" --near 3` finds "Jesus is God".
+        /// A word ending in `*` may be the start of one
+        #[arg(long, value_name = "WORDS")]
+        near: Option<usize>,
+        /// With --near, its words in the order given
+        #[arg(long, requires = "near")]
+        in_order: bool,
+        /// With --near, keep common words ("is", "the") in the query rather than leaving them out
+        #[arg(long, requires = "near")]
+        keep_common: bool,
         /// Words of context on each side
         #[arg(long, default_value_t = 10)]
         context: usize,
@@ -668,6 +679,9 @@ fn run(command: Command, out: &Out) -> Result<()> {
             dir,
             phrase,
             prefix,
+            near,
+            in_order,
+            keep_common,
             context,
             limit,
             speakers,
@@ -686,7 +700,17 @@ fn run(command: Command, out: &Out) -> Result<()> {
                 .cloned()
                 .collect();
             p.project.sources = kept;
-            let options = extract_audio_bible::FindOptions { prefix, context, limit };
+            let near = near.map(|within| extract_audio_bible::Near {
+                within,
+                in_order,
+                skip_common: !keep_common,
+            });
+            let options = extract_audio_bible::FindOptions {
+                prefix,
+                context,
+                limit,
+                near,
+            };
             let (found, errors) = extract_audio_bible::search_transcripts(&p.project, &Disk, &phrase, &options);
             for (sermon, e) in &errors {
                 out.note(format!("couldn't read {sermon}: {e}"));

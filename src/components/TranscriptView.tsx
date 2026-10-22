@@ -168,6 +168,8 @@ export function TranscriptView() {
   const [current, setCurrent] = useState(-1);
   const findBox = useRef<HTMLInputElement>(null);
   useEffect(() => setQuery(reading?.query ?? ""), [reading]);
+  // Opened from a search for words near each other, its query is found that way too
+  const near = reading?.near ?? null;
   const sourceId = source?.id;
   useEffect(() => {
     const p = useApp.getState().project;
@@ -178,7 +180,7 @@ export function TranscriptView() {
     }
     let live = true;
     const timer = setTimeout(() => {
-      api.searchTranscripts(p.id, query, [sourceId], 5000, { key: "transcript" }).then(
+      api.searchTranscripts(p.id, query, [sourceId], 5000, { key: "transcript", near }).then(
         (r) => {
           if (!live) return;
           setHits(r.found);
@@ -194,10 +196,14 @@ export function TranscriptView() {
       live = false;
       clearTimeout(timer);
     };
-  }, [query, sourceId]);
+  }, [query, sourceId, near]);
+  // The words found: the query's alone, when its words were found near each other
   const found = useMemo(() => {
     const words = new Set<number>();
-    for (const s of hits) for (let i = s.wordStart; i <= s.wordEnd; i++) words.add(i);
+    for (const s of hits) {
+      if (s.hits?.length) s.hits.forEach((i) => words.add(i));
+      else for (let i = s.wordStart; i <= s.wordEnd; i++) words.add(i);
+    }
     return words;
   }, [hits]);
   const step = (by: number) => hits.length && setCurrent((c) => (c + by + hits.length) % hits.length);
