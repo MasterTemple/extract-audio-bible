@@ -25,6 +25,7 @@ impl Selection {
             gain_db: previous.map_or(0.0, |p| p.gain_db),
             needs_trim: false,
             note: previous.map(|p| p.note.clone()).unwrap_or_default(),
+            cuts: vec![],
             joined: vec![],
         }
     }
@@ -40,6 +41,7 @@ impl Part {
             end: m.end,
             trim_start: 0.0,
             trim_end: 0.0,
+            cuts: vec![],
         }
     }
 }

@@ -534,6 +534,8 @@ pub struct Selection {
     /// Chosen, but still to be trimmed
     pub needs_trim: bool,
     pub note: String,
+    /// Stretches cut out of the reading (a slip the reader corrected), in the sermon's seconds
+    pub cuts: Vec<Cut>,
     /// More readings of the verse, played after this one in order: the rest of a verse read in
     /// pieces
     pub joined: Vec<SelectionPart>,
@@ -549,6 +551,34 @@ pub struct SelectionPart {
     pub end: f64,
     pub trim_start: f64,
     pub trim_end: f64,
+    /// Stretches cut out of it, in the sermon's seconds
+    pub cuts: Vec<Cut>,
+}
+
+/// A stretch left out of the middle of a reading, in the sermon's seconds
+#[data]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cut {
+    pub start: f64,
+    pub end: f64,
+}
+
+impl From<&eab::Cut> for Cut {
+    fn from(c: &eab::Cut) -> Self {
+        Cut {
+            start: c.start,
+            end: c.end,
+        }
+    }
+}
+
+impl From<&Cut> for eab::Cut {
+    fn from(c: &Cut) -> Self {
+        eab::Cut {
+            start: c.start,
+            end: c.end,
+        }
+    }
 }
 
 impl From<&eab::Part> for SelectionPart {
@@ -560,6 +590,7 @@ impl From<&eab::Part> for SelectionPart {
             end: p.end,
             trim_start: p.trim_start,
             trim_end: p.trim_end,
+            cuts: p.cuts.iter().map(Cut::from).collect(),
         }
     }
 }
@@ -573,6 +604,7 @@ impl From<&SelectionPart> for eab::Part {
             end: p.end,
             trim_start: p.trim_start,
             trim_end: p.trim_end,
+            cuts: p.cuts.iter().map(eab::Cut::from).collect(),
         }
     }
 }
@@ -596,6 +628,7 @@ impl Selection {
             gain_db: s.gain_db,
             needs_trim: s.needs_trim,
             note: s.note.clone(),
+            cuts: s.cuts.iter().map(Cut::from).collect(),
             joined: s.joined.iter().map(SelectionPart::from).collect(),
         })
     }
@@ -615,6 +648,7 @@ impl Selection {
                 gain_db: self.gain_db,
                 needs_trim: self.needs_trim,
                 note: self.note.clone(),
+                cuts: self.cuts.iter().map(eab::Cut::from).collect(),
                 joined: self.joined.iter().map(eab::Part::from).collect(),
             },
         )
@@ -909,6 +943,7 @@ impl From<&ClipOptions> for eab::ClipOptions {
             processed: o.processed,
             target_db: o.target_db,
             gain_db: o.gain_db,
+            cuts: vec![],
         }
     }
 }

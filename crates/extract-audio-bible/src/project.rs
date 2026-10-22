@@ -161,10 +161,21 @@ pub struct Selection {
     pub needs_trim: bool,
     #[serde(default)]
     pub note: String,
+    /// Stretches cut out of the first reading (a slip the reader corrected), in the sermon's seconds
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cuts: Vec<Cut>,
     /// More readings of the verse, played after this one in order: the rest of a verse that was
     /// read in pieces (its first half, then its second minutes later)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub joined: Vec<Part>,
+}
+
+/// A stretch left out of the middle of a reading, in the sermon's seconds
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Cut {
+    pub start: f64,
+    pub end: f64,
 }
 
 /// One reading used for part of a verse, and how it's cut
@@ -179,6 +190,9 @@ pub struct Part {
     pub trim_start: f64,
     #[serde(default)]
     pub trim_end: f64,
+    /// Stretches cut out of it (a slip the reader corrected), in the sermon's seconds
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cuts: Vec<Cut>,
 }
 
 impl Part {
@@ -186,6 +200,36 @@ impl Part {
     pub fn clip(&self) -> (f64, f64) {
         let s = (self.start + self.trim_start).max(0.0);
         (s, (self.end + self.trim_end).max(s + 0.05))
+    }
+
+    /**
+    What's played of it, in seconds: its clip ([`Part::clip`]) without its cuts, in order. Cuts
+    outside the clip are ignored, overlapping ones are one, and pieces too short to hear (under
+    20 ms) are left out; all of it if the cuts leave nothing
+    */
+    pub fn spans(&self) -> Vec<(f64, f64)> {
+        let (start, end) = self.clip();
+        let mut cuts: Vec<(f64, f64)> = (self.cuts.iter())
+            .map(|c| (c.start.min(c.end).max(start), c.start.max(c.end).min(end)))
+            .filter(|(a, b)| b > a)
+            .collect();
+        cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut spans = vec![];
+        let mut at = start;
+        for (a, b) in cuts {
+            if a > at {
+                spans.push((at, a));
+            }
+            at = at.max(b);
+        }
+        spans.push((at, end));
+        spans.retain(|(a, b)| b - a >= 0.02);
+        if spans.is_empty() { vec![(start, end)] } else { spans }
+    }
+
+    /// How long it plays, in seconds: its clip without its cuts
+    pub fn duration(&self) -> f64 {
+        self.spans().iter().map(|(a, b)| b - a).sum()
     }
 }
 
@@ -204,6 +248,7 @@ impl Selection {
             end: self.end,
             trim_start: self.trim_start,
             trim_end: self.trim_end,
+            cuts: self.cuts.clone(),
         }
     }
 
@@ -225,6 +270,7 @@ impl Selection {
         self.end = first.end;
         self.trim_start = first.trim_start;
         self.trim_end = first.trim_end;
+        self.cuts = first.cuts;
         self.joined = parts.collect();
     }
 
@@ -1081,6 +1127,7 @@ mod tests {
             gain_db: 0.0,
             needs_trim: false,
             note: String::new(),
+            cuts: vec![],
             joined: vec![],
         };
         p.selections.insert("43.3.16".into(), selection("old"));

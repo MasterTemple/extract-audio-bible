@@ -69,7 +69,8 @@ export_to_dir(&project, &bible, &chapters, &Disk, Path::new("audio-bible"), fals
 - [`project`]: a project's sermons, chosen readings, settings, and export metadata, as plain data
   (serde), and [`analyze`] to search its sermons. A verse read in pieces (its first half, then the
   rest minutes later) is chosen as several readings played one after another
-  ([`Project::join`], [`Selection::set_parts`]). What's known about each sermon (its title and
+  ([`Project::join`], [`Selection::set_parts`]), and a slip the reader corrected can be cut out
+  of the middle of a reading ([`Cut`], [`Part::spans`]). What's known about each sermon (its title and
   passage) is kept by its file id, apart from the sermons ([`Project::apply_file_metadata`])
 - [`export`]: a chapter as it will sound (and when each verse is heard in it), and tagged MP3s by
   chapter or by verse. Exported to a folder, files already there as they'd be made aren't made

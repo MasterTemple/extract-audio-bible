@@ -14,7 +14,7 @@ use crate::{
     bible::{Bible, BibleBook},
     error::{Error, Result},
     files::Files,
-    project::{ExportMode, Leveling, Project, Selection},
+    project::{Cut, ExportMode, Leveling, Project, Selection},
 };
 
 pub fn verse_key(book: u8, chapter: u16, verse: u16) -> String {
@@ -65,19 +65,20 @@ fn chosen<'a>(project: &'a Project, book: &BibleBook, chapter: u16) -> Vec<(u16,
         .collect()
 }
 
-/// A verse's clips, in the order they're played (leaving out any whose sermon is gone)
+/// A verse's clips, in the order they're played (leaving out any whose sermon is gone): a clip for
+/// each reading, or for each piece of one with stretches cut out of it
 fn clips(project: &Project, sel: &Selection) -> Vec<Clip> {
     (sel.parts().iter())
         .filter_map(|part| {
             let path = project.audio_path(project.sources.iter().find(|s| s.id == part.source_id)?);
-            let (start, end) = part.clip();
-            Some(Clip {
-                path,
+            Some((part.spans().into_iter()).map(move |(start, end)| Clip {
+                path: path.clone(),
                 start,
                 end,
                 gain_db: sel.gain_db,
-            })
+            }))
         })
+        .flatten()
         .collect()
 }
 
@@ -221,11 +222,33 @@ pub struct ClipOptions {
     pub target_db: Option<f64>,
     /// When processed, a volume change in dB
     pub gain_db: f64,
+    /// Stretches left out (cut out of a reading), in the sermon's seconds; each join is faded
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cuts: Vec<Cut>,
 }
 
-/// `start` to `end` seconds of a sermon's audio, mono, at its own rate unless processed
+/// `start` to `end` seconds of a sermon's audio (without its cuts), mono, at its own rate unless processed
 pub fn render_clip(files: &dyn Files, path: &str, start: f64, end: f64, options: &ClipOptions) -> Result<Pcm> {
-    let mut pcm = audio::decode_range(files, path, start, end)?;
+    let spans = crate::Part {
+        match_id: String::new(),
+        source_id: String::new(),
+        start,
+        end,
+        trim_start: 0.0,
+        trim_end: 0.0,
+        cuts: options.cuts.clone(),
+    }
+    .spans();
+    let mut pcm = audio::decode_range(files, path, spans[0].0, spans[0].1)?;
+    for &(from, to) in &spans[1..] {
+        let mut next = audio::decode_range(files, path, from, to)?;
+        if next.rate != pcm.rate {
+            next = audio::resample(&next, pcm.rate);
+        }
+        audio::fade(&mut pcm.samples, pcm.rate, 8.0);
+        audio::fade(&mut next.samples, next.rate, 8.0);
+        pcm.samples.extend(next.samples);
+    }
     if options.processed {
         pcm = audio::resample(&pcm, 44_100);
         let mut gain = audio::db_to_gain(options.gain_db);
@@ -874,6 +897,7 @@ mod tests {
                     gain_db: 0.0,
                     needs_trim: false,
                     note: String::new(),
+                    cuts: vec![],
                     joined: vec![],
                 },
             );
@@ -963,6 +987,29 @@ mod tests {
         assert_eq!(status, [(7, 2, 2), (8, 2, 2)]);
     }
 
+    #[test]
+    fn cuts_leave_out_stretches_of_a_reading() {
+        let part = |cuts: &[(f64, f64)]| crate::Part {
+            match_id: "m".into(),
+            source_id: "s".into(),
+            start: 10.0,
+            end: 20.0,
+            trim_start: 1.0,
+            trim_end: 0.0,
+            cuts: cuts.iter().map(|&(start, end)| Cut { start, end }).collect(),
+        };
+        assert_eq!(part(&[]).spans(), [(11.0, 20.0)]);
+        // Out of order, overlapping, reversed, and partly outside the clip
+        assert_eq!(
+            part(&[(15.0, 16.0), (12.0, 13.0), (12.5, 14.0), (19.5, 25.0), (9.0, 10.5)]).spans(),
+            [(11.0, 12.0), (14.0, 15.0), (16.0, 19.5)]
+        );
+        assert_eq!(part(&[(17.0, 16.0)]).spans(), [(11.0, 16.0), (17.0, 20.0)]);
+        assert!((part(&[(12.0, 13.0)]).duration() - 8.0).abs() < 1e-9);
+        // Cutting it all out leaves it whole
+        assert_eq!(part(&[(0.0, 30.0)]).spans(), [(11.0, 20.0)]);
+    }
+
     /// A project of John 3:16-17, a second of a tone each, with the tone in memory
     fn two_verses() -> (Bible, Project, Memory) {
         let bible = Bible::new(
@@ -993,6 +1040,7 @@ mod tests {
                 gain_db: 0.0,
                 needs_trim: false,
                 note: String::new(),
+                cuts: vec![],
                 joined: vec![],
             };
             project.selections.insert(key.into(), sel);
@@ -1007,6 +1055,25 @@ mod tests {
             }),
         );
         (bible, project, files)
+    }
+
+    #[test]
+    fn a_cut_shortens_the_verse_exported() {
+        let (bible, mut project, files) = two_verses();
+        project.selections.get_mut("43.3.16").unwrap().cuts = vec![Cut { start: 0.25, end: 0.75 }];
+        let john = bible.book(43).unwrap();
+        let (pieces, times) = chapter_pieces(&project, john, 3);
+        let clips: Vec<(f64, f64)> = (pieces.iter())
+            .filter_map(|p| match p {
+                Piece::Audio(c) => Some((c.start, c.end)),
+                Piece::Silence(_) => None,
+            })
+            .collect();
+        // Verse 17 carries straight on from 16's last piece
+        assert_eq!(clips, [(0.0, 0.25), (0.75, 2.0)]);
+        assert_eq!((times[0].end, times[1].start), (0.5, 0.5));
+        let pcm = render_chapter(&project, john, 3, 16_000, &files).unwrap();
+        assert!((pcm.seconds() - 1.5).abs() < 0.01, "{}", pcm.seconds());
     }
 
     #[test]

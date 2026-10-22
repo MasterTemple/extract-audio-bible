@@ -153,6 +153,7 @@ fn export_e2e() {
                 gain_db: 0.0,
                 needs_trim: false,
                 note: String::new(),
+                cuts: vec![],
                 joined: vec![],
             },
         );

@@ -196,15 +196,15 @@ export function selectionFor(m: Match, previous?: Selection): Selection {
 
 /** Every reading of a verse's choice, in the order they're played */
 export function partsOf(sel: Selection): Part[] {
-  const { matchId, sourceId, start, end, trimStart, trimEnd } = sel;
-  return [{ matchId, sourceId, start, end, trimStart, trimEnd }, ...(sel.joined ?? [])];
+  const { matchId, sourceId, start, end, trimStart, trimEnd, cuts } = sel;
+  return [{ matchId, sourceId, start, end, trimStart, trimEnd, cuts }, ...(sel.joined ?? [])];
 }
 
 /** The choice playing these readings in this order (the first becomes its own) */
 export function withParts(sel: Selection, parts: Part[]): Selection {
   const [first, ...joined] = parts;
   if (!first) return sel;
-  return { ...sel, ...first, joined };
+  return { ...sel, ...first, cuts: first.cuts, joined };
 }
 
 /** Where in its verse a reading begins: the first of the verse's words heard */

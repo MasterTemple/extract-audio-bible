@@ -9,6 +9,8 @@ interface PlayerState {
   /** The sermon's time at the start of the audio, after `lead` seconds of added silence */
   offset: number;
   lead: number;
+  /** Stretches of the sermon left out of the audio (cut out of a reading), in order */
+  skips: [number, number][];
   /** Seconds into the audio */
   time: number;
   duration: number;
@@ -21,6 +23,7 @@ export const usePlayer = create<PlayerState>(() => ({
   loading: null,
   offset: 0,
   lead: 0,
+  skips: [],
   time: 0,
   duration: 0,
   paused: false,
@@ -111,10 +114,11 @@ export function togglePause() {
 }
 
 /**
- * Play WAV bytes, rendered on demand; `offset` maps the audio's time back to the sermon's. From
- * `at` seconds into it, if given. Playing what's playing (or paused) stops it
+ * Play WAV bytes, rendered on demand; `offset` maps the audio's time back to the sermon's, past
+ * the stretches it leaves out (`skips`). From `at` seconds into it, if given. Playing what's
+ * playing (or paused) stops it
  */
-export async function play(id: string, render: () => Promise<ArrayBuffer>, offset = 0, lead = 0, at = 0) {
+export async function play(id: string, render: () => Promise<ArrayBuffer>, offset = 0, lead = 0, at = 0, skips: [number, number][] = []) {
   if (usePlayer.getState().id === id) {
     stop();
     return;
@@ -129,7 +133,7 @@ export async function play(id: string, render: () => Promise<ArrayBuffer>, offse
     const decoded = await context.decodeAudioData(bytes);
     if (usePlayer.getState().loading !== id) return;
     buffer = decoded;
-    usePlayer.setState({ id, loading: null, offset, lead, time: 0, duration: decoded.duration });
+    usePlayer.setState({ id, loading: null, offset, lead, skips: [...skips].sort((a, b) => a[0] - b[0]), time: 0, duration: decoded.duration });
     start(Math.min(Math.max(0, at), decoded.duration));
   } catch (e) {
     usePlayer.setState({ loading: null, id: null });
@@ -150,5 +154,7 @@ export function seek(seconds: number) {
 /** The sermon time being heard, if `id` is playing */
 export function sourceTime(state: PlayerState, id: string): number | null {
   if (state.id !== id) return null;
-  return state.offset + state.time - state.lead;
+  let at = state.offset + state.time - state.lead;
+  for (const [from, to] of state.skips) if (at >= from) at += to - from;
+  return at;
 }

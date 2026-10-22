@@ -1,4 +1,4 @@
-import type { BookOutline, FileMetadata, Match, MatchKind, Passage, Project, Run, Selection, Source } from "./api";
+import type { BookOutline, FileMetadata, Match, MatchKind, Part, Passage, Project, Run, Selection, Source } from "./api";
 
 export const verseKey = (book: number, chapter: number, verse: number) => `${book}.${chapter}.${verse}`;
 
@@ -12,6 +12,39 @@ export const isAdded = (m: { id: string }) => m.id.startsWith("added:");
 
 /** Whether a reading is still the project's: one added by hand is, until it's taken out (or its adding undone) */
 export const readingKept = (project: Project, m: Match) => !isAdded(m) || (project.addedReadings ?? []).some((a) => a.id === m.id);
+
+/** Where a part is cut, with its trims, as the library cuts it */
+export function clipOf(part: Part): [number, number] {
+  const start = Math.max(0, part.start + part.trimStart);
+  return [start, Math.max(start + 0.05, part.end + part.trimEnd)];
+}
+
+/**
+ * What's played of a part, as the library plays it: its clip without its cuts, in order (cuts
+ * outside it ignored, overlapping ones as one, pieces under 20 ms left out; all of it if nothing's left)
+ */
+export function spansOf(part: Part): [number, number][] {
+  const [start, end] = clipOf(part);
+  const cuts = (part.cuts ?? [])
+    .map((c): [number, number] => [Math.max(start, Math.min(c.start, c.end)), Math.min(end, Math.max(c.start, c.end))])
+    .filter(([a, b]) => b > a)
+    .sort((x, y) => x[0] - y[0]);
+  const spans: [number, number][] = [];
+  let at = start;
+  for (const [a, b] of cuts) {
+    if (a > at) spans.push([at, a]);
+    at = Math.max(at, b);
+  }
+  spans.push([at, end]);
+  const heard = spans.filter(([a, b]) => b - a >= 0.02);
+  return heard.length > 0 ? heard : [[start, end]];
+}
+
+/** The stretches between spans (what's left out), as the player skips them */
+export const gapsOf = (spans: [number, number][]): [number, number][] => spans.slice(1).map(([from], i) => [spans[i][1], from]);
+
+/** How long a part plays, in seconds: its clip without its cuts */
+export const playedSeconds = (part: Part) => spansOf(part).reduce((sum, [a, b]) => sum + b - a, 0);
 
 const KIND_RANK: Record<MatchKind, number> = { exact: 2, close: 1, partial: 0 };
 

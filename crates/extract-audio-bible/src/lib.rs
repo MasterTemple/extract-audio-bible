@@ -35,7 +35,7 @@ pub use export::{
 pub use files::{Disk, Files, Memory};
 pub use matcher::{Match, MatchKind, Run};
 pub use project::{
-    Added, ExportMode, FileMetadata, Keyed, Leveling, MatchSet, Metadata, Part, Passage, Project, ProjectChanges,
+    Added, Cut, ExportMode, FileMetadata, Keyed, Leveling, MatchSet, Metadata, Part, Passage, Project, ProjectChanges,
     ProjectKind, Selection, Settings, Source, parse_reference,
 };
 pub use readings::{ReadingRow, reading_rows};

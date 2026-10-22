@@ -69,6 +69,8 @@ export interface Selection {
   gainDb: number;
   needsTrim: boolean;
   note: string;
+  /** Stretches cut out of the first reading (a slip the reader corrected), in the sermon's seconds */
+  cuts?: Cut[];
   /** More readings of the verse, played after this one in order (a verse read in pieces) */
   joined?: Part[];
 }
@@ -81,6 +83,14 @@ export interface Part {
   end: number;
   trimStart: number;
   trimEnd: number;
+  /** Stretches cut out of it (a slip the reader corrected), in the sermon's seconds */
+  cuts?: Cut[];
+}
+
+/** A stretch left out of the middle of a reading, in the sermon's seconds */
+export interface Cut {
+  start: number;
+  end: number;
 }
 
 export interface Settings {
@@ -495,6 +505,8 @@ export const api = {
     processed?: boolean;
     targetDb?: number | null;
     gainDb?: number;
+    /** Stretches left out, in the sermon's seconds */
+    cuts?: Cut[];
   }) => invoke<ArrayBuffer>("render_clip", { request }),
   // These read the project as it was last saved: save it first (the store's `saved`)
   renderChapter: (projectId: string, book: number, chapter: number) =>
