@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, CircleDashed, Combine, Filter, Loader2, Pause, Play, Scissors, SkipBack, SkipForward, Sparkles, Square, Trash2, CheckCircle2, Link2, Volume2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleDashed, Combine, Filter, Loader2, Pause, Play, Scissors, SkipBack, SkipForward, Sparkles, Square, Trash2, CheckCircle2, ArrowUpCircle, Link2, Volume2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,9 @@ import { cn } from "@/lib/utils";
 import { api, errorMessage, type Project, type Selection, type VerseTime } from "@/lib/api";
 import { partsOf, useApp } from "@/lib/store";
 import { play, resume, seek, stop, togglePause, usePlayer } from "@/lib/player";
-import { audioPathOf, bookName, formatTime, readingKept, chapterStatus, passageHasChapter, verseKey, versesNeeded, sourceColor, sourceTitle, runLabel } from "@/lib/refs";
+import { audioPathOf, betterKind, bookName, chosenQuality, formatTime, kindLabel, readingKept, chapterStatus, passageHasChapter, verseKey, versesNeeded, sourceColor, sourceTitle, runLabel } from "@/lib/refs";
 import { Coverage, percentOf } from "./Coverage";
+import { kindClass } from "./MatchCard";
 
 /** Whether `b` carries on straight from `a` in the same sermon (no cut between them) */
 export function continues(a: Selection | undefined, b: Selection | undefined): boolean {
@@ -338,6 +339,9 @@ export function ChapterView() {
               const chosen = sel ? matchById.get(sel.matchId) : undefined;
               const run = chosen?.runId ? runById.get(chosen.runId) : undefined;
               const best = matches[0];
+              const quality = sel ? chosenQuality(sel, matchById) : null;
+              // A reading of a better kind, or scoring well above, than the one chosen
+              const better = quality && best && (betterKind(best.kind, quality.kind) || best.score - quality.score >= 0.05) ? best : undefined;
               const bestRun = best?.runId ? runById.get(best.runId) : undefined;
               const counts = { exact: 0, close: 0, partial: 0 };
               for (const m of matches) counts[m.kind]++;
@@ -419,7 +423,28 @@ export function ChapterView() {
                               <TooltipContent>Marked to trim</TooltipContent>
                             </Tooltip>
                           )}
-                          <CheckCircle2 className="size-4 text-emerald-600" />
+                          {quality ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className={cn("flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap tabular-nums", kindClass[quality.kind])}>
+                                  <CheckCircle2 className="size-3.5" />
+                                  {kindLabel[quality.kind]} · {Math.round(quality.score * 100)}%
+                                  {better && <ArrowUpCircle className="size-3.5 text-sky-600 dark:text-sky-400" />}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                Chosen: {kindLabel[quality.kind].toLowerCase()}, {Math.round(quality.score * 100)}%
+                                {quality.joined > 1 && ` (the least of ${quality.joined} readings joined)`}
+                                {better && (
+                                  <>
+                                    <br />A better reading was found: {kindLabel[better.kind].toLowerCase()}, {Math.round(better.score * 100)}%
+                                  </>
+                                )}
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            <CheckCircle2 className="size-4 text-emerald-600" />
+                          )}
                         </span>
                       ) : null}
                       {found > 0 ? (

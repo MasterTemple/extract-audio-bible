@@ -1,4 +1,4 @@
-import type { BookOutline, FileMetadata, Match, Passage, Project, Run, Source } from "./api";
+import type { BookOutline, FileMetadata, Match, MatchKind, Passage, Project, Run, Selection, Source } from "./api";
 
 export const verseKey = (book: number, chapter: number, verse: number) => `${book}.${chapter}.${verse}`;
 
@@ -12,6 +12,23 @@ export const isAdded = (m: { id: string }) => m.id.startsWith("added:");
 
 /** Whether a reading is still the project's: one added by hand is, until it's taken out (or its adding undone) */
 export const readingKept = (project: Project, m: Match) => !isAdded(m) || (project.addedReadings ?? []).some((a) => a.id === m.id);
+
+const KIND_RANK: Record<MatchKind, number> = { exact: 2, close: 1, partial: 0 };
+
+/**
+ * How good a verse's chosen reading is: its kind and score, or for readings joined, the worst of
+ * them (with the lowest score); null until its readings are read
+ */
+export function chosenQuality(sel: Selection, matchById: Map<string, Match>): { kind: MatchKind; score: number; joined: number } | null {
+  const parts = [sel.matchId, ...(sel.joined ?? []).map((p) => p.matchId)].map((id) => matchById.get(id));
+  if (parts.some((m) => !m)) return null;
+  const found = parts as Match[];
+  const kind = found.reduce((worst, m) => (KIND_RANK[m.kind] < KIND_RANK[worst] ? m.kind : worst), found[0].kind);
+  return { kind, score: Math.min(...found.map((m) => m.score)), joined: found.length };
+}
+
+/** Whether one kind of reading is better than another */
+export const betterKind = (a: MatchKind, b: MatchKind) => KIND_RANK[a] > KIND_RANK[b];
 
 export function formatTime(seconds: number, precise = false): string {
   if (!Number.isFinite(seconds)) return "–";
