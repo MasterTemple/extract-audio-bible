@@ -27,6 +27,7 @@ import { audioPathOf, formatTime, kindLabel, sourceColor } from "@/lib/refs";
 import { kindClass } from "./MatchCard";
 import { MultiSelect } from "./MultiSelect";
 import { ReferenceInput } from "./ReferenceInput";
+import { Coverage, percentOf } from "./Coverage";
 
 /** Past this many sermons, or readings, the list starts folded (by sermon, or by book and chapter) */
 const FOLD_SERMONS = 15;
@@ -55,6 +56,7 @@ function Fold({
   label,
   readings,
   verses,
+  total,
   children,
 }: {
   open: boolean;
@@ -63,6 +65,8 @@ function Fold({
   label: React.ReactNode;
   readings: number;
   verses: number;
+  /** Verses there are in all (of the testament, book, or chapter) */
+  total?: number;
   children?: React.ReactNode;
 }) {
   return (
@@ -70,9 +74,16 @@ function Fold({
       <button className="flex min-w-0 items-center gap-1.5 rounded px-1 py-1 text-left hover:bg-muted" onClick={onToggle}>
         <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
         <span className={cn("truncate", depth === 0 ? "text-sm font-semibold" : "text-sm font-medium")}>{label}</span>
-        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
           {readings.toLocaleString()} reading{readings === 1 ? "" : "s"}
-          {verses !== readings && ` · ${verses.toLocaleString()} verse${verses === 1 ? "" : "s"}`}
+          {total ? (
+            <>
+              {" · "}
+              <Coverage n={verses} total={total} bar />
+            </>
+          ) : (
+            verses !== readings && ` · ${verses.toLocaleString()} verse${verses === 1 ? "" : "s"}`
+          )}
         </span>
       </button>
       {children}
@@ -285,7 +296,7 @@ function NewProjectFrom({ project, overview, filter }: { project: Project; overv
 
 /** Every verse read in the project's sermons, by sermon or by verse */
 export function ReadingsPanel() {
-  const { project, summary, openTranscript, setTab } = useApp();
+  const { project, summary, outline, openTranscript, setTab } = useApp();
   const player = usePlayer();
   const [overview, setOverview] = useState<Overview | null>(null);
   // The books and chapters with readings, as last shown without a reference: what's offered as one is typed
@@ -359,6 +370,26 @@ export function ReadingsPanel() {
     }
     return testaments;
   }, [overview]);
+
+  // Verses there are in each chapter, book, and testament (bridged verses aren't counted)
+  const totals = useMemo(() => {
+    const chapters = new Map<string, number>();
+    const books = new Map<number, number>();
+    const testaments = new Map<string, number>();
+    let all = 0;
+    for (const b of outline) {
+      let n = 0;
+      b.chapters.forEach((count, i) => {
+        const c = count - (b.empty[i]?.length ?? 0);
+        chapters.set(`${b.id}.${i + 1}`, c);
+        n += c;
+      });
+      books.set(b.id, n);
+      testaments.set(testamentOf(b.id), (testaments.get(testamentOf(b.id)) ?? 0) + n);
+      all += n;
+    }
+    return { chapters, books, testaments, all };
+  }, [outline]);
 
   // Until something is folded or unfolded, a long list starts folded
   const shut = useMemo(() => {
@@ -539,7 +570,9 @@ export function ReadingsPanel() {
           {overview ? (
             <span>
               <span className="font-semibold">{overview.readings.toLocaleString()}</span> readings of{" "}
-              <span className="font-semibold">{overview.verses.toLocaleString()}</span> verses in {overview.books} books, in{" "}
+              <span className="font-semibold">{overview.verses.toLocaleString()}</span>
+              {totals.all > 0 && ` of ${totals.all.toLocaleString()} (${percentOf(overview.verses, totals.all)}%)`} verses in {overview.books}
+              {outline.length > 0 && ` of ${outline.length}`} books, in{" "}
               {overview.sermons.toLocaleString()} sermons
             </span>
           ) : (
@@ -704,13 +737,13 @@ export function ReadingsPanel() {
               const tOpen = isOpen(`t:${t.name}`);
               return (
                 <section key={t.name} className="rounded-lg border bg-background px-2 py-1">
-                  <Fold open={tOpen} onToggle={() => toggle(`t:${t.name}`)} depth={0} readings={t.readings} verses={t.verses} label={t.name} />
+                  <Fold open={tOpen} onToggle={() => toggle(`t:${t.name}`)} depth={0} readings={t.readings} verses={t.verses} total={totals.testaments.get(t.name)} label={t.name} />
                   {tOpen &&
                     t.books.map((b) => {
                       const bOpen = isOpen(`b:${b.book}`);
                       return (
                         <div key={b.book}>
-                          <Fold open={bOpen} onToggle={() => toggle(`b:${b.book}`)} depth={1} readings={b.readings} verses={b.verses} label={b.name} />
+                          <Fold open={bOpen} onToggle={() => toggle(`b:${b.book}`)} depth={1} readings={b.readings} verses={b.verses} total={totals.books.get(b.book)} label={b.name} />
                           {bOpen &&
                             b.chapters.map((c) => {
                               const cOpen = isOpen(`c:${b.book}.${c.chapter}`);
@@ -722,6 +755,7 @@ export function ReadingsPanel() {
                                     depth={2}
                                     readings={c.readings}
                                     verses={c.verses}
+                                    total={totals.chapters.get(`${b.book}.${c.chapter}`)}
                                     label={`${b.name} ${c.chapter}`}
                                   />
                                   {cOpen && (

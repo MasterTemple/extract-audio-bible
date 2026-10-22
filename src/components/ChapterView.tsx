@@ -11,6 +11,7 @@ import { api, errorMessage, type Project, type Selection, type VerseTime } from 
 import { partsOf, useApp } from "@/lib/store";
 import { play, resume, seek, stop, togglePause, usePlayer } from "@/lib/player";
 import { audioPathOf, bookName, formatTime, readingKept, chapterStatus, passageHasChapter, verseKey, versesNeeded, sourceColor, sourceTitle, runLabel } from "@/lib/refs";
+import { Coverage, percentOf } from "./Coverage";
 
 /** Whether `b` carries on straight from `a` in the same sermon (no cut between them) */
 export function continues(a: Selection | undefined, b: Selection | undefined): boolean {
@@ -206,9 +207,14 @@ export function ChapterView() {
         </Button>
         <div className="ml-2 flex items-center gap-1.5 text-xs">
           <Badge variant={status.selected === status.total ? "default" : "secondary"} className={cn(status.selected === status.total && "bg-emerald-600")}>
-            {status.selected}/{status.total} chosen
+            {status.selected}/{status.total} chosen · {percentOf(status.selected, status.total)}%
           </Badge>
-          <Badge variant="outline">{status.withMatches} with readings</Badge>
+          <Badge
+            variant="outline"
+            className={cn(status.total > 0 && status.withMatches === status.total && "border-emerald-500 text-emerald-700 dark:text-emerald-300")}
+          >
+            {status.withMatches}/{status.total} with readings · {percentOf(status.withMatches, status.total)}%
+          </Badge>
           {status.needsTrim > 0 && (
             <Badge variant="outline" className="border-amber-400 text-amber-700 dark:text-amber-300">
               <Scissors /> {status.needsTrim} to trim
@@ -266,7 +272,7 @@ export function ChapterView() {
             Only readings from <span className="font-medium">{sourceTitle(project, onlySource)}</span>
           </span>
           <span className="shrink-0 text-muted-foreground">
-            {loaded ? `${readHere} of ${verses.length} verses here` : "Reading…"}
+            {loaded ? <Coverage n={readHere} total={verses.length} className="text-muted-foreground" /> : "Reading…"}
           </span>
           <Button size="xs" variant="ghost" className="ml-auto shrink-0" onClick={() => setOnlySermon(null)}>
             <X /> Show every sermon

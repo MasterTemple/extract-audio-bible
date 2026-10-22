@@ -9,6 +9,7 @@ import { useApp } from "@/lib/store";
 import { chapterStatus, chapterTone, passageHasChapter, type ChapterStatus, type Tone } from "@/lib/refs";
 import { ChapterView } from "./ChapterView";
 import { VerseDetail } from "./VerseDetail";
+import { Coverage, percentOf } from "./Coverage";
 
 export const toneClass: Record<Tone, string> = {
   done: "bg-emerald-500 text-white border-emerald-600",
@@ -24,7 +25,7 @@ function ChapterCell({ status, n, active, onClick }: { status: ChapterStatus; n:
   return (
     <button
       onClick={onClick}
-      title={`Chapter ${n}: ${status.selected}/${status.total} chosen · ${status.withMatches} verses have readings (${status.matches} total)${status.needsTrim ? ` · ${status.needsTrim} to trim` : ""}`}
+      title={`Chapter ${n}: ${status.selected}/${status.total} chosen (${percentOf(status.selected, status.total)}%) · ${status.withMatches} of ${status.total} verses have readings (${percentOf(status.withMatches, status.total)}%) · ${status.matches} readings${status.needsTrim ? ` · ${status.needsTrim} to trim` : ""}`}
       className={cn(
         "relative h-7 overflow-hidden rounded-md border text-[11px] font-medium tabular-nums transition hover:brightness-95",
         toneClass[tone],
@@ -113,6 +114,7 @@ function Navigator() {
               <div key={b.id}>
                 <button
                   onClick={() => focus === null && toggle(b.id)}
+                  title={`${b.name}: ${s.total.selected} of ${s.total.total} verses chosen (${percentOf(s.total.selected, s.total.total)}%) · ${s.total.withMatches} have readings (${percentOf(s.total.withMatches, s.total.total)}%)`}
                   className={cn(
                     "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted",
                     book === b.id && "font-medium",
@@ -122,9 +124,7 @@ function Navigator() {
                     <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition", open && "rotate-90")} />
                   )}
                   <span className="min-w-0 flex-1 truncate">{b.name}</span>
-                  <span className="text-[11px] text-muted-foreground tabular-nums">
-                    {s.total.selected}/{s.total.total}
-                  </span>
+                  <Coverage n={s.total.selected} total={s.total.total} noun="" className="text-[11px] text-muted-foreground" />
                 </button>
                 <div className="mx-2 mb-1 h-1 overflow-hidden rounded-full bg-muted">
                   <div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
