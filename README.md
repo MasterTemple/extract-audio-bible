@@ -2,6 +2,13 @@
 
 A desktop app (Tauri 2, Rust and React/TypeScript with shadcn/ui) that builds an audio Bible from the Scripture readings in your sermons. A project usually covers one book, the one a preacher is preaching through, and can cover the whole Bible.
 
+<p align="center">
+  <img src="./doc/all-verses.png" alt="Match All Verses" width="49%">
+  <img src="./doc/adjust-clip.png" alt="Adjust Matched Clip" width="49%">
+  <img src="./doc/export-clips.png" alt="Export Audio Bible" width="49%">
+  <img src="./doc/search-all-transcripts.png" alt="Search All Transcripts" width="49%">
+</p>
+
 1. **Projects**: each one has a translation and a book (or the whole Bible), or some of a book's verses (2 Corinthians 2:14-17), exported as one file and an album of its verses. Only that book is searched for in the sermons. A project can be made from the sermons an every-verse project's readings show (a speaker's, say).
 2. **Translations**: import the text the sermons read from. USFM, USX, OSIS, ThML and GBF are read with `logoxide-text` (book names and numbers come from `topos-bible`). Your own text also works as JSON, CSV/TSV (`book, chapter, verse, text`), or plain lines like `John 3:16 For God so loved…`.
 3. **Sermons**: add audio files with their WhisperX JSON (or Let's Church transcript), or a whole folder. Files are paired by name (`sermon.mp3` goes with `sermon.json`), even when the audio and transcripts are in different folders and added one after the other, and transcripts may be gzipped (`sermon.json.gz`). Titles, passages, speakers, and series can be imported from a CSV or JSON table (keyed or a list, nested fields too), its columns matched to what they are.
