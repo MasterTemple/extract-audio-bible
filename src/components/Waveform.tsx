@@ -17,8 +17,8 @@ interface Props {
   now: number | null;
   words: Word[];
   onChange: (edge: "start" | "end", time: number) => void;
-  /** When a handle is picked up (its edge) and let go (null) */
-  onDrag?: (edge: "start" | "end" | null) => void;
+  /** When a bound is picked up (true) and let go (false), to keep the window still meanwhile */
+  onDrag?: (dragging: boolean) => void;
   onWord?: (w: Word, e: React.MouseEvent) => void;
   /** Stretches cut out of the clip, shown struck out */
   cuts?: Cut[];
@@ -26,6 +26,8 @@ interface Props {
   onCut?: (cut: Cut) => void;
   /** Puts back a cut, by its index in `cuts` */
   onUncut?: (index: number) => void;
+  /** A cut's bounds dragged, by its index in `cuts` */
+  onCutChange?: (index: number, cut: Cut) => void;
   /** Clicked (not dragged across): the time clicked, to play from */
   onSeek?: (time: number) => void;
   /** Hears a stretch marked: it alone, or the second either side of it joined as they'd be without it */
@@ -78,7 +80,13 @@ function layout(words: Word[], x: (t: number) => number): Label[] {
   return labels;
 }
 
-/** A sermon's waveform around a clip, with handles to drag its start and end */
+/** A bound that can be dragged: the clip's start or end, a cut's, or the stretch marked's */
+type Bound = { of: "clip"; edge: "start" | "end" } | { of: "cut"; index: number; edge: "start" | "end" } | { of: "mark"; edge: "from" | "to" };
+
+/** How near (in pixels) a press must be to a bound to pick it up */
+const GRAB = 10;
+
+/** A sermon's waveform around a clip, with its bounds (and its cuts') to drag */
 export function Waveform({
   peaks,
   peaksStart,
@@ -95,6 +103,7 @@ export function Waveform({
   cuts = [],
   onCut,
   onUncut,
+  onCutChange,
   onSeek,
   onPreview,
   height = DEFAULT_HEIGHT,
@@ -103,14 +112,15 @@ export function Waveform({
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(480);
-  const [drag, setDragState] = useState<"start" | "end" | null>(null);
+  const [drag, setDragState] = useState<Bound | null>(null);
+  // The bound under the pointer, to show it can be dragged
+  const [hover, setHover] = useState<Bound | null>(null);
   // A stretch being marked (dragged across), or marked, to cut out: where it began and where it is now
   const [marked, setMarked] = useState<{ from: number; to: number; marking: boolean } | null>(null);
   const isCut = (time: number) => cuts.some((c) => time >= Math.min(c.start, c.end) && time <= Math.max(c.start, c.end));
-  const setDrag = (edge: "start" | "end" | null) => {
-    if (edge === drag) return;
-    setDragState(edge);
-    onDrag?.(edge);
+  const setDrag = (bound: Bound | null) => {
+    if ((bound !== null) !== (drag !== null)) onDrag?.(bound !== null);
+    setDragState(bound);
   };
   const span = Math.max(0.1, end - start);
   const x = (t: number) => ((t - start) / span) * width;
@@ -158,13 +168,68 @@ export function Waveform({
     [words, start, end, span, width],
   );
 
-  const at = (e: React.PointerEvent) => {
-    const rect = wrap.current!.getBoundingClientRect();
-    return t(Math.min(width, Math.max(0, e.clientX - rect.left)));
+  const mark = marked && { from: Math.min(marked.from, marked.to), to: Math.max(marked.from, marked.to) };
+  const px = (e: React.PointerEvent) => e.clientX - wrap.current!.getBoundingClientRect().left;
+  /** The time under the pointer, within the window, or (`beyond`) past it too, as when a clip's bound is dragged out of it */
+  const at = (e: React.PointerEvent, beyond = false) => Math.max(0, t(beyond ? px(e) : Math.min(width, Math.max(0, px(e)))));
+  /** The bound nearest a point, if one's near enough to pick up: the clip's first, then a marked stretch's, then a cut's */
+  const boundAt = (point: number): Bound | null => {
+    const near: [Bound, number][] = [
+      [{ of: "clip", edge: "start" }, clipStart],
+      [{ of: "clip", edge: "end" }, clipEnd],
+    ];
+    if (mark && !marked.marking)
+      near.push(
+        [{ of: "mark", edge: "from" }, mark.from],
+        [{ of: "mark", edge: "to" }, mark.to],
+      );
+    if (onCutChange)
+      cuts.forEach((c, index) =>
+        near.push(
+          [{ of: "cut", index, edge: "start" }, c.start],
+          [{ of: "cut", index, edge: "end" }, c.end],
+        ),
+      );
+    let best: Bound | null = null;
+    let distance = GRAB;
+    for (const [bound, time] of near) {
+      const d = Math.abs(x(time) - point);
+      if (d <= distance) [best, distance] = [bound, d];
+    }
+    return best;
+  };
+  const same = (a: Bound | null, b: Bound | null) => JSON.stringify(a) === JSON.stringify(b);
+  const onDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const bound = boundAt(px(e));
+    if (bound) {
+      // A marked stretch's other end stays where it is, its `from`; the end picked up moves
+      if (bound.of === "mark" && mark) setMarked(bound.edge === "from" ? { from: mark.to, to: mark.from, marking: false } : { from: mark.from, to: mark.to, marking: false });
+      setDrag(bound);
+      return;
+    }
+    if (!onCut && !onSeek) return;
+    const time = at(e);
+    setMarked({ from: time, to: time, marking: true });
   };
   const onMove = (e: React.PointerEvent) => {
-    if (drag) onChange(drag, at(e));
-    else if (marked?.marking) setMarked({ ...marked, to: at(e) });
+    if (!drag) {
+      if (marked?.marking) setMarked({ ...marked, to: at(e) });
+      else {
+        const bound = boundAt(px(e));
+        if (!same(bound, hover)) setHover(bound);
+      }
+      return;
+    }
+    if (drag.of === "clip") onChange(drag.edge, at(e, true));
+    else if (drag.of === "mark") setMarked(marked && { ...marked, to: at(e) });
+    else {
+      const c = cuts[drag.index];
+      if (!c || !onCutChange) return;
+      const time = at(e);
+      onCutChange(drag.index, drag.edge === "start" ? { start: Math.min(time, c.end - 0.02), end: c.end } : { start: c.start, end: Math.max(time, c.start + 0.02) });
+    }
   };
   const onUp = () => {
     setDrag(null);
@@ -175,7 +240,7 @@ export function Waveform({
       onSeek?.(marked.from);
     } else setMarked({ ...marked, marking: false });
   };
-  const mark = marked && { from: Math.min(marked.from, marked.to), to: Math.max(marked.from, marked.to) };
+  const resizing = drag ?? hover;
 
   return (
     <div className="space-y-1 select-none">
@@ -183,21 +248,17 @@ export function Waveform({
         ref={wrap}
         className="relative overflow-hidden rounded-md border bg-background"
         style={{ height }}
-        onPointerDown={
-          onCut || onSeek
-            ? (e) => {
-                if (e.button !== 0) return;
-                (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                const time = at(e);
-                setMarked({ from: time, to: time, marking: true });
-              }
-            : undefined
-        }
+        onPointerDown={onDown}
         onPointerMove={onMove}
         onPointerUp={onUp}
-        onPointerLeave={onUp}
+        onPointerCancel={onUp}
+        onPointerLeave={() => !drag && !marked?.marking && setHover(null)}
       >
-        <canvas ref={canvas} style={{ width, height }} className={cn("absolute inset-0", (onCut || onSeek) && "cursor-crosshair")} />
+        <canvas
+          ref={canvas}
+          style={{ width, height }}
+          className={cn("absolute inset-0", resizing ? "cursor-ew-resize" : (onCut || onSeek) && "cursor-crosshair")}
+        />
         <div className="pointer-events-none absolute inset-y-0 bg-primary/8" style={{ left: x(clipStart), width: Math.max(0, x(clipEnd) - x(clipStart)) }} />
         {cuts.map((c, i) => {
           const [a, b] = [Math.min(c.start, c.end), Math.max(c.start, c.end)];
@@ -260,26 +321,31 @@ export function Waveform({
             </Button>
           </div>
         )}
-        {(["start", "end"] as const).map((edge) => (
-          <div
-            key={edge}
-            onPointerDown={(e) => {
-              e.stopPropagation();
-              (e.target as HTMLElement).setPointerCapture(e.pointerId);
-              setDrag(edge);
-            }}
-            className="group absolute inset-y-0 -ml-2 w-4 cursor-ew-resize"
-            style={{ left: x(edge === "start" ? clipStart : clipEnd) }}
-          >
-            <div className={cn("mx-auto h-full w-0.5 bg-emerald-600", drag === edge && "w-1")} />
-            <div
-              className={cn(
-                "absolute top-0 h-4 w-2.5 bg-emerald-600",
-                edge === "start" ? "left-1/2 rounded-r-sm" : "right-1/2 rounded-l-sm",
-              )}
-            />
-          </div>
-        ))}
+        {(["start", "end"] as const).map((edge) => {
+          const active = resizing?.of === "clip" && resizing.edge === edge;
+          return (
+            // Drawn only: a press near it picks it up (`boundAt`)
+            <div key={edge} className="pointer-events-none absolute inset-y-0 -ml-2 w-4" style={{ left: x(edge === "start" ? clipStart : clipEnd) }}>
+              <div className={cn("mx-auto h-full bg-emerald-600", active ? "w-1" : "w-0.5")} />
+              <div
+                className={cn(
+                  "absolute top-0 h-5 w-3 bg-emerald-600",
+                  edge === "start" ? "left-1/2 rounded-r-sm" : "right-1/2 rounded-l-sm",
+                )}
+              />
+              <div
+                className={cn(
+                  "absolute top-1/2 left-1/2 flex h-8 w-2.5 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center gap-0.5 rounded-sm bg-emerald-600 shadow-sm",
+                  active && "ring-2 ring-emerald-300",
+                )}
+              >
+                <span className="h-px w-1.5 bg-white/80" />
+                <span className="h-px w-1.5 bg-white/80" />
+                <span className="h-px w-1.5 bg-white/80" />
+              </div>
+            </div>
+          );
+        })}
         {now !== null && now >= start && now <= end && (
           <div className="pointer-events-none absolute inset-y-0 w-px bg-red-500" style={{ left: x(now) }} />
         )}

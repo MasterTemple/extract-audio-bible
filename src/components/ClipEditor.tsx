@@ -189,11 +189,12 @@ function TrimArea({
           onSeek={playFrom}
           onPreview={preview}
           onChange={setEdge}
-          onDrag={(edge) => setHeld(edge ? [winStart, winEnd] : null)}
+          onDrag={(dragging) => setHeld(dragging ? [winStart, winEnd] : null)}
           onWord={(w, e) => (e.shiftKey ? setEdge("end", w.end + 0.08) : setEdge("start", w.start - 0.08))}
           cuts={cuts}
           onCut={(cut) => setPart({ cuts: [...cuts, cut].sort((a, b) => a.start - b.start) })}
           onUncut={(i) => setPart({ cuts: cuts.filter((_, k) => k !== i) })}
+          onCutChange={(i, cut) => setPart({ cuts: cuts.map((c, k) => (k === i ? cut : c)) })}
         />
       ) : (
         <div className="flex items-center justify-center gap-2 rounded-md border text-xs text-muted-foreground" style={{ height: height + 64 }}>
@@ -209,8 +210,9 @@ function TrimArea({
       )}
       <div className="flex items-start gap-2">
         <p className="flex-1 text-[11px] text-muted-foreground">
-          Click the waveform to play from there. Drag the green handles, or click a word to start just before it (shift-click to end just
-          after it). Drag across the waveform to mark a slip the reader corrected: hear it, hear it left out, and cut it out.
+          Click the waveform to play from there. Drag the green bounds (past the edge to go further), or click a word to start just before
+          it (shift-click to end just after it). Drag across the waveform to mark a slip the reader corrected: hear it, hear it left out,
+          and cut it out; its edges, and a cut's, can be dragged too.
         </p>
         <span className="flex shrink-0 items-center gap-0.5">
           {playing && (
