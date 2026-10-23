@@ -107,11 +107,61 @@ function urlEncode(text: string): string {
   ).join("");
 }
 
-/** Where a sermon's audio is: its own file, or the project's audio URL filled in with its file id (downloaded when it's needed) */
+/** The digits of a short id, as the short-uuid npm package (and Let's Church) write them: Flickr's base 58 */
+const BASE58 = "123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ";
+const SHORT_ID_LENGTH = 22;
+
+/** A UUID's 128 bits, with or without its dashes */
+function uuidBits(id: string): bigint | null {
+  return /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/i.test(id) ? BigInt(`0x${id.replace(/-/g, "")}`) : null;
+}
+
+/** A short id's 128 bits */
+function shortIdBits(id: string): bigint | null {
+  if (id.length !== SHORT_ID_LENGTH) return null;
+  let n = 0n;
+  for (const c of id) {
+    const digit = BASE58.indexOf(c);
+    if (digit < 0) return null;
+    n = n * 58n + BigInt(digit);
+  }
+  return n < 1n << 128n ? n : null;
+}
+
+/** An id as a UUID (lowercase), as the library makes it: itself if it is one, or a short id's; null if it's neither */
+export function uuidOf(id: string): string | null {
+  const bits = uuidBits(id) ?? shortIdBits(id);
+  if (bits === null) return null;
+  const hex = bits.toString(16).padStart(32, "0");
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
+}
+
+/** An id as a short id (a UUID in 22 base-58 digits, as short-uuid writes it): itself if it is one, or a UUID's; null if it's neither */
+export function shortIdOf(id: string): string | null {
+  let bits = shortIdBits(id) ?? uuidBits(id);
+  if (bits === null) return null;
+  let out = "";
+  for (let i = 0; i < SHORT_ID_LENGTH; i++, bits /= 58n) out = BASE58[Number(bits % 58n)] + out;
+  return out;
+}
+
+/**
+Where a sermon's audio is: its own file, or the project's audio URL filled in with its ids (downloaded when it's needed):
+`{id}` its file id, `{uuid}` and `{shortId}` that as a UUID or a short id, `{downloadId}` the id given to download it by
+(each the file id when it can't be had)
+*/
 export function audioPathOf(project: Project, source: Source): string {
   if (source.audioPath) return source.audioPath;
   const template = project.settings.audioUrl?.trim() ?? "";
-  return template ? template.split("{id}").join(urlEncode(fileIdOf(source))) : "";
+  if (!template) return "";
+  const id = fileIdOf(source);
+  const ids: Record<string, string> = {
+    id,
+    uuid: uuidOf(id) ?? id,
+    shortId: shortIdOf(id) ?? id,
+    downloadId: project.files?.[id]?.downloadId?.trim() || id,
+  };
+  return template.replace(/\{(id|uuid|shortId|downloadId)\}/g, (_, key: string) => urlEncode(ids[key]));
 }
 
 /** What's known about a sermon */

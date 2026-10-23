@@ -19,6 +19,7 @@ const ROLES = {
   passage: { label: "Passage", names: ["passage", "scripture", "reference", "text", "verses"] },
   speaker: { label: "Speaker", names: ["speaker", "preacher", "author", "pastor", "artist"] },
   series: { label: "Series", names: ["series", "album", "collection"] },
+  downloadId: { label: "Download id", names: ["downloadId", "download_id", "download", "mediaId", "media_id", "uuid"] },
 } as const;
 type Role = keyof typeof ROLES;
 const NONE = "__none";
@@ -36,7 +37,7 @@ interface Loaded {
 const sample = (table: Table, field: string) => table.rows.find((r) => r[field])?.[field] ?? "";
 
 /**
-Imports sermons' titles, passages, speakers, and series from a table (CSV, TSV, or JSON: an array
+Imports sermons' titles, passages, speakers, series, and download ids (`{downloadId}` in the audio URL) from a table (CSV, TSV, or JSON: an array
 of records, or keyed records, nested fields by dotted path), each column matched to what it is
 */
 export function TitleImporter() {
@@ -44,7 +45,7 @@ export function TitleImporter() {
   const setFileMetadata = useApp((s) => s.setFileMetadata);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [reading, setReading] = useState(false);
-  const [columns, setColumns] = useState<Record<Role, string>>({ id: "", title: "", passage: "", speaker: "", series: "" });
+  const [columns, setColumns] = useState<Record<Role, string>>({ id: "", title: "", passage: "", speaker: "", series: "", downloadId: "" });
 
   const guess = (table: Table) => setColumns(guessFields(table.fields, Object.fromEntries(Object.entries(ROLES).map(([k, r]) => [k, [...r.names]])) as Record<Role, string[]>));
 
@@ -88,7 +89,7 @@ export function TitleImporter() {
       const id = row[columns.id]?.trim();
       if (!id) continue;
       const info: FileMetadata = {};
-      for (const role of ["title", "passage", "speaker", "series"] as const) {
+      for (const role of ["title", "passage", "speaker", "series", "downloadId"] as const) {
         const value = columns[role] ? row[columns[role]]?.trim() : "";
         if (value) info[role] = value;
       }
@@ -111,7 +112,7 @@ export function TitleImporter() {
 
   return (
     <>
-      <Button variant="outline" size="sm" disabled={reading} onClick={pick} title="Read titles, passages, speakers, and series from a CSV or JSON file">
+      <Button variant="outline" size="sm" disabled={reading} onClick={pick} title="Read titles, passages, speakers, series, and download ids from a CSV or JSON file">
         {reading ? <Loader2 className="animate-spin" /> : <Tags />} Import titles
       </Button>
       <Dialog open={loaded !== null} onOpenChange={(o) => !o && setLoaded(null)}>

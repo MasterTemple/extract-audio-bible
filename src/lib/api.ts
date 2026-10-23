@@ -66,6 +66,8 @@ export interface FileMetadata {
   speaker?: string | null;
   /** The series it's part of */
   series?: string | null;
+  /** Another id to download its audio by (`{downloadId}` in the audio URL) */
+  downloadId?: string | null;
 }
 
 export interface Selection {

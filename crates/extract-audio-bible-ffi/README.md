@@ -209,7 +209,8 @@ not added yet), and `applyFileMetadataJson` for many, field by field. A transcri
 used when none is given.
 
 A sermon that's a transcript alone can have its audio downloaded when it's needed: the setting
-`audioUrl` says where from, with `{id}` for the file id (`https://example.com/audio/{id}.mp3`),
+`audioUrl` says where from, with `{id}` for the file id (`https://example.com/audio/{id}.mp3`), `{uuid}` or
+`{shortId}` for it as a UUID or a Let's Church short id, and `{downloadId}` for its metadata's `downloadId`,
 and with one set its `audioPath` is the URL (it's empty without one). Natively,
 `Files.downloading(folder)` downloads it once into a folder (failing with a `Network` error); in
 WebAssembly, fetch it and `add` it to memory files under that URL.

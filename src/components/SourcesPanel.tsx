@@ -176,7 +176,9 @@ export function SourcesPanel() {
                 onChange={(e) => update((p) => ({ ...p, settings: { ...p.settings, audioUrl: e.target.value } }), "change where audio downloads from", "audioUrl")}
               />
               <span className="text-xs text-muted-foreground">
-                For sermons with only a transcript: <code>{"{id}"}</code> is the sermon's id. It's downloaded when first played.
+                For sermons with only a transcript: <code>{"{id}"}</code> is the sermon's id, <code>{"{uuid}"}</code> and{" "}
+                <code>{"{shortId}"}</code> are it as a UUID or a Let's Church short id, and <code>{"{downloadId}"}</code> is a download id
+                imported with the titles. It's downloaded once, when first played.
               </span>
             </div>
             {(

@@ -36,7 +36,7 @@ pub use files::{Disk, Files, Memory};
 pub use matcher::{Match, MatchKind, Run};
 pub use project::{
     Added, Cut, ExportMode, FileMetadata, Keyed, Leveling, MatchSet, Metadata, Part, Passage, Project, ProjectChanges,
-    ProjectKind, Selection, Settings, Source, parse_reference,
+    ProjectKind, Selection, Settings, Source, parse_reference, short_id_of, uuid_of,
 };
 pub use readings::{ReadingRow, reading_rows};
 pub use said::{FindOptions, Near, Said, find_in, search_transcripts};

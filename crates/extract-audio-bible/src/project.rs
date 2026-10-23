@@ -89,6 +89,9 @@ pub struct FileMetadata {
     /// The series it's part of ("1 Thessalonians")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub series: Option<String>,
+    /// Another id to download its audio by (`{downloadId}` in [`Settings::audio_url`])
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_id: Option<String>,
 }
 
 impl FileMetadata {
@@ -99,6 +102,7 @@ impl FileMetadata {
             passage: other.passage.clone().or_else(|| self.passage.clone()),
             speaker: other.speaker.clone().or_else(|| self.speaker.clone()),
             series: other.series.clone().or_else(|| self.series.clone()),
+            download_id: other.download_id.clone().or_else(|| self.download_id.clone()),
         }
     }
 }
@@ -298,7 +302,10 @@ pub struct Settings {
     pub fade_ms: f64,
     /**
     Where to download a sermon's audio when it has no file of its own, with `{id}` for its file
-    id: `https://example.com/audio/{id}.mp3`. Empty for none. With one, transcripts without audio
+    id: `https://example.com/audio/{id}.mp3`. `{uuid}` and `{shortId}` are that id as a UUID and
+    as a short id (base 58, as Let's Church's ids and the `short-uuid` npm package make them),
+    and `{downloadId}` is the id given for downloading it ([`FileMetadata::download_id`]); each
+    is the file id when it can't be had. Empty for none. With one, transcripts without audio
     beside them are added as sermons too
     */
     pub audio_url: String,
@@ -775,7 +782,7 @@ impl Project {
 
     /**
     Where a sermon's audio is: its own file, or (when it has none) the project's audio URL filled
-    in with its file id, for `Downloading` files (the `download` feature) or a host to fetch.
+    in with its ids ([`Settings::audio_url`]), for `Downloading` files (the `download` feature) or a host to fetch.
     Empty when it has neither
     */
     pub fn audio_path(&self, source: &Source) -> String {
@@ -786,7 +793,18 @@ impl Project {
         if template.is_empty() {
             String::new()
         } else {
-            template.replace("{id}", &url_encode(&source.file_id()))
+            let id = source.file_id();
+            let download_id = (self.files.get(&id).and_then(|m| m.download_id.as_deref()))
+                .map(str::trim)
+                .filter(|d| !d.is_empty())
+                .unwrap_or(&id);
+            (template.replace("{id}", &url_encode(&id)))
+                .replace("{uuid}", &url_encode(&uuid_of(&id).unwrap_or_else(|| id.clone())))
+                .replace(
+                    "{shortId}",
+                    &url_encode(&short_id_of(&id).unwrap_or_else(|| id.clone())),
+                )
+                .replace("{downloadId}", &url_encode(download_id))
         }
     }
 
@@ -1011,6 +1029,62 @@ fn url_encode(text: &str) -> String {
         }
     }
     out
+}
+
+/// The digits of a short id, as `short-uuid` (and Let's Church) write them: Flickr's base 58
+const BASE58: &[u8; 58] = b"123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ";
+/// How long a short id is, padded with the first digit as `short-uuid` pads them
+const SHORT_ID_LENGTH: usize = 22;
+
+/// A UUID's 128 bits, with or without its dashes
+fn uuid_bits(id: &str) -> Option<u128> {
+    let hex: String = id.chars().filter(|&c| c != '-').collect();
+    let dashed = id.len() == 36 && [8, 13, 18, 23].iter().all(|&i| id.as_bytes()[i] == b'-');
+    (hex.len() == 32 && (dashed || id.len() == 32) && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| u128::from_str_radix(&hex, 16).ok())
+        .flatten()
+}
+
+/// A short id's 128 bits
+fn short_id_bits(id: &str) -> Option<u128> {
+    if id.len() != SHORT_ID_LENGTH {
+        return None;
+    }
+    id.bytes().try_fold(0u128, |n, b| {
+        let digit = BASE58.iter().position(|&d| d == b)?;
+        n.checked_mul(58)?.checked_add(digit as u128)
+    })
+}
+
+/**
+An id as a UUID (`a1b2c3d4-…`, lowercase): itself if it is one, or the one a short id
+([`short_id_of`]) is of; `None` if it's neither
+*/
+pub fn uuid_of(id: &str) -> Option<String> {
+    let bits = uuid_bits(id).or_else(|| short_id_bits(id))?;
+    let hex = format!("{bits:032x}");
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    ))
+}
+
+/**
+An id as a short id, a UUID in 22 base-58 digits as the `short-uuid` npm package writes it (as
+Let's Church's media ids are): itself if it is one, or the UUID's; `None` if it's neither
+*/
+pub fn short_id_of(id: &str) -> Option<String> {
+    let mut bits = short_id_bits(id).or_else(|| uuid_bits(id))?;
+    let mut digits = vec![BASE58[0]; SHORT_ID_LENGTH];
+    for d in digits.iter_mut().rev() {
+        *d = BASE58[(bits % 58) as usize];
+        bits /= 58;
+    }
+    Some(String::from_utf8(digits).expect("base 58 digits are ASCII"))
 }
 
 /// The audio files a sermon can be
@@ -1294,6 +1368,57 @@ mod tests {
         p.identify(&id, Some("xyz"), None);
         assert_eq!(p.audio_path(&p.sources[1]), "https://example.com/audio/xyz.mp3");
         assert_eq!(p.add_sources(&paths).added, 0);
+
+        // Its id as a UUID or a short id, or another given to download it by
+        p.identify(&id, Some("1qUVQV7mkmdh3TxbEwHHtA"), None);
+        p.settings.audio_url = "https://example.com/{uuid}/{shortId}/{downloadId}.m3u8".into();
+        assert_eq!(
+            p.audio_path(&p.sources[1]),
+            "https://example.com/037a77fe-590c-4332-b330-2f9dd33cda0c/1qUVQV7mkmdh3TxbEwHHtA/1qUVQV7mkmdh3TxbEwHHtA.m3u8"
+        );
+        let download = FileMetadata {
+            download_id: Some("media 7".into()),
+            ..Default::default()
+        };
+        p.apply_file_metadata([("1qUVQV7mkmdh3TxbEwHHtA".into(), download)].into());
+        assert!(p.audio_path(&p.sources[1]).ends_with("/media%207.m3u8"));
+        // An id that's neither is itself
+        p.settings.audio_url = "{uuid} {shortId} {downloadId}".into();
+        assert_eq!(p.audio_path(&p.sources[0]), "a/one.mp3");
+        p.sources[0].audio_path.clear();
+        assert_eq!(p.audio_path(&p.sources[0]), "one one one");
+    }
+
+    #[test]
+    fn short_ids_as_short_uuid_makes_them() {
+        // From the short-uuid npm package (its default, flickrBase58 padded to 22)
+        for (uuid, short) in [
+            ("00000000-0000-0000-0000-000000000000", "1111111111111111111111"),
+            ("ffffffff-ffff-ffff-ffff-ffffffffffff", "xBuEXKpA6iqZQK5Kf2TnkV"),
+            ("0007a5d1-3c4e-4b8f-9a2d-1e6f7c8b9a0d", "11dpL6kz3CgWFPwAWPxXb6"),
+            ("037a77fe-590c-4332-b330-2f9dd33cda0c", "1qUVQV7mkmdh3TxbEwHHtA"),
+        ] {
+            assert_eq!(short_id_of(uuid).as_deref(), Some(short));
+            assert_eq!(uuid_of(short).as_deref(), Some(uuid));
+            assert_eq!(
+                (uuid_of(uuid).as_deref(), short_id_of(short).as_deref()),
+                (Some(uuid), Some(short))
+            );
+        }
+        assert_eq!(
+            short_id_of("037A77FE590C4332B3302F9DD33CDA0C").as_deref(),
+            Some("1qUVQV7mkmdh3TxbEwHHtA")
+        );
+        // Too long, too short, a digit base 58 hasn't, or more than 128 bits
+        for id in [
+            "sermon",
+            "1qUVQV7mkmdh3TxbEwHHtAx",
+            "1qUVQV7mkmdh3TxbEwHHt0",
+            "zzzzzzzzzzzzzzzzzzzzzz",
+            "037a77fe-590c-4332-b330",
+        ] {
+            assert_eq!((uuid_of(id), short_id_of(id)), (None, None), "{id}");
+        }
     }
 
     #[test]

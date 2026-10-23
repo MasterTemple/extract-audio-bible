@@ -454,6 +454,8 @@ pub struct FileMetadata {
     pub speaker: Option<String>,
     /// The series it's part of
     pub series: Option<String>,
+    /// Another id to download its audio by (`{downloadId}` in `Settings.audioUrl`)
+    pub download_id: Option<String>,
 }
 
 impl From<eab::FileMetadata> for FileMetadata {
@@ -463,6 +465,7 @@ impl From<eab::FileMetadata> for FileMetadata {
             passage: m.passage,
             speaker: m.speaker,
             series: m.series,
+            download_id: m.download_id,
         }
     }
 }
@@ -474,6 +477,7 @@ impl From<FileMetadata> for eab::FileMetadata {
             passage: m.passage,
             speaker: m.speaker,
             series: m.series,
+            download_id: m.download_id,
         }
     }
 }
@@ -745,7 +749,8 @@ pub struct Settings {
     /// Fades at every cut, in milliseconds
     pub fade_ms: f64,
     /// Where to download a sermon's audio when it has no file, with `{id}` for its file id
-    /// (`https://example.com/audio/{id}.mp3`); empty for none. With one, transcripts alone are
+    /// (`https://example.com/audio/{id}.mp3`), `{uuid}` and `{shortId}` for it as a UUID or a
+    /// short id, and `{downloadId}` for `FileMetadata.downloadId`; empty for none. With one, transcripts alone are
     /// added as sermons
     pub audio_url: String,
 }

@@ -59,7 +59,9 @@ extract-audio-bible add 1thess transcripts/          # transcripts alone, their 
 ```
 
 `{id}` is the sermon's id: the one its transcript gives (a Let's Church media id) once searched,
-or its file's name (`sermons` lists them).
+or its file's name (`sermons` lists them). `{uuid}` and `{shortId}` are that id as a UUID and as a
+short id (base 58, as Let's Church and the `short-uuid` npm package write them), and
+`{downloadId}` is a `downloadId` given in `sermons --info` (each is the id when it can't be had).
 
 ## A step at a time
 

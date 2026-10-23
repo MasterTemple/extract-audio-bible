@@ -108,8 +108,9 @@ enum Command {
     /// List the project's sermons with their file ids, titles, and passages
     Sermons {
         dir: PathBuf,
-        /// First set titles, passages, speakers, and series by file id from JSON, field by field:
-        /// `{"<file id>": {"title": "…", "passage": "1 Thess 5:12-15", "speaker": "…", "series": "…"}}`
+        /// First set titles, passages, speakers, series, and download ids by file id from JSON, field
+        /// by field: `{"<file id>": {"title": "…", "passage": "1 Thess 5:12-15", "speaker": "…",
+        /// "series": "…", "downloadId": "…"}}`
         #[arg(long)]
         info: Option<PathBuf>,
     },
